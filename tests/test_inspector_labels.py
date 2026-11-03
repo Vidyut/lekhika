@@ -88,5 +88,5 @@ class PageFallbackTests(unittest.TestCase):
         self.window._refresh_page_preview()
         message = self.window.statusBar().currentMessage()
         self.assertIn(
-            "US Letter (default — set Page setup on the book folder)",
+            "A4 (default — set Page setup on the book folder)",
             message)

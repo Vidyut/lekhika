@@ -116,7 +116,7 @@ class PageSetupInspectorTests(unittest.TestCase):
     def test_button_shows_the_default_before_any_setup(self):
         self.window._select_document(self.folder.id)
         self.assertEqual(self.window.page_setup_button.text(),
-                         "Page setup — Default (US Letter)")
+                         "Page setup — Default (A4)")
 
     def test_button_summarises_saved_geometry_after_selection(self):
         self.project.set_page_setup(self.folder.id, _geometry())
@@ -142,7 +142,7 @@ class PageSetupInspectorTests(unittest.TestCase):
         self.project.set_page_setup(self.folder.id, None)
         self._reselect_folder()
         self.assertEqual(self.window.page_setup_button.text(),
-                         "Page setup — Default (US Letter)")
+                         "Page setup — Default (A4)")
 
 
 if __name__ == "__main__":

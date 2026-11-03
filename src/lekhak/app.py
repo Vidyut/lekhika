@@ -2163,7 +2163,7 @@ class MainWindow(QMainWindow):
             "it on the book folder: the nearest book folder wins for "
             "everything inside it, and a series folder can set one "
             "house trim for all its books. Clearing the dialog returns "
-            "to the built-in default (US Letter).")
+            "to the built-in default (A4).")
         self.doc_template_label = QLabel("Apply template")
         self.doc_template_box = RefreshCombo()
         # The box carries the filename, the way the Type box carries a
@@ -3825,7 +3825,7 @@ class MainWindow(QMainWindow):
         """Human trim name for status lines and button labels: the
         preset's own label, or the raw inches for a custom size."""
         if not geometry:
-            return "Default (US Letter)"
+            return "Default (A4)"
         trim = geometry["trim"]
         if trim in PAGE_TRIMS:
             return PAGE_TRIMS[trim][0]
@@ -3836,7 +3836,7 @@ class MainWindow(QMainWindow):
         with, or that it has none."""
         geometry = self.project.page_setup(document_id) if self.project else None
         if not geometry:
-            return "Page setup — Default (US Letter)"
+            return "Page setup — Default (A4)"
         text = f"Page setup — {self._trim_label(geometry)}"
         if geometry["mirror"]:
             text += ", mirrored"
@@ -3858,7 +3858,7 @@ class MainWindow(QMainWindow):
             self.current_id, None if dialog.cleared else dialog.geometry())
         self.page_setup_button.setText(self._page_setup_text(self.current_id))
         self.statusBar().showMessage(
-            "Page setup cleared — exports use the default (US Letter)"
+            "Page setup cleared — exports use the default (A4)"
             if dialog.cleared else "Page setup saved", 3000)
 
     def _page_view_tab_changed(self, index: int) -> None:
@@ -3896,7 +3896,7 @@ class MainWindow(QMainWindow):
         # unconfigured preview is undecided, not a choice the writer
         # made — and the lever lives on the book folder.
         paper = (self._trim_label(geometry) if geometry else
-                 "US Letter (default — set Page setup on the book folder)")
+                 "A4 (default — set Page setup on the book folder)")
         self.statusBar().showMessage(
             f"Page view — {count} page{'' if count == 1 else 's'}, "
             f"{paper}")
