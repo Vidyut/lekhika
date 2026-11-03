@@ -79,8 +79,10 @@ class ShippedSetsTests(unittest.TestCase):
         # One live line, deliberately: the whole of §3.1's precedence rule
         # demonstrated in a single config value.
         self.assertEqual(short.docx_config, {"page size": "A4"})
-        self.assertIn('class="story"', short.document_slot("story"))
-        self.assertEqual(short.document_slot("story", html=False),
+        # Named after the Type such a piece carries, so a document in a
+        # folder this set dresses takes the face by name (1.18).
+        self.assertIn('class="story"', short.document_slot("document"))
+        self.assertEqual(short.document_slot("document", html=False),
                          "${Title}\n${Author}\n\n${Content}")
         self.assertFalse(short.prints_nothing)
 

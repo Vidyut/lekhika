@@ -508,20 +508,22 @@ class DocumentTemplateFaceTests(unittest.TestCase):
 
     def test_faces_carry_the_real_file_of_each_name(self):
         created = self._set()
-        (created.directory / "folder.txt").unlink()
-        (created.directory / "document.html").unlink()
+        (created.directory / "news.txt").write_text("news", encoding="utf-8")
         (created.directory / "notes.md").write_text("notes",
                                                     encoding="utf-8")
         templates = TemplateSet.load("written", created.directory)
 
         faces = templates.document_template_faces()
-        self.assertEqual(faces.get("folder"), "folder.html")
         # Plain text is the face only when it is all the set has.
-        self.assertEqual(faces.get("document"), "document.txt")
-        # The shelf keeps bare as the file it is.
+        self.assertEqual(faces.get("news"), "news.txt")
+        # The shelf keeps each name as the file it is.
         self.assertEqual(faces.get("no-title"), "no-title.html")
-        # Chrome dresses the book, never a document; a file that is not
-        # a fragment is not a face.
+        # The set's own slot files are the "Default" row, not faces.
+        self.assertNotIn("folder", faces)
+        self.assertNotIn("document", faces)
+        # Print configuration, chrome and files that are not fragments
+        # are not faces either.
+        self.assertNotIn("print-config", faces)
         self.assertNotIn("project_header", faces)
         self.assertNotIn("toc_page", faces)
         self.assertNotIn("notes", faces)

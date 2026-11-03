@@ -817,31 +817,41 @@ class TemplateSet:
         there is. Built-ins always answer — ``no-title`` has no file of
         its own, so it stands as no-title.html — and chrome is left out: a
         header, footer or contents page dresses the book, never a
-        document. For a set that ships in code the shipped map is its
-        files (§1.1), the same list a duplicate is written out from.
+        document, and so are the set's own slot files at its root — the
+        shape's dress is the "Default" row, not a name to pick. For a set
+        that ships in code the shipped map is its files (§1.1), the same
+        list a duplicate is written out from.
         """
         html: set[str] = set(BUILTIN_DOCUMENT_TEMPLATES)
         text: set[str] = set()
-        entries: list[tuple[Path, str]] = []
+        entries: list[tuple[Path, str, bool]] = []
         if self.directory:
-            paths = [path for path in sorted(self.directory.iterdir())
+            paths = [(path, True) for path in sorted(self.directory.iterdir())
                      if path.is_file()]
             shelf = self.directory / "documents"
             if shelf.is_dir():
-                paths += [path for path in sorted(shelf.iterdir())
+                paths += [(path, False) for path in sorted(shelf.iterdir())
                           if path.is_file()]
-            for path in paths:
+            for path, at_root in paths:
                 try:
-                    entries.append((path, path.read_text(encoding="utf-8")))
+                    entries.append(
+                        (path, path.read_text(encoding="utf-8"), at_root))
                 except (OSError, UnicodeDecodeError):
                     continue        # unreadable: not a face this box can offer
         else:
             for relative, content in SHIPPED_FILES.get(self.name, {}).items():
-                entries.append((Path(relative), content))
-        for path, content in entries:
+                path = Path(relative)
+                entries.append((path, content, path.parent == Path(".")))
+        for path, content, at_root in entries:
             suffix = path.suffix.lower()
             if suffix not in EXTENSIONS.values():
                 continue            # a README or a stylesheet is not a fragment
+            if at_root and path.stem in SLOTS:
+                # `folder.html` and `document.html` at the set's root are
+                # the shape's own dress, offered as "Default (set's own
+                # slot)" — listing them here too would be the same thing
+                # twice, under two names that dress differently.
+                continue
             if not is_document_face(content):
                 continue            # print configuration, or `Template: no`
             (html if suffix == EXTENSIONS[True] else text).add(path.stem)
@@ -1142,8 +1152,9 @@ file."""
 
 TEMPLATE_NAMING_NOTE = """Remember to name this file according to your folder or document TYPE in
 the manuscript metadata? The export's own names already follow it:
-chapter.html dresses chapters, scene.html scenes, documents/no-title.html
-documents with no template of their own. Any other file dresses
+chapter.html dresses chapters, scene.html scenes, documents/document.html
+documents that name no face of their own, documents/no-title.html a
+document printed without its heading. Any other file dresses
 whatever asks for it by name — pick or type its filename in the
 Document template box; a name no file answers saves just the same, and
 the export falls back to the set's own slot. The names an export looks
@@ -1372,12 +1383,15 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
         "style.css": DEFAULT_CSS,
     },
     "short story": {
-        # One document template, not a chapter with scenes: a short story
-        # is a single document, dressed on its own.
-        "story.html": ('<article class="story">\n<h1>${Title}</h1>\n'
-                       '<p class="author">${Author}</p>\n'
-                       '<div class="content">${Content}</div>\n</article>'),
-        "story.txt": "${Title}\n${Author}\n\n${Content}",
+        # One document template, not a chapter with scenes: a single
+        # document dressed on its own. It is named `document` because that
+        # is the Type such a piece carries (docs/MODEL.md), so a document
+        # in a folder this set dresses takes the face by name (1.18).
+        "documents/document.html": (
+            '<article class="story">\n<h1>${Title}</h1>\n'
+            '<p class="author">${Author}</p>\n'
+            '<div class="content">${Content}</div>\n</article>'),
+        "documents/document.txt": "${Title}\n${Author}\n\n${Content}",
         "print-config.txt": SHORT_STORY_CONFIG,
         "style.css": DEFAULT_CSS,
     },
