@@ -86,15 +86,15 @@ class SlotPathAndWriteTests(unittest.TestCase):
                            html=True),
             self.directory / "folder.html")
         self.assertEqual(
-            slot_file_path(self.directory, "bare", document=True,
+            slot_file_path(self.directory, "no-title", document=True,
                            html=False),
-            self.directory / "documents" / "bare.txt")
+            self.directory / "documents" / "no-title.txt")
 
     def test_write_slot_is_atomic_and_creates_documents_dir(self):
-        path = write_slot(self.directory, "bare", document=True, html=True,
+        path = write_slot(self.directory, "no-title", document=True, html=True,
                           text="${Content}<!--custom-->")
 
-        self.assertEqual(path, self.directory / "documents" / "bare.html")
+        self.assertEqual(path, self.directory / "documents" / "no-title.html")
         self.assertEqual(path.read_text(encoding="utf-8"),
                          "${Content}<!--custom-->")
         # No leftover temp files from the atomic write.

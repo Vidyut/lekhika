@@ -965,7 +965,7 @@ channel.
    book level → header/footer/toc), not a requirement on the folder. Any
    other name dresses a document the moment the writer picks it in the
    sidebar: `document_slot` resolves `documents/<name>` shelf → root
-   fragment → built-in `bare`, so a set of document fragments alone is a
+   fragment → built-in `no-title`, so a set of document fragments alone is a
    complete template; chrome slots are never offered as a document's dress.
    A file that is neither `.html` nor `.txt` (README, sample `.docx`) is
    support material and ignored. Also fixed here: a text export used to

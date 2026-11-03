@@ -101,8 +101,8 @@ class ShippedSetsTests(unittest.TestCase):
         for name in SLOTS:
             self.assertEqual(silent.slot(name), "")
             self.assertEqual(silent.slot(name, html=False), "")
-        self.assertEqual(silent.document_slot("bare"), "")
-        self.assertEqual(silent.document_slot("bare", html=False), "")
+        self.assertEqual(silent.document_slot("no-title"), "")
+        self.assertEqual(silent.document_slot("no-title", html=False), "")
         self.assertEqual(silent.docx_config, {})
 
     def test_a_shipped_set_is_named_from_the_shipped_list_only(self):

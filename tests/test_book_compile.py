@@ -88,7 +88,7 @@ class BookCompileTests(unittest.TestCase):
         self.assertIn("== END ==", whole)
 
     def test_document_template_override_uses_named_slot(self):
-        self.project.update_document(self.scene.id, doc_template="bare")
+        self.project.update_document(self.scene.id, doc_template="no-title")
         exported = self._export_text({self.scene.id})
         self.assertIn("First light prose.", exported)
         self.assertNotIn("First Light", exported)

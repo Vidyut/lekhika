@@ -263,20 +263,76 @@ BUILTIN_TEXT: dict[str, str] = {
     "document": "${Title}\n\n${Content}",
 }
 
+# The stylesheet every set starts with (docs/TEMPLATES.md 3.2): HTML and
+# EPUB put it in a <style>, so a writer who never opens the CSS box still
+# exports a page whose headings can be found and whose prose reads like a
+# book. DOCX and PDF never see it — their type comes from the sample .docx
+# and the design panel's own lines.
+DEFAULT_CSS = """\
+/* A book on the screen: a heading you can find, prose you can follow.
+   Delete a rule, or all of them, and the export goes back to plain. */
+body {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 100%;
+  line-height: 1.55;
+  color: #1a1a1a;
+  margin: 0 auto;
+  max-width: 34em;
+  padding: 0 1.25em 3em;
+}
+h1, h2, h3, h4 {
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 2em 0 0.6em;
+}
+h1 { font-size: 1.9em; margin-top: 1.2em; }
+h2 { font-size: 1.4em; }
+h3 { font-size: 1.12em; font-variant: small-caps; letter-spacing: 0.04em; }
+h4 { font-size: 1em; font-style: italic; }
+p { margin: 0; text-indent: 1.4em; }
+h1 + p, h2 + p, h3 + p, h4 + p, p:first-child { text-indent: 0; }
+blockquote { margin: 1.2em 1.5em; font-style: italic; }
+blockquote p { text-indent: 0; }
+hr {
+  width: 30%;
+  margin: 1.6em auto;
+  border: 0;
+  border-top: 1px solid #b9b9b9;
+}
+section { margin: 0 0 2em; }
+a { color: #2a4d69; }
+@media print {
+  body { max-width: none; padding: 0; }
+}
+"""
+
 EXTENSIONS = {True: ".html", False: ".txt"}
 
 DOCX_MARKER = "Docx"
+
+
+def is_print_config(text: str) -> bool:
+    """Whether a file is print configuration (§3.1): its first line is the
+    Docx marker, so it holds no fragment at all — the one reading that
+    keeps a config file out of the fragment listings."""
+    return text.split("\n", 1)[0].strip() == DOCX_MARKER
+
+
+def is_document_face(text: str) -> bool:
+    """Whether a set file can dress a document (§1.2): a fragment whose
+    head is not print configuration and does not say `Template: no`."""
+    return is_template_fragment(text) and not is_print_config(text)
 
 CONFIG_LINE_RE = re.compile(r"^\s*([A-Za-z][^:]*?)\s*:\s*(.*?)\s*$")
 
 # The export formats a set may refine file for file (§1.3).
 FORMATS = ("html", "epub", "docx", "pdf", "text")
 
-# Document-level templates every set has (2.1): "bare" is the sidebar's
-# "nothing, not even title" choice. Sets add their own as files under
-# documents/<name>.html|.txt — a news-item preamble, and so on.
+# Document-level templates every set has (2.1): "no-title" is the
+# sidebar's "print it without the heading" choice. Sets add their own as
+# files under documents/<name>.html|.txt — a news-item preamble, and on.
 BUILTIN_DOCUMENT_TEMPLATES: dict[str, dict[bool, str]] = {
-    "bare": {True: "${Content}", False: "${Content}"},
+    "no-title": {True: "${Content}", False: "${Content}"},
     "contents": {True: "<h1>${Title}</h1>\n<ol>${ToC}</ol>",
                  False: "${Title}\n\n${ToC}"},
 }
@@ -564,7 +620,9 @@ class TemplateSet:
                 return path.read_text(encoding="utf-8")
         if self.under is not None:
             return self.under.css()
-        return ""
+        # A shipped set has no folder, so its stylesheet ships in the map
+        # the duplicate is written from — the copy answers the same bytes.
+        return SHIPPED_FILES.get(self.name, {}).get("style.css", "")
 
     @property
     def editable(self) -> bool:
@@ -704,7 +762,8 @@ class TemplateSet:
         ``documents/<name>.html|.txt`` of this set, then a root fragment
         of that name — the writer's own vocabulary, so a set owning only
         ``short_story.html`` dresses short stories the moment the writer
-        names it — else the built-in ``bare``; None when the set has no
+        names it — else the built-in ``no-title``; None when the set has
+        no
         such template, so the caller falls back to the ordinary
         chapter/scene slot the document's shape would take.
 
@@ -734,7 +793,7 @@ class TemplateSet:
                     return fragment
         else:
             # A set that ships in code: its own map answers before the
-            # built-in does — `no export` owns an empty `documents/bare`,
+            # built-in does — `nothing` owns an empty `documents/no-title`,
             # and must be silent for it like for everything else.
             files = SHIPPED_FILES.get(self.name, {})
             for relative in (f"documents/{name}", name):
@@ -755,30 +814,36 @@ class TemplateSet:
         (docs/TEMPLATES.md §1.2): each name shown as the file it stands
         for, ``.html`` where a set carries that variant (both variants
         of one name share it, §3.2) and ``.txt`` where plain text is all
-        there is. Built-ins always answer — ``bare`` has no file of its
-        own, so it stands as bare.html — and chrome is left out: a
+        there is. Built-ins always answer — ``no-title`` has no file of
+        its own, so it stands as no-title.html — and chrome is left out: a
         header, footer or contents page dresses the book, never a
         document. For a set that ships in code the shipped map is its
         files (§1.1), the same list a duplicate is written out from.
         """
         html: set[str] = set(BUILTIN_DOCUMENT_TEMPLATES)
         text: set[str] = set()
-        entries: list[tuple[Path, bool]] = []
+        entries: list[tuple[Path, str]] = []
         if self.directory:
-            entries = [(path, True) for path in
-                       sorted(self.directory.iterdir()) if path.is_file()]
+            paths = [path for path in sorted(self.directory.iterdir())
+                     if path.is_file()]
             shelf = self.directory / "documents"
             if shelf.is_dir():
-                entries += [(path, False) for path in
-                            sorted(shelf.iterdir()) if path.is_file()]
+                paths += [path for path in sorted(shelf.iterdir())
+                          if path.is_file()]
+            for path in paths:
+                try:
+                    entries.append((path, path.read_text(encoding="utf-8")))
+                except (OSError, UnicodeDecodeError):
+                    continue        # unreadable: not a face this box can offer
         else:
-            for relative in SHIPPED_FILES.get(self.name, {}):
-                path = Path(relative)
-                entries.append((path, path.parent == Path(".")))
-        for path, at_root in entries:
+            for relative, content in SHIPPED_FILES.get(self.name, {}).items():
+                entries.append((Path(relative), content))
+        for path, content in entries:
             suffix = path.suffix.lower()
             if suffix not in EXTENSIONS.values():
                 continue            # a README or a stylesheet is not a fragment
+            if not is_document_face(content):
+                continue            # print configuration, or `Template: no`
             (html if suffix == EXTENSIONS[True] else text).add(path.stem)
         faces = {stem: stem + EXTENSIONS[True] for stem in html}
         faces.update({stem: stem + EXTENSIONS[False]
@@ -935,8 +1000,8 @@ def create_template_set(name: str, project_root: Path) -> TemplateSet:
         (directory / (slot + ".html")).write_text(BUILTIN_HTML[slot], encoding="utf-8")
         (directory / (slot + ".txt")).write_text(BUILTIN_TEXT[slot], encoding="utf-8")
     # The document shelf comes too: a new set stands for a complete one,
-    # and `bare` is the sidebar's "not even a title" choice — same bytes
-    # the unowned fallback answers with, so exports do not move.
+    # and `no-title` is the sidebar's "without the heading" choice — same
+    # bytes the unowned fallback answers with, so exports do not move.
     shelf = directory / "documents"
     shelf.mkdir()
     for document, variants in BUILTIN_DOCUMENT_TEMPLATES.items():
@@ -951,6 +1016,9 @@ def create_template_set(name: str, project_root: Path) -> TemplateSet:
     (directory / "print-config.txt").write_text(
         SHIPPED_FILES[SHIPPED_TEMPLATE_SETS[0]]["print-config.txt"],
         encoding="utf-8")
+    # And the stylesheet, so a new set has an emphasis anchor of its own
+    # to change rather than an empty box to fill from nothing.
+    (directory / "style.css").write_text(DEFAULT_CSS, encoding="utf-8")
     return TemplateSet.load(name, directory)
 
 
@@ -1074,7 +1142,7 @@ file."""
 
 TEMPLATE_NAMING_NOTE = """Remember to name this file according to your folder or document TYPE in
 the manuscript metadata? The export's own names already follow it:
-chapter.html dresses chapters, scene.html scenes, documents/bare.html
+chapter.html dresses chapters, scene.html scenes, documents/no-title.html
 documents with no template of their own. Any other file dresses
 whatever asks for it by name — pick or type its filename in the
 Document template box; a name no file answers saves just the same, and
@@ -1301,6 +1369,7 @@ NOTHING_HTML = """# nothing — a template that prints nothing
 SHIPPED_FILES: dict[str, dict[str, str]] = {
     "default": {
         "print-config.txt": DEFAULT_CONFIG,
+        "style.css": DEFAULT_CSS,
     },
     "short story": {
         # One document template, not a chapter with scenes: a short story
@@ -1310,6 +1379,7 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
                        '<div class="content">${Content}</div>\n</article>'),
         "story.txt": "${Title}\n${Author}\n\n${Content}",
         "print-config.txt": SHORT_STORY_CONFIG,
+        "style.css": DEFAULT_CSS,
     },
     "nothing": {
         # One empty body, not an emptied vocabulary (§3). This file (and
@@ -1448,8 +1518,8 @@ def materialise_builtin_set(project_root: Path, name: str = "Default") -> Templa
     created = create_template_set(name, project_root)
     documents = created.directory / "documents"
     documents.mkdir(parents=True, exist_ok=True)
-    (documents / "bare.html").write_text(
-        BUILTIN_DOCUMENT_TEMPLATES["bare"][True], encoding="utf-8")
+    (documents / "no-title.html").write_text(
+        BUILTIN_DOCUMENT_TEMPLATES["no-title"][True], encoding="utf-8")
     # No extension: §3's one rule says a file that is neither .html nor .txt
     # is support material, and a README with .txt would be a fragment named
     # "README" in every sidebar.

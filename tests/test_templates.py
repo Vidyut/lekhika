@@ -151,8 +151,8 @@ class CopyTemplateFileTests(unittest.TestCase):
         # answer — one template is a complete set, not a broken one.
         self.assertEqual(created.slot("document"),
                          TemplateSet.builtin().slot("document"))
-        self.assertEqual(created.document_slot("bare", html=True),
-                         TemplateSet.builtin().document_slot("bare", html=True))
+        self.assertEqual(created.document_slot("no-title", html=True),
+                         TemplateSet.builtin().document_slot("no-title", html=True))
 
     def test_a_file_from_a_format_folder_keeps_its_format(self):
         # Copied where it stood: `epub/` copied out refines EPUB exports
@@ -168,11 +168,11 @@ class CopyTemplateFileTests(unittest.TestCase):
                          TemplateSet.builtin().slot("folder"))
 
     def test_a_shelf_file_can_be_copied_out_too(self):
-        created = copy_template_file(self.source, "documents/bare.html",
+        created = copy_template_file(self.source, "documents/no-title.html",
                                      "Bare dress", self.project_root)
-        self.assertEqual(self.files(created), ["documents/bare.html"])
-        self.assertEqual(created.document_slot("bare", html=True),
-                         TemplateSet.builtin().document_slot("bare", html=True))
+        self.assertEqual(self.files(created), ["documents/no-title.html"])
+        self.assertEqual(created.document_slot("no-title", html=True),
+                         TemplateSet.builtin().document_slot("no-title", html=True))
 
     def test_a_name_that_is_taken_refuses_without_touching_it(self):
         create_template_set("Taken", self.project_root)
@@ -400,7 +400,7 @@ class FragmentVocabularyTests(unittest.TestCase):
 
         names = loaded.document_template_names()
         self.assertIn("short_story", names)      # the writer's, pickable
-        self.assertIn("bare", names)             # the built-in shelf
+        self.assertIn("no-title", names)             # the built-in shelf
         self.assertNotIn("project_header", names)
         self.assertNotIn("toc_page", names)
 
@@ -485,8 +485,8 @@ class DocumentTemplateFaceTests(unittest.TestCase):
                          "fancy name")
 
     def test_a_shelf_path_is_the_same_name(self):
-        self.assertEqual(document_template_stem("documents/bare.html"),
-                         "bare")
+        self.assertEqual(document_template_stem("documents/no-title.html"),
+                         "no-title")
 
     def test_names_that_nothing_could_ask_for_are_empty(self):
         self.assertEqual(document_template_stem(""), "")
@@ -519,7 +519,7 @@ class DocumentTemplateFaceTests(unittest.TestCase):
         # Plain text is the face only when it is all the set has.
         self.assertEqual(faces.get("document"), "document.txt")
         # The shelf keeps bare as the file it is.
-        self.assertEqual(faces.get("bare"), "bare.html")
+        self.assertEqual(faces.get("no-title"), "no-title.html")
         # Chrome dresses the book, never a document; a file that is not
         # a fragment is not a face.
         self.assertNotIn("project_header", faces)
@@ -531,7 +531,7 @@ class DocumentTemplateFaceTests(unittest.TestCase):
 
     def test_a_shipped_set_answers_with_the_same_faces(self):
         faces = TemplateSet.builtin().document_template_faces()
-        self.assertEqual(faces.get("bare"), "bare.html")
+        self.assertEqual(faces.get("no-title"), "no-title.html")
 
 
 class ConfigLineWriteTests(unittest.TestCase):

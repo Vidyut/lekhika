@@ -100,12 +100,12 @@ class ReadingAFileWithEditorJunkTests(unittest.TestCase):
             "<p>Once ${ChapterNumber}: ${Content}</p>")
 
     def test_a_document_shelf_file_saved_by_the_editor_still_fills(self):
-        self._write("documents/bare.html", (
+        self._write("documents/no-title.html", (
             "<html><body><p><span>${Content}</span></p></body></html>"))
         template = TemplateSet.load("Mine", self.created.directory)
 
         self.assertEqual(
-            template.document_slot("bare", html=True),
+            template.document_slot("no-title", html=True),
             "<p>${Content}</p>")
 
     def test_fill_of_a_stripped_fragment_leaves_no_editor_furniture(self):
@@ -268,6 +268,7 @@ class CssTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_a_set_without_a_style_file_answers_empty(self):
+        (self.directory / "style.css").unlink()
         template = TemplateSet.load("Mine", self.directory)
         self.assertEqual(template.css(), "")
 
@@ -293,9 +294,15 @@ class CssTests(unittest.TestCase):
         # And the format without a folder of its own still gets the root.
         self.assertEqual(template.for_format("pdf").css(), "p { margin: 0 }")
 
-    def test_a_shipped_set_has_no_css(self):
-        template = TemplateSet.builtin()
-        self.assertEqual(template.css(), "")
+    def test_a_new_set_starts_with_the_default_stylesheet(self):
+        template = TemplateSet.load("Mine", self.directory)
+        self.assertIn("h1 {", template.css())
+
+    def test_a_shipped_set_ships_its_stylesheet(self):
+        # No folder to read, so the stylesheet comes from the same map a
+        # duplicate writes: the copy and the shipped set dress alike.
+        self.assertIn("h1 {", TemplateSet.builtin().css())
+        self.assertEqual(TemplateSet.builtin("nothing").css(), "")
 
 
 class CssExportTests(unittest.TestCase):
@@ -335,6 +342,7 @@ class CssExportTests(unittest.TestCase):
                         exported.index("unit-1"))
 
     def test_html_export_without_css_writes_no_style_tag(self):
+        (self.directory / "style.css").unlink()
         destination = self.root / "book.html"
 
         self.project.export_html(destination, None, self.load())
@@ -360,6 +368,7 @@ class CssExportTests(unittest.TestCase):
         self.assertIn("id='style' href='style.css'", opf)
 
     def test_epub_without_css_has_neither_link_nor_file(self):
+        (self.directory / "style.css").unlink()
         destination = self.root / "book.epub"
 
         self.project.export_epub(destination, None, self.load())

@@ -196,7 +196,7 @@ class TemplateNavigationTests(unittest.TestCase):
         self.assertEqual(self._kind_of(shelf), TEMPLATE_FOLDER_KIND)
         self.assertEqual([shelf.child(i).text(0)
                           for i in range(shelf.childCount())],
-                         ["bare.html", "bare.txt", "contents.html", "contents.txt"])
+                         ["contents.html", "contents.txt", "no-title.html", "no-title.txt"])
         for index in range(self.window.outliner.topLevelItemCount()):
             self.assertEqual(self._kind_of(
                 self.window.outliner.topLevelItem(index)), TEMPLATE_FILE_KIND
@@ -459,14 +459,17 @@ class TemplateNavigationTests(unittest.TestCase):
         style = created.directory / "style.css"
         self.assertEqual(style.read_text(encoding="utf-8"), "p { margin: 0 }")
 
-    def test_an_untouched_css_box_writes_no_style_file(self):
-        self._open_fragment()
+    def test_an_untouched_css_box_leaves_the_style_file_alone(self):
+        created, _path = self._open_fragment()
+        style = created.directory / "style.css"
+        # A new set is born with the default stylesheet (§3.2), so the
+        # box's job is to leave it be, not to mint one.
+        before = style.read_text(encoding="utf-8")
+        self.assertTrue(before.strip())
 
         self.assertTrue(self.window.save_current())
 
-        self.assertFalse(
-            (self.window.current_template_set.directory
-             / "style.css").exists())
+        self.assertEqual(style.read_text(encoding="utf-8"), before)
 
     def test_picking_a_document_brings_the_metadata_back(self):
         self._open_fragment()

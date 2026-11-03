@@ -127,27 +127,27 @@ class BookSettingsTests(unittest.TestCase):
             for index in range(self.window.doc_template_box.count())
         ]
         self.assertIn("", values)          # Default (the set's own slot)
-        self.assertIn("bare", values)      # builtin: no chrome at all
+        self.assertIn("no-title", values)      # builtin: no chrome at all
 
     def test_picking_a_document_slot_persists(self):
         self.window._select_document(self.scene.id)
         box = self.window.doc_template_box
 
-        box.setCurrentIndex(box.findData("bare"))
+        box.setCurrentIndex(box.findData("no-title"))
 
         document = next(
             d for d in self.project.documents() if d.id == self.scene.id
         )
-        self.assertEqual(document.doc_template, "bare")
+        self.assertEqual(document.doc_template, "no-title")
 
     def test_the_doc_template_box_carries_filenames(self):
         self.window._select_document(self.scene.id)
         box = self.window.doc_template_box
 
         self.assertTrue(box.isEditable())
-        index = box.findData("bare")
+        index = box.findData("no-title")
         self.assertGreaterEqual(index, 0)
-        self.assertEqual(box.itemText(index), "bare.html")
+        self.assertEqual(box.itemText(index), "no-title.html")
 
     def test_a_filename_typed_before_the_file_exists_saves(self):
         self.window._select_document(self.scene.id)
@@ -175,7 +175,7 @@ class BookSettingsTests(unittest.TestCase):
     def test_the_default_entry_saves_no_name(self):
         self.window._select_document(self.scene.id)
         box = self.window.doc_template_box
-        box.setCurrentIndex(box.findData("bare"))
+        box.setCurrentIndex(box.findData("no-title"))
         box.setCurrentIndex(0)                     # Default set's own slot
 
         document = next(

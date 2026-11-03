@@ -900,9 +900,9 @@ class BookAndTemplateStorageTests(unittest.TestCase):
         draft = self.project.documents()[0]
         chapter = self.project.add_document("Chapter", draft.id, "chapter")
         self.assertEqual(chapter.doc_template, "")
-        self.project.update_document(chapter.id, doc_template="bare")
+        self.project.update_document(chapter.id, doc_template="no-title")
         found = next(d for d in self.project.documents() if d.id == chapter.id)
-        self.assertEqual(found.doc_template, "bare")
+        self.assertEqual(found.doc_template, "no-title")
 
     def test_effective_cover_autodetects_then_honours_explicit_path(self):
         draft = self.project.documents()[0]
