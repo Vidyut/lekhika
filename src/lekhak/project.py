@@ -53,6 +53,7 @@ from .layout import (Node, load_tree as _load_tree, write_tree as _write_tree,
 from .disk_doc import split_document
 from .templates import (
     FORMATS, TemplateSet, discover_template_sets, named_template_sets,
+    parse_docx_config, project_template_root, split_head,
 )
 
 
@@ -102,11 +103,28 @@ _RESERVED_NAME_STEMS = {
     *(f"com{n}" for n in range(1, 10)),
     *(f"lpt{n}" for n in range(1, 10)),
 }
-# The Type each physical kind reads as with nothing stored
-# (docs/MODEL.md): the row is always visible in the inspector, but the
-# default stays out of storage so later heals are never shadowed.
-KIND_DEFAULT_TYPE = {"folder": "Folder", "chapter": "Chapter",
-                     "scene": "Scene", "note": "Note"}
+# The roles a document may have (1.17): two base ones, as close to the
+# truth on disk as a role can be — a folder is a Folder, anything else a
+# Document — and every other role the writer adds, which the database
+# keeps per group, so a folder's roles never sit in a document's list.
+TYPE_GROUPS = ("folder", "document")
+BASE_TYPE = {"folder": "Folder", "document": "Document"}
+# The metadata key that says a document is a template (1.17): its body
+# is markup rather than manuscript, it stays out of the book, and the
+# sidebar swaps to the template design panel while it is so marked.
+TEMPLATE_KEY = "Template"
+# The metadata key holding a template's own design (1.17): the yaml
+# lines the design panel edits, written into the file's head.
+TEMPLATE_CONFIG_KEY = "Template config"
+# How a document names the template it uses (1.17): a set's own slot by
+# name, as before; a one-file template and a template document by these
+# prefixes, so the three can never be mistaken for one another.
+TEMPLATE_FILE_PREFIX = "file:"
+TEMPLATE_DOC_PREFIX = "doc:"
+# The frontmatter keys Lekhak owns (1.17): anything else in a document's
+# head is the document's own — a template's design.
+OWN_HEAD_KEYS = {"title", "synopsis", "word_target", "kind", "page_break",
+                 "scene_divider", "doc_template", "template"}
 # How a document may demand to start on a page (1.6). "right" is recto
 # and "next-odd" the literal parity phrasing — both emit the same DOCX
 # ODD_PAGE section, as the user chose; likewise left/next-even.
@@ -1314,9 +1332,24 @@ class Project:
         )
         self.db.commit()
 
-    def reorder(self, document_id: str, parent_id: str | None, position: int) -> None:
+    def reorder(self, document_id: str, parent_id: str | None, position: int) -> bool:
+        """Place a document at a position under a parent, file and row together.
+
+        Returns False and writes nothing if the file cannot go there —
+        a name already taken in the destination folder, most often.
+        The folder tree is the truth (docs/STORAGE.md), so a parent
+        change means the file moves first and the index follows; the
+        two are never left disagreeing.
+        """
         if parent_id == document_id or self._is_descendant(parent_id, document_id):
             raise ValueError("A document cannot contain itself")
+        row = self.db.execute(
+            "SELECT parent_id FROM documents WHERE id=?", (document_id,)
+        ).fetchone()
+        if row is None:
+            return True
+        if row[0] != parent_id and not self._move_file(document_id, parent_id):
+            return False
         # The order of these three UPDATEs is load-bearing. First close the
         # gap the moved item leaves behind (decrement everything above it
         # under its old parent), then open a slot at the destination
@@ -1338,6 +1371,68 @@ class Project:
                 "UPDATE documents SET parent_id=?,position=?,updated_at=? WHERE id=?",
                 (parent_id, position, datetime.now(timezone.utc).isoformat(), document_id),
             )
+        return True
+
+    def _move_file(self, document_id: str, new_parent_id: str | None) -> bool:
+        """Move a document's file under a new parent on disk.
+
+        The row and every row beneath it are given the path the move
+        gives them, so the index keeps pointing at the files it was
+        indexing. False means nothing moved and the caller must leave
+        the database alone: the destination is unknown, or it already
+        holds that name.
+        """
+        row = self.db.execute(
+            "SELECT path FROM documents WHERE id=?", (document_id,)
+        ).fetchone()
+        if row is None or not row[0]:
+            return True                      # no file of its own to move
+        old_relative = str(row[0])
+        current = self.root / old_relative
+        if not current.exists():
+            return True                      # a row whose file has gone
+        if new_parent_id is None:
+            destination = self.root
+        else:
+            parent = self.db.execute(
+                "SELECT path FROM documents WHERE id=?", (new_parent_id,)
+            ).fetchone()
+            if parent is None or not parent[0]:
+                return False                 # the destination is not known
+            destination = self.root / str(parent[0])
+        if not destination.is_dir():
+            return False
+        wanted = destination / current.name
+        if wanted == current:
+            return True
+        if wanted.exists():
+            return False                     # that name is taken there
+        marker = self.lock_marker(document_id)
+        try:
+            shutil.move(str(current), str(wanted))
+        except OSError:
+            return False
+        # A container's lock marker rides inside the folder and has
+        # already come along; a document's sits beside its file.
+        if marker is not None and marker.exists():
+            try:
+                marker.rename(wanted.with_name("." + wanted.name + LOCK_FILE))
+            except OSError:
+                pass
+        new_relative = str(wanted.relative_to(self.root))
+        prefix = old_relative + "/"
+        updates: list[tuple[str, str]] = []
+        for item in self.db.execute("SELECT id, path FROM documents").fetchall():
+            if not item[1]:
+                continue
+            if item[1] == old_relative:
+                updates.append((new_relative, item[0]))
+            elif item[1].startswith(prefix):
+                updates.append((new_relative + "/" + item[1][len(prefix):], item[0]))
+        with self.db:
+            self.db.executemany(
+                "UPDATE documents SET path=? WHERE id=?", updates)
+        return True
 
     def parent_of(self, document_id: str) -> str | None:
         """The id of this document's parent, or None if it is top-level."""
@@ -1728,6 +1823,15 @@ class Project:
         }
         metadata = {key: value for key, value in metadata.items()
                     if value not in (None, "", 0)}
+        if self.is_template(document_id):
+            # A template's own design (1.17): the yaml in the head is the
+            # template's, and it travels with the file.
+            metadata["template"] = "yes"
+            for key, value in self.config_lines(
+                    self.metadata(document_id).get(TEMPLATE_CONFIG_KEY, "")
+            ).items():
+                if key not in OWN_HEAD_KEYS:
+                    metadata[key] = value
         if not metadata:
             return html
         head = dump_frontmatter(metadata)
@@ -1823,6 +1927,19 @@ class Project:
 
         return self.LINK_HREF_RE.sub(restore, html)
 
+    def _chapter_exact(self, document: Document) -> bool:
+        """Whether a document plays by the Chapter rule (1.13): the
+        exact, case-sensitive match.
+
+        The rule follows the role (docs/MODEL.md): a document whose role
+        is Chapter plays by it, and a chapter keeps playing by it until
+        the writer gives it another role — the two base roles (1.17)
+        would otherwise silently loosen the rule for every chapter.
+        """
+        role = self.type_of(document)
+        return role == "Chapter" or (
+            role == BASE_TYPE["document"] and document.kind == "chapter")
+
     def related_documents(self, document_id: str) -> tuple[list[Document], list[Document]]:
         """Whole-word title matches around one document (1.13), both ways.
 
@@ -1860,7 +1977,7 @@ class Project:
         own_text = texts.get(document_id, "")
         own_title = target.title.strip()
         own_key = own_title.casefold()
-        own_exact = self.type_of(target) == "Chapter"
+        own_exact = self._chapter_exact(target)
         mentions: list[Document] = []
         mentioned_by: list[Document] = []
         for document in documents:
@@ -1873,7 +1990,7 @@ class Project:
                 # An exact match is a subset of the loose one, so the
                 # strict re-check runs only on candidates that already
                 # matched — one type_of per hit, not per document.
-                if (self.type_of(document) != "Chapter"
+                if (not self._chapter_exact(document)
                         or self._mentions_phrase(own_text, title, exact=True)):
                     mentions.append(document)
             other_text = texts.get(document.id, "")
@@ -2066,17 +2183,20 @@ class Project:
         return {row[0]: row[1] for row in rows}
 
     def default_type(self, document: Document) -> str:
-        """The Type a document shows with nothing stored (docs/MODEL.md).
+        """The role a document shows with nothing stored (1.17).
 
-        Folders with book settings or page setup read as Book; anything
-        else as what it physically is. type_of() is this, unless stored
-        Type metadata says otherwise.
+        Two base roles, as close to the truth on disk as a role can be:
+        a folder is a Folder and everything else a Document. A role the
+        writer adds (Scene, Part, Book…) is stored on the document and
+        kept in that group's catalogue, so it is offered again.
         """
-        if document.kind == "folder":
-            if self.book_settings(document.id) or self.page_setup(document.id):
-                return "Book"
-            return "Folder"
-        return KIND_DEFAULT_TYPE.get(document.kind, "Document")
+        return BASE_TYPE[self.type_group(document)]
+
+    def type_group(self, document: Document) -> str:
+        """Which role group a document belongs to (1.17): a folder's
+        roles are the folder's, a document's are the document's, and
+        the two lists never meet."""
+        return "folder" if document.kind == "folder" else "document"
 
     def container_ids(self) -> set[str]:
         """Ids that hold children — a container whatever its physical kind.
@@ -2524,6 +2644,121 @@ class Project:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def known_types(self, group: str) -> list[str]:
+        """The roles this group offers (1.17).
+
+        Its base role, every role the writer has added to it, and every
+        role already stored on one of the group's documents — an older
+        project's own roles stay offered rather than vanishing.
+        """
+        names: list[str] = []
+        seen: set[str] = set()
+
+        def offer(name: str) -> None:
+            name = (name or "").strip()
+            if not name or name.casefold() in seen:
+                return
+            seen.add(name.casefold())
+            names.append(name)
+
+        offer(BASE_TYPE.get(group, BASE_TYPE["document"]))
+        for name in self._catalogue("known_types", group):
+            offer(name)
+        for document in self.documents():
+            if self.type_group(document) != group:
+                continue
+            offer(self.metadata(document.id).get("Type", ""))
+        return names
+
+    def add_type(self, group: str, name: str) -> str:
+        """Remember a new role for a group (1.17), and return it as kept.
+
+        The catalogue is what the dropdown reads, so a role added here
+        is offered to every document of the group that follows — storing
+        it on one document alone would offer it to that one only.
+        """
+        name = (name or "").strip()
+        if not name:
+            return ""
+        catalogue = self._catalogue("known_types", group)
+        for held in catalogue:
+            if held.casefold() == name.casefold():
+                return held
+        catalogue.append(name)
+        self._set_catalogue("known_types", group, catalogue)
+        return name
+
+    def known_fields(self, group: str) -> list[str]:
+        """The metadata field names this group offers (1.17).
+
+        A field created on one scene shows, empty, on every other
+        scene: the catalogue names the fields, the documents hold the
+        values, and only filled values are stored.
+        """
+        names: list[str] = []
+        seen: set[str] = set()
+
+        def offer(name: str) -> None:
+            name = (name or "").strip()
+            if not name or name.casefold() in seen:
+                return
+            seen.add(name.casefold())
+            names.append(name)
+
+        for name in self._catalogue("known_fields", group):
+            offer(name)
+        for document in self.documents():
+            if self.type_group(document) != group:
+                continue
+            for key in self.metadata(document.id):
+                if key in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY):
+                    continue
+                offer(key)
+        if group == "folder":
+            for key in self.project_metadata():
+                offer(key)
+        return names
+
+    def add_field(self, group: str, name: str) -> str:
+        """Remember a field name for a group (1.17), and return it."""
+        name = (name or "").strip()
+        if not name:
+            return ""
+        catalogue = self._catalogue("known_fields", group)
+        for held in catalogue:
+            if held.casefold() == name.casefold():
+                return held
+        catalogue.append(name)
+        self._set_catalogue("known_fields", group, catalogue)
+        return name
+
+    def _catalogue(self, key: str, group: str) -> list[str]:
+        """One group's list from a catalogue kept in the settings table
+        (the project_metadata precedent): no schema change, and a junk
+        or hand-edited value degrades to an empty list."""
+        raw = self.get_setting(key)
+        try:
+            stored = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        values = stored.get(group)
+        if not isinstance(values, list):
+            return []
+        return [str(value) for value in values if isinstance(value, str)]
+
+    def _set_catalogue(self, key: str, group: str, values: list[str]) -> None:
+        raw = self.get_setting(key)
+        try:
+            stored = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        stored[group] = list(values)
+        self.set_setting(key, json.dumps(stored, ensure_ascii=False))
+
     def word_rollups(self) -> dict[str, int]:
         """Word count per document, containers summing all descendants."""
         documents = self.documents()
@@ -2855,6 +3090,132 @@ class Project:
             ordered.append(default)     # always reachable as the fallback
         return ordered, (ordered[0] if ordered else default), warnings
 
+    # -- templates as documents, and one-file templates (1.17) --------------
+
+    def is_template(self, document_id: str) -> bool:
+        """Whether a document is a template (1.17): its body is markup
+        rather than manuscript, so it stays out of the book and the
+        sidebar shows the template design panel instead."""
+        value = self.metadata(document_id).get(TEMPLATE_KEY, "")
+        return value.strip().lower() in ("yes", "true", "1")
+
+    def set_template(self, document_id: str, on: bool) -> None:
+        """Mark a document as a template, or take the mark away.
+
+        The mark is the document's own metadata (and the file's head
+        beside it) and nothing else: it says what the document *is*, and
+        every export asks. The row is written on its own, so replacing
+        the document's metadata elsewhere never unmakes the template.
+        """
+        if on:
+            self.db.execute(
+                "INSERT INTO document_metadata"
+                "(document_id,key,value,value_type,options_json) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(document_id,key) DO UPDATE SET value=excluded.value",
+                (document_id, TEMPLATE_KEY, "yes", "text", "[]"),
+            )
+        else:
+            self.db.execute(
+                "DELETE FROM document_metadata WHERE document_id=? AND key=?",
+                (document_id, TEMPLATE_KEY),
+            )
+        self.db.commit()
+
+    def template_documents(self) -> list[Document]:
+        """The documents that are templates (1.17)."""
+        return [document for document in self.documents()
+                if self.is_template(document.id)]
+
+    def single_file_templates(self) -> list[Path]:
+        """The one-file templates in the project's templates folder (1.17).
+
+        A template is one file with its yaml in the head — no folder of
+        slots beside it — so these sit directly under templates/, where
+        the sets' own folders sit.
+        """
+        root = project_template_root(self.root)
+        if not root.is_dir():
+            return []
+        return [path for path in sorted(root.iterdir())
+                if path.is_file() and path.suffix.lower() in (".html", ".txt")]
+
+    def template_fragment(self, name: str, *, html: bool = True) -> str | None:
+        """A one-file template's fragment (1.17), or None when no such
+        template answers to the name."""
+        for path in self.single_file_templates():
+            if path.stem != name or (path.suffix.lower() == ".html") != html:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                return None
+            return split_head(text)[1]
+        return None
+
+    def template_config(self, name: str) -> dict[str, str]:
+        """The design of the template a name stands for (1.17), by key.
+
+        A one-file template keeps its design in its own head; a template
+        document keeps it in its metadata, written into the file's head
+        beside it. Keys come back normalized, the way the print
+        config's keys are read.
+        """
+        name = (name or "").strip()
+        if not name:
+            return {}
+        if name.startswith(TEMPLATE_DOC_PREFIX):
+            document = next(
+                (d for d in self.documents()
+                 if d.id == name[len(TEMPLATE_DOC_PREFIX):]), None)
+            if document is None:
+                return {}
+            return parse_docx_config(
+                self.metadata(document.id).get(TEMPLATE_CONFIG_KEY, ""))
+        for path in self.single_file_templates():
+            if path.stem != name:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                return {}
+            return parse_docx_config(split_head(text)[0])
+        return {}
+
+    def template_override(self, name: str, *, html: bool = True) -> str | None:
+        """The fragment of the template a document names (1.17), or None.
+
+        A template document answers first — its own body is the markup —
+        then a one-file template; the set's own slot answers when
+        neither does, which the caller asks for separately.
+        """
+        name = (name or "").strip()
+        if not name:
+            return None
+        if name.startswith(TEMPLATE_DOC_PREFIX):
+            document = next(
+                (d for d in self.documents()
+                 if d.id == name[len(TEMPLATE_DOC_PREFIX):]), None)
+            if document is None:
+                return None
+            return self.read_content(document.id)
+        if name.startswith(TEMPLATE_FILE_PREFIX):
+            return self.template_fragment(name[len(TEMPLATE_FILE_PREFIX):],
+                                          html=html)
+        return self.template_fragment(name, html=html)
+
+    @staticmethod
+    def config_lines(text: str) -> dict[str, str]:
+        """The `key: value` lines of a config block, keys as written."""
+        lines: dict[str, str] = {}
+        for line in (text or "").split("\n"):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            key, separator, value = line.partition(":")
+            if not separator or not key.strip():
+                continue
+            lines[key.strip()] = value.strip()
+        return lines
+
     def _template_resolver(self, fallback: TemplateSet, fmt: str = "html"):
         """The set that renders each document (§2's first rule).
 
@@ -2950,10 +3311,29 @@ class Project:
         Not a merge: keys absent from ``values`` are removed. Callers that
         want to preserve existing keys read them first with
         metadata_entries() and pass the combined dict back.
+
+        The template's own mark and design are the exception (1.17):
+        they say what the document *is*, not what its metadata table
+        holds, so a caller replacing the set does not silently unmake a
+        template. Passing them explicitly replaces them as asked.
         """
         cleaned = {key.strip(): value for key, value in values.items() if key.strip()}
-        value_types = value_types or {}
-        options = options or {}
+        value_types = dict(value_types or {})
+        options = dict(options or {})
+        for key in (TEMPLATE_KEY, TEMPLATE_CONFIG_KEY):
+            if key in cleaned:
+                continue
+            row = self.db.execute(
+                "SELECT value,value_type,options_json FROM document_metadata "
+                "WHERE document_id=? AND key=?", (document_id, key)).fetchone()
+            if row is None:
+                continue
+            cleaned[key] = row[0]
+            value_types.setdefault(key, row[1] or "text")
+            try:
+                options.setdefault(key, json.loads(row[2] or "[]"))
+            except (TypeError, ValueError):
+                options.setdefault(key, [])
         with self.db:
             self.db.execute("DELETE FROM document_metadata WHERE document_id=?", (document_id,))
             self.db.executemany(
@@ -3142,6 +3522,8 @@ class Project:
         for document in documents:
             if document.kind not in EXPORT_KINDS:
                 continue
+            if self.is_template(document.id):
+                continue        # a template is markup, not manuscript
             current: str | None = document.id
             covered = selected_ids is None
             drop = False
@@ -3261,7 +3643,9 @@ class Project:
         values["ToC"] = getattr(self, "_toc_str", "")
         values.setdefault("Scenes", (extra or {}).get("Scenes", ""))
         if document.doc_template:
-            override = templates.document_slot(document.doc_template, html=html)
+            override = self.template_override(document.doc_template, html=html)
+            if override is None:
+                override = templates.document_slot(document.doc_template, html=html)
             if override is not None:
                 return templates.fill(override, values, html=html)
         if slot is None:
@@ -4050,6 +4434,12 @@ class Project:
                    else "new scene" if document.kind == "scene" else None)
             if document.id not in explicit and key is not None:
                 demanded = page_break_value(config.get(key, ""))
+                if demanded is None:
+                    # The template this document wears may state a page
+                    # start of its own (1.17): the design's say, under
+                    # the print config's and over the baseline.
+                    demanded = page_break_value(
+                        self.template_config(document.doc_template).get(key, ""))
                 if demanded is not None:
                     start = demanded
                 elif (start == "page" and trim_stated

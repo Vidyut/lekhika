@@ -606,6 +606,134 @@ form-feed consideration for text, plus the template-discovery phases
 is the verified count at release). A comparison against other
 writing software, with an easy batch queued, is in `docs/IDEAS.md`.
 
+### 1.16 The metadata section, in boxes — OPEN (outlined 2026-11-01)
+
+**Request:** "Right now the metadata is just undifferentiated text with no clear
+logic to it. We could organize it better, create collapsible sections to
+prevent overflow, create height limited sections for where text boxes pull
+metadata from templates and it is long..."
+
+**Model:** one metadata section (1.12), its rows sorted into collapsible
+groups — the common facts visible without scrolling, the long ones unable to
+push the editor off-screen. The grouping agreed on 2026-11-01:
+
+- **Basic** — always open: Kind | Word target | Template set.
+- **Synopsis** — collapsible, height-limited: the synopsis box scrolls instead
+  of growing.
+- **Format / Scene** — collapsible: Page start | Scene divider | Cover.
+- **Advanced / Custom** — collapsible: custom metadata keys, height-capped so
+  a long value never pushes the editor off-screen.
+
+**Why it was still open:** the outline lived only in chat; the Nov 1
+session was pulled into the binder/storage rewrite before any of it was
+built. The section in `app.py` was still one flat `QVBoxLayout` (2191-2226)
+with an uncapped synopsis box.
+
+**Implemented (2026-11-02):** the inspector's metadata section is four
+groups, each with a header that folds it away (`Fold` in `app.py`): **Basic**
+(Type, lock, word-count goal, template set), **Synopsis**, **Format / Scene**
+(Page start, Scene divider, Cover, Page setup, unpublished links) and
+**Advanced / Custom** (the field table with its Add/Remove buttons). Basic
+and Synopsis open by default, the other two closed. The synopsis box is
+capped at 120 px and the field table at 220 px, so a long text scrolls
+inside its box instead of stretching the panel, and a group takes the
+height it needs and no more — the surplus in a tall window stays at the
+bottom of the inspector instead of opening a gap under one box. The rows
+themselves are unchanged: the same widgets, the same storage, the same live
+saves; only the arrangement is new. Suite 903, exit 0.
+
+**Relations:** serves 2.1d's Assumption H — the metadata bar is the home for
+document/book facts; the 2.4c/2.4d open edge ("features replacing metadata")
+lands in the same section.
+
+**Still open:** Page start itself — `docs/UI-NOTES.md` §9 says it left the
+inspector, but `app.py` still shows it for every selected document and
+still saves it, so one of the two is wrong. It sits in Format / Scene until
+that is settled. — **settled by 1.17: the row is gone and the page start
+belongs to the template's design panel.**
+
+### 1.17 Type is a role, the template is a tick — DONE (2026-11-03)
+
+**Request:** the author's own words, in three messages. "The page start feels
+like it belongs in a template... I was thinking that since we already have
+the 'Type' dropdown, we could optimize it to handle templates as well... We
+can just pack the yaml in the header and be done with it. One document, one
+file. Less things to break. When type is not template, below it, there will
+be a dropdown to apply template which lists all the templates the database
+knows." Then the refinement: "we should not keep templates in type. So the
+original plan of having a checkbox for template is better than adding it to
+type. Document role is the correct type model. However, we provide only two
+roles initially, that are as close to the truth on disk as possible — folder
+and document — with a text box next to the dropdown to add new types." Then
+the lock: "'Copy default templates to customize'... Only types for folders
+should appear for the type box for folders. Only types set for documents
+should appear for documents... And same with metadata. New metadata entries
+created for documents should show for all documents. New metadata entries
+created for folders should show for all folders... if a user adds metadata
+{POV} for one scene. There should be empty metadata field for {POV} in other
+scenes... The DB maintains this whole metadata panel business. Tracking known
+templates, known types, metadata fields by type, etc."
+
+**Model:** Type is a document *role*, with two base values close to the truth
+on disk — **Folder** and **Document** — and the template is a separate mark, a
+checkbox. The database keeps the catalogues the panel reads: roles per group
+(folder / document) and metadata field names per group. A template is one
+file with its yaml in the head.
+
+**Implemented (2026-11-03):**
+
+- **The Type row** offers the roles of its own group only — a folder's
+  dropdown never shows a document's role and the other way round. Beside it
+  a **"New type…" box** adds one: the name joins that group's catalogue in
+  the database, so every document of that kind that follows can pick it.
+- **Two base roles.** `default_type` returns Folder for a folder and Document
+  for everything else; a folder with book settings is no longer promoted to
+  "Book" — "Book" is a role the writer adds. The *physical* kind still
+  travels beside the role, and the Outliner's Kind column, the binder
+  tooltip, the related-files list and the link picker show it: the role is
+  the writer's own label and says nothing about what the thing is.
+- **The Chapter rule (1.13) follows the role** as `docs/MODEL.md` says, but a
+  chapter keeps the rule until the writer gives it another role
+  (`Project._chapter_exact`) — the two base roles would otherwise silently
+  loosen it for every chapter.
+- **The per-group metadata catalogue.** A field created on one scene shows,
+  empty, on every other scene; the same holds for folders. The catalogue
+  names the fields, the documents hold the values, and only filled values
+  are stored. It lives in the `settings` table, so no schema change was
+  needed.
+- **The template tick** sits beside the Type row: ticked, the document is a
+  template — its body is markup rather than manuscript, it stays out of the
+  book, and the sidebar swaps to the template design panel; unticked, the
+  ordinary metadata comes back. The mark is the document's own metadata
+  (`Template`) and travels into the file's head as `template: yes`.
+- **The apply-template dropdown** below the Type row lists every template the
+  project knows — the sets' own slots, the one-file templates in
+  `templates/`, and the documents marked as templates. Beside it, the note
+  **"Copy default templates to customize"** puts an editable copy of the
+  shipped default set in the project's `templates/` folder.
+- **One-file templates**: a template is one file with its yaml in the head
+  (`templates/<name>.html`), discovered, listed and applied; the design panel
+  edits that head, and the export reads the page start it states.
+- **Page start moved** from the inspector's Format / Scene group into the
+  design panel, where a pick writes the `New Chapter:` / `New Scene:` lines
+  the print-config vocabulary speaks. This settles 1.16's open contradiction:
+  `docs/UI-NOTES.md` §9 recorded the decision at commit `bed28c5` and the
+  live widget landed in the same commit, so the docs and the code disagreed
+  from the start. The row is now really gone; values older projects stored
+  are still honoured by the export, silently.
+
+Suite 923, exit 0.
+
+**Relations:** 1.16 (the boxes — the Type row, the tick and the apply-template
+row live in Basic), 1.13 (the Chapter rule), 1.2 and 1.12 (the template design
+panel), 1.6 (page starts), `docs/MODEL.md` (the role model),
+`docs/UI-NOTES.md` §12.
+
+**Still open:** a one-file template is listed and applied but is not opened in
+the editor; a template document does not appear in the Outliner's Templates
+listing; custom metadata values stay in the database — they are not written
+into the file's head (pre-existing, not 1.17's doing).
+
 ## Phase 2 — books, variants, and conditional content
 
 ### 2.1 Book-level compile settings — DONE

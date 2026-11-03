@@ -64,7 +64,7 @@ from PySide6.QtWidgets import (
     QInputDialog, QLabel,
     QLineEdit, QMenu,
     QMainWindow, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
-    QPushButton, QSlider, QSpinBox, QSplitter, QStatusBar,
+    QPushButton, QSizePolicy, QSlider, QSpinBox, QSplitter, QStatusBar,
     QStyle, QTabWidget,
     QTableWidget, QTableWidgetItem, QTextEdit, QToolBar,
     QToolButton, QTreeWidget,
@@ -86,17 +86,18 @@ from .ywriter import import_yw7
 from .scrivener import import_scriv
 from .project import (
     AMAZON_TRIMS, DEFAULT_PAGE_SETUP, EXPORT_KINDS,
-    KDP_MARGIN_BANDS, KDP_MARGIN_MIN, PAGE_BREAK_VALUES,
-    PAGE_TRIMS, DeleteError, Project, clean_page_setup,
-    config_length_list, config_page_size, trim_id_for,
+    KDP_MARGIN_BANDS, KDP_MARGIN_MIN,
+    PAGE_TRIMS, TEMPLATE_CONFIG_KEY, TEMPLATE_DOC_PREFIX,
+    TEMPLATE_FILE_PREFIX, TEMPLATE_KEY, DeleteError, Project,
+    clean_page_setup, config_length_list, config_page_size, trim_id_for,
 )
 from .preferences import LINK_POLICY_CHOICES, PreferencesDialog
 from .pageview import PageView
 from .templates import (
     PLACEHOLDER_RE, TEMPLATE_CONFIG_NOTE, TEMPLATE_NAMING_NOTE,
     TemplateSet, _shipped_text, copy_template_file, copy_template_set,
-    discover_template_sets, document_template_stem, file_paths,
-    is_template_fragment, join_head, parse_docx_config,
+    discover_template_sets, document_template_stem, drop_config_line,
+    file_paths, is_template_fragment, join_head, parse_docx_config,
     project_template_root, set_template_flag, split_head,
     write_config_line,
 )
@@ -442,15 +443,26 @@ class ProjectReplaceDialog(QDialog):
 # metadata is edited whenever the inspector shows folder/root fields (1.12).
 # Document ids are uuid4 hex, so the two vocabularies cannot collide.
 PROJECT_METADATA_TARGET = "project"
-# The Type dropdown's built-in suggestions (docs/MODEL.md): we don't know
-# how the writer will use a folder, so we assume the novel-writing roles
-# and let anything else be typed. Typed values are stored, and every Type
-# already used in the project joins the list on the next dropdown.
-TYPE_SUGGESTIONS = [
-    "Folder", "Document", "Book", "Chapter", "Scene", "Part", "Section",
-    "Front Matter", "Back Matter", "Author Profile", "Glossary",
-    "Bibliography", "Research", "Note", "Do not print",
-]
+# The Type dropdown's roles (1.17): two base ones, close to the truth on
+# disk — a folder and a document — and every other role the writer adds,
+# which the database keeps per group so a folder's roles never sit in a
+# document's list. The list itself lives in the project, not here.
+
+# The page starts the design panel offers (1.17), and the words a config
+# may use for the same start: the design says where its pages begin.
+PAGE_START_CHOICES = (
+    ("Automatic", ""),
+    ("Recto — a right-hand page", "Recto"),
+    ("Verso — a left-hand page", "Verso"),
+    ("Page break", "page-break"),
+    ("Continuous", "continuous"),
+)
+PAGE_START_WORDS = {
+    "right": "Recto", "recto": "Recto", "next-odd": "Recto",
+    "left": "Verso", "verso": "Verso", "next-even": "Verso",
+    "page": "page-break", "page-break": "page-break", "new-page": "page-break",
+    "flow": "continuous", "continuous": "continuous", "run-on": "continuous",
+}
 
 
 class MetadataTable(QTableWidget):
@@ -648,6 +660,62 @@ class MetadataDialog(QDialog):
         dict[str, str], dict[str, str], dict[str, list[str]]
     ]:
         return self.table.values_types_options()
+
+
+class RefreshCombo(QComboBox):
+    """A dropdown that asks for a fresh list when it opens (1.17).
+
+    The templates a project knows change while it is open — a document
+    marked as a template, a one-file template dropped into templates/ —
+    and a list frozen at selection time would hide them.
+    """
+
+    aboutToOpen = Signal()
+
+    def showPopup(self) -> None:
+        self.aboutToOpen.emit()
+        super().showPopup()
+
+
+class Fold(QWidget):
+    """A titled, collapsible box for the inspector's metadata groups (1.16).
+
+    The author's complaint was that the metadata was "undifferentiated text
+    with no clear logic to it" — the groups give it that logic, and the fold
+    keeps the long ones (a synopsis, a table of custom fields) from pushing
+    the editor off-screen. The header is a QToolButton, the house's control
+    for anything that has to stay usable at any width (2.4h).
+    """
+
+    def __init__(self, title: str, *, expanded: bool = True,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self.header = QToolButton()
+        self.header.setText(title)
+        self.header.setCheckable(True)
+        self.header.setChecked(expanded)
+        self.header.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(self.header)
+        layout.addWidget(self.body)
+        # A group takes the height it needs and no more: the surplus in a
+        # tall inspector belongs to the window, not to a box with a long
+        # text area in it.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.Maximum)
+        self.header.toggled.connect(self._toggled)
+        self._toggled(expanded)
+
+    def _toggled(self, expanded: bool) -> None:
+        self.body.setVisible(expanded)
+        self.header.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
 
 
 # --- template sets in the binder ---------------------------------------
@@ -1877,7 +1945,14 @@ class MainWindow(QMainWindow):
         # HTML file and this is an HTML editor, so the file loads here
         # like any document and Save writes it back to its own path.
         self.current_template_file = None
+        # The document whose design the panel is showing (1.17): a
+        # template document is designed in the sidebar like a template
+        # file is, and this says which document that is.
+        self._design_document_id = None
         self.loading = False
+        # Set while a binder sweep is waiting for the event loop, so a
+        # drop's several signals cost one sweep rather than several.
+        self._tree_move_pending = False
         self.focus_mode = False
         self.zoom = 1.0            # display-only; see ZOOM_ANCHOR_PT
         self._project_total = 0
@@ -1920,7 +1995,14 @@ class MainWindow(QMainWindow):
         self.tree.setDragDropMode(QTreeWidget.InternalMove)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemChanged.connect(self._title_changed)
-        self.tree.model().rowsMoved.connect(self._tree_moved)
+        # A drop reports itself as a removal plus an insertion, or as a
+        # move, depending on how Qt chose to write it (1.18): listening
+        # to only one of the three left a real drag unheard, and the
+        # binder moved on screen while nothing was written down.
+        model = self.tree.model()
+        model.rowsMoved.connect(self._tree_structure_changed)
+        model.rowsInserted.connect(self._tree_structure_changed)
+        model.rowsRemoved.connect(self._tree_structure_changed)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_context_menu)
 
@@ -2008,6 +2090,9 @@ class MainWindow(QMainWindow):
 
         self.synopsis = QPlainTextEdit()
         self.synopsis.setPlaceholderText("Synopsis…")
+        # A synopsis is a paragraph, not a page: the box scrolls instead of
+        # growing, so a long one cannot push the editor off-screen (1.16).
+        self.synopsis.setMaximumHeight(120)
         self.synopsis.textChanged.connect(self._metadata_changed)
 
         self.target = QSpinBox()
@@ -2024,11 +2109,10 @@ class MainWindow(QMainWindow):
         )
         self.target.valueChanged.connect(self._metadata_changed)
 
-        # Page starts left the inspector (UI-NOTES 9): the template owns
-        # them per kind (docs/TEMPLATES.md §2) and the auto baseline —
-        # chapters open recto once a trim is set — needs no row. Stored
-        # values from older projects keep working silently; the export
-        # path still reads them.
+        # Page starts left the inspector for good (1.17): the template's
+        # design panel owns them — the design says where its own pages
+        # begin — and the values older projects stored keep working
+        # silently; the export path still reads them.
 
         # Book anatomy: folders carry the compile settings (which template
         # dresses them, where the cover is); chapters, scenes and notes
@@ -2080,8 +2164,8 @@ class MainWindow(QMainWindow):
             "everything inside it, and a series folder can set one "
             "house trim for all its books. Clearing the dialog returns "
             "to the built-in default (US Letter).")
-        self.doc_template_label = QLabel("Document template")
-        self.doc_template_box = QComboBox()
+        self.doc_template_label = QLabel("Apply template")
+        self.doc_template_box = RefreshCombo()
         # The box carries the filename, the way the Type box carries a
         # type (docs/TEMPLATES.md §1.2): a pick shows the file, a typed
         # name assigns one that does not exist yet, and nothing is
@@ -2094,16 +2178,20 @@ class MainWindow(QMainWindow):
             self._doc_template_changed)
         self.doc_template_box.lineEdit().editingFinished.connect(
             self._doc_template_changed)
+        self.doc_template_box.aboutToOpen.connect(
+            self._refresh_template_choices)
         self.doc_template_box.lineEdit().setPlaceholderText(
             "folder.html — the filename dresses this document")
         self.doc_template_box.setToolTip(
-            "Which file dresses this document — by filename, editable: "
-            "type any name (fancynameit-scene.html) even before the file "
-            "exists; a name no file answers falls back to the set's own "
-            "slot for this document's shape. A pick here is final: it is "
-            "how THIS document renders, whatever the book would have "
-            "chosen. Page size is not part of it — paper stays a book "
-            "setting, on the folder.")
+            "Which template dresses this document (1.17). The list holds "
+            "every template the project knows: the sets' own slots, the "
+            "one-file templates in templates/, and the documents marked "
+            "as templates. The box is editable — type any name even "
+            "before the file exists; a name no file answers falls back "
+            "to the set's own slot for this document's shape. A pick "
+            "here is final: it is how THIS document renders, whatever "
+            "the book would have chosen. Page size is not part of it — "
+            "paper stays a book setting, on the folder.")
 
         self.duplicate_template_button = QPushButton("Duplicate this template into the project…")
         self.duplicate_template_button.setToolTip(
@@ -2113,11 +2201,17 @@ class MainWindow(QMainWindow):
         self.duplicate_template_button.clicked.connect(
             self._duplicate_current_template)
 
-        self.page_break_label = QLabel("Page start")
-        self.page_break_box = QComboBox()
-        for value in PAGE_BREAK_VALUES:
-            self.page_break_box.addItem(value)
-        self.page_break_box.currentIndexChanged.connect(self._page_break_changed)
+        # The note beside the template dropdown (1.17), worded as the
+        # author worded it: the defaults are Lekhak's own and cannot be
+        # edited in place, so this is how a copy of them becomes the
+        # writer's to change.
+        self.copy_defaults_button = QPushButton(
+            "Copy default templates to customize")
+        self.copy_defaults_button.setToolTip(
+            "The templates Lekhak ships with cannot be edited in place. "
+            "This puts an editable copy of the default set in your "
+            "project's templates/ folder, where you can change it.")
+        self.copy_defaults_button.clicked.connect(self._copy_default_templates)
 
         self.scene_divider_label = QLabel("Scene divider")
         self.scene_divider_edit = QLineEdit()
@@ -2157,6 +2251,30 @@ class MainWindow(QMainWindow):
         self.type_keep_box.setVisible(False)
         self.type_keep_box.toggled.connect(self._type_keep_toggled)
 
+        # A new role is added here (1.17): the Type box offers the roles
+        # its own group knows, and this box is how the writer makes one
+        # more available to the documents that follow.
+        self.type_add_edit = QLineEdit()
+        self.type_add_edit.setPlaceholderText("New type…")
+        self.type_add_edit.setToolTip(
+            "A new role for this kind of document — say ‘Scene’ or "
+            "‘Part’. It joins the Type list for every document of the "
+            "same kind, so the documents that follow can pick it.")
+        self.type_add_button = QPushButton("Add")
+        self.type_add_button.setToolTip(self.type_add_edit.toolTip())
+        self.type_add_button.clicked.connect(self._add_type)
+        self.type_add_edit.returnPressed.connect(self._add_type)
+
+        # The template switch (1.17): a template is not a role, it is a
+        # mark — the body is markup rather than manuscript, so it stays
+        # out of the book and the sidebar swaps to the design panel.
+        self.template_flag_box = QCheckBox("Template")
+        self.template_flag_box.setToolTip(
+            "Mark this document as a template: its body becomes markup "
+            "rather than manuscript, and the sidebar shows the template "
+            "design panel. Unticking brings the metadata back.")
+        self.template_flag_box.toggled.connect(self._template_flag_toggled)
+
         # The lock (docs/STORAGE.md): a tick beside the Type row, because
         # a lock is not one of the writer's custom fields — it is a
         # marker file in the tree, and the tick only says whether that
@@ -2176,6 +2294,10 @@ class MainWindow(QMainWindow):
         # else. The Type row above owns the protected key, which never
         # appears as a table row.
         self.metadata_table = MetadataTable({})
+        # The custom-fields table scrolls inside its box rather than
+        # growing: a long list of fields must not push the editor
+        # off-screen (1.16).
+        self.metadata_table.setMaximumHeight(220)
         self.metadata_table.changed.connect(self._metadata_table_changed)
         self.metadata_add_button = QPushButton("Add field")
         self.metadata_remove_button = QPushButton("Remove selected")
@@ -2191,39 +2313,64 @@ class MainWindow(QMainWindow):
         self.metadata_section = QWidget()
         metadata_layout = QVBoxLayout(self.metadata_section)
         metadata_layout.setContentsMargins(0, 0, 0, 0)
-        metadata_layout.addWidget(QLabel("Synopsis"))
-        metadata_layout.addWidget(self.synopsis)
-        metadata_layout.addWidget(QLabel("Word count goal"))
-        metadata_layout.addWidget(self.target)
-        metadata_layout.addWidget(self.book_template_label)
-        metadata_layout.addWidget(self.book_template_box)
-        metadata_layout.addWidget(self.cover_label)
-        metadata_layout.addLayout(cover_row)
-        metadata_layout.addWidget(self.page_setup_button)
-        metadata_layout.addWidget(self.link_policy_label)
-        metadata_layout.addWidget(self.link_policy_box)
-        metadata_layout.addWidget(self.doc_template_label)
-        metadata_layout.addWidget(self.doc_template_box)
-        metadata_layout.addWidget(self.duplicate_template_button)
-        metadata_layout.addWidget(self.page_break_label)
-        metadata_layout.addWidget(self.page_break_box)
-        metadata_layout.addWidget(self.scene_divider_label)
-        metadata_layout.addWidget(self.scene_divider_edit)
+        # The metadata, in boxes (1.16): it used to be one undifferentiated
+        # stack of labels and fields. Four groups give it a logic, and the
+        # fold keeps the long ones from pushing the editor off-screen.
         type_row = QHBoxLayout()
         type_row.addWidget(self.type_label)
         type_row.addWidget(self.type_box, 1)
         type_row.addWidget(self.lock_box)
-        metadata_layout.addSpacing(8)
-        metadata_layout.addLayout(type_row)
-        metadata_layout.addWidget(self.type_warning)
-        metadata_layout.addWidget(self.type_keep_box)
-        metadata_layout.addWidget(QLabel("Custom fields"))
-        metadata_layout.addWidget(self.metadata_table)
+        type_add_row = QHBoxLayout()
+        type_add_row.addWidget(self.type_add_edit, 1)
+        type_add_row.addWidget(self.type_add_button)
         metadata_buttons = QHBoxLayout()
         metadata_buttons.addWidget(self.metadata_add_button)
         metadata_buttons.addWidget(self.metadata_remove_button)
         metadata_buttons.addStretch()
-        metadata_layout.addLayout(metadata_buttons)
+
+        basic = Fold("Basic")
+        basic.body_layout.addLayout(type_row)
+        basic.body_layout.addLayout(type_add_row)
+        basic.body_layout.addWidget(self.type_warning)
+        basic.body_layout.addWidget(self.type_keep_box)
+        basic.body_layout.addWidget(self.template_flag_box)
+        basic.body_layout.addWidget(QLabel("Word count goal"))
+        basic.body_layout.addWidget(self.target)
+        basic.body_layout.addWidget(self.book_template_label)
+        basic.body_layout.addWidget(self.book_template_box)
+        basic.body_layout.addWidget(self.doc_template_label)
+        basic.body_layout.addWidget(self.doc_template_box)
+        basic.body_layout.addWidget(self.copy_defaults_button)
+        basic.body_layout.addWidget(self.duplicate_template_button)
+        metadata_layout.addWidget(basic)
+
+        synopsis_fold = Fold("Synopsis")
+        synopsis_fold.body_layout.addWidget(self.synopsis)
+        metadata_layout.addWidget(synopsis_fold)
+
+        format_fold = Fold("Format / Scene", expanded=False)
+        # Page start is not here any more (1.17): it belongs to the
+        # template design panel — the design says where its pages begin.
+        format_fold.body_layout.addWidget(self.scene_divider_label)
+        format_fold.body_layout.addWidget(self.scene_divider_edit)
+        format_fold.body_layout.addWidget(self.cover_label)
+        format_fold.body_layout.addLayout(cover_row)
+        format_fold.body_layout.addWidget(self.page_setup_button)
+        format_fold.body_layout.addWidget(self.link_policy_label)
+        format_fold.body_layout.addWidget(self.link_policy_box)
+        metadata_layout.addWidget(format_fold)
+
+        custom_fold = Fold("Advanced / Custom", expanded=False)
+        custom_fold.body_layout.addWidget(self.metadata_table)
+        custom_fold.body_layout.addLayout(metadata_buttons)
+        metadata_layout.addWidget(custom_fold)
+
+        self.metadata_folds = [basic, synopsis_fold, format_fold, custom_fold]
+        metadata_layout.addStretch()
+        # The section takes the height it needs; what is left in a tall
+        # window belongs to the bottom, not to a stretched box.
+        self.metadata_section.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                            QSizePolicy.Policy.Maximum)
         inspector_layout.addWidget(self.metadata_section)
 
         # The template file's own panel (§1.2): hidden until one opens.
@@ -2245,6 +2392,7 @@ class MainWindow(QMainWindow):
         related_layout.addWidget(self.related_tree)
         self.related_section.setVisible(False)
         inspector_layout.addWidget(self.related_section)
+        inspector_layout.addStretch()
 
         splitter = QSplitter()
         splitter.addWidget(self.tree)
@@ -2832,7 +2980,7 @@ class MainWindow(QMainWindow):
             # whatever role the row calls it.
             item.setData(0, FOLDER_ROLE, node.is_folder)
             document = documents.get(node.document_id)
-            item.setToolTip(0, self.project.type_of(document) if document
+            item.setToolTip(0, self._kind_label(document) if document
                             else (node.title if node.is_folder else "Document"))
             item.setIcon(0, self.style().standardIcon(
                 QStyle.SP_DirIcon if node.is_folder else QStyle.SP_FileIcon))
@@ -2937,10 +3085,10 @@ class MainWindow(QMainWindow):
                 if column_id == "title":
                     cells.append(document.title)
                 elif column_id == "kind":
-                    # The role, not the physical kind: the writer sets
-                    # Type, and un-set items show the derived default
-                    # (docs/MODEL.md).
-                    cells.append(self.project.type_of(document))
+                    # What the thing is on disk — a folder, a chapter, a
+                    # scene, a note (1.17). The role (Type) is the
+                    # writer's own label and lives in the inspector.
+                    cells.append(self._kind_label(document))
                 elif column_id == "words":
                     cells.append(f"{rollups.get(document.id, document.word_count):,}")
                 elif column_id == "target":
@@ -3176,9 +3324,17 @@ class MainWindow(QMainWindow):
         elif address.startswith("lekhak://pick/"):
             self._pick_link_target(address[len("lekhak://pick/"):])
 
+    @staticmethod
+    def _kind_label(document) -> str:
+        """What a document is, in the binder's own words (1.17): the
+        physical kind — a folder, a chapter, a scene, a note. The role
+        (Type) is the writer's own label and lives in the inspector.
+        """
+        return str(getattr(document, "kind", "") or "document").capitalize()
+
     def _pick_link_target(self, target: str) -> None:
         matches = self.project.resolve_link(target)
-        labels = [f"{d.title}  ({self.project.type_of(d)})" for d in matches]
+        labels = [f"{d.title}  ({self._kind_label(d)})" for d in matches]
         chosen, accepted = QInputDialog.getItem(
             self, "Follow link", f"‘{target}’ matches several sections:",
             labels, 0, False,
@@ -3351,6 +3507,18 @@ class MainWindow(QMainWindow):
             self.target.setValue(0)
             self._refresh_book_widgets(None)
         self._populate_metadata_table()
+        # A template document is designed in the sidebar (1.17): the
+        # design panel stands where the metadata was, and the tick beside
+        # the Type row is the way back to the metadata.
+        self._design_document_id = None
+        selected = self._current_document()
+        if selected is not None and self.project.is_template(selected.id):
+            self._design_document_id = selected.id
+            self.template_check.blockSignals(True)
+            self.template_check.setChecked(True)
+            self.template_check.blockSignals(False)
+            self._load_document_design(selected.id)
+            self._show_template_panel(True)
         self._refresh_related()
         self._refresh_page_preview()
         self.loading = False
@@ -3478,8 +3646,6 @@ class MainWindow(QMainWindow):
         self.doc_template_label.setVisible(is_prose)
         self.doc_template_box.setVisible(is_prose)
         self.duplicate_template_button.setVisible(False)
-        self.page_break_label.setVisible(bool(document))
-        self.page_break_box.setVisible(bool(document))
         self.scene_divider_label.setVisible(is_folder)
         self.scene_divider_edit.setVisible(is_folder)
         if not document or not self.project:
@@ -3537,20 +3703,39 @@ class MainWindow(QMainWindow):
                 if previous is None or (previous.endswith(".txt")
                                         and face.endswith(".html")):
                     faces[stem] = face
-        stored = document_template_stem(document.doc_template or "")
+        stored = (document.doc_template or "").strip()
+        if not stored.startswith((TEMPLATE_FILE_PREFIX, TEMPLATE_DOC_PREFIX)):
+            stored = document_template_stem(stored)
         for stem in sorted(faces):
             self.doc_template_box.addItem(faces[stem], stem)
-        if stored and stored not in faces:
-            self.doc_template_box.addItem(stored + ".html", stored)
+        # The one-file templates (1.17): a template is one file with its
+        # yaml in the head, and these are the ones the project's
+        # templates/ folder holds.
+        for path in self.project.single_file_templates():
+            self.doc_template_box.addItem(
+                f"{path.stem} (template file)",
+                TEMPLATE_FILE_PREFIX + path.stem)
+        # The documents marked as templates: their own bodies are the
+        # markup, so one of them can dress this document.
+        for template_document in self.project.template_documents():
+            if template_document.id == document.id:
+                continue        # a document does not dress itself
+            self.doc_template_box.addItem(
+                f"{template_document.title} (template)",
+                TEMPLATE_DOC_PREFIX + template_document.id)
+        if stored and self.doc_template_box.findData(stored) < 0:
+            # A name no file answers keeps its own row, shown the way it
+            # will be named on disk.
+            label = stored
+            if not stored.startswith((TEMPLATE_FILE_PREFIX, TEMPLATE_DOC_PREFIX)):
+                label = stored + ".html"
+            self.doc_template_box.addItem(label, stored)
         self.doc_template_box.setCurrentIndex(
             max(0, self.doc_template_box.findData(stored))
         )
         self.doc_template_box.blockSignals(False)
 
-        # Page start (per document) and scene divider (per folder).
-        self.page_break_box.blockSignals(True)
-        self.page_break_box.setCurrentText(document.page_break or "auto")
-        self.page_break_box.blockSignals(False)
+        # Scene divider (per folder).
         if is_folder:
             self.scene_divider_edit.blockSignals(True)
             self.scene_divider_edit.setText(document.scene_divider or "")
@@ -3672,36 +3857,47 @@ class MainWindow(QMainWindow):
         self.editor.ensureCursorVisible()
         self.editor.setFocus()
 
+    def _refresh_template_choices(self) -> None:
+        """Rebuild the apply-template list when the box opens (1.17).
+
+        What the project knows changes while a document is open — a
+        document marked as a template, a one-file template dropped
+        into templates/ — and the list must not be a snapshot of the
+        moment the document was selected.
+        """
+        document = self._current_document()
+        if document is not None:
+            self._refresh_book_widgets(document)
+
     def _doc_template_changed(self, *_args) -> None:
-        """Save the document's template from the box's own text — the
-        filename, whatever spelling put it there (docs/TEMPLATES.md
-        §1.2).
+        """Save the document's template from the box (1.17).
+
+        The dropdown lists every template the project knows — the sets'
+        own slots, the one-file templates and the documents marked as
+        templates — and what is saved is what the pick stands for: the
+        name for a set's slot, a prefixed name for the other two, so
+        the three can never be mistaken for one another.
 
         The box is editable and wired to editingFinished like the Type
         box: a typed name reaches the database without the dropdown ever
-        moving. What is saved is the name the file stands for —
-        'chapter.html' and 'chapter' agree, and 'Default (set's own
-        slot)' is no name at all, hence '', the set's own slot asked for
-        directly. A name no file answers yet saves just the same; the
-        export falls back where it stands.
+        moving. A name no file answers saves just the same; the export
+        falls back where it stands.
         """
         if self.loading or not self.project or not self.current_id:
             return
         line = self.doc_template_box.lineEdit()
         text = (line.text() if line is not None
                 else self.doc_template_box.currentText())
-        self.project.update_document(
-            self.current_id,
-            doc_template=document_template_stem(text),
-        )
-
-    def _page_break_changed(self, *_args) -> None:
-        if self.loading or not self.project or not self.current_id:
-            return
-        self.project.update_document(
-            self.current_id,
-            page_break=self.page_break_box.currentText() or "auto",
-        )
+        # An editable combo's currentText is whatever the line edit says,
+        # so the pick is recognised against the item's own text.
+        item_text = self.doc_template_box.itemText(
+            self.doc_template_box.currentIndex())
+        if text.strip() == item_text.strip():
+            # A pick: what it stands for, prefixes and all.
+            value = self.doc_template_box.currentData() or ""
+        else:
+            value = document_template_stem(text)
+        self.project.update_document(self.current_id, doc_template=value)
 
     def _scene_divider_changed(self) -> None:
         if self.loading or not self.project or not self.current_id:
@@ -3730,26 +3926,51 @@ class MainWindow(QMainWindow):
             self.type_box.hide()
             self.type_label.hide()
             self.lock_box.hide()
+            self.template_flag_box.hide()
+            self.type_add_edit.hide()
+            self.type_add_button.hide()
         else:
             self.type_box.show()
             self.type_label.show()
             self.lock_box.show()
+            self.template_flag_box.show()
+            self.type_add_edit.show()
+            self.type_add_button.show()
             self._fill_type_box(self.project.type_of(current))
             # The tick follows the marker file, which is the truth.
             self.lock_box.blockSignals(True)
             self.lock_box.setChecked(self.project.has_own_lock(current.id))
             self.lock_box.blockSignals(False)
+            # The template tick follows the document's own mark.
+            self.template_flag_box.blockSignals(True)
+            self.template_flag_box.setChecked(
+                self.project.is_template(current.id))
+            self.template_flag_box.blockSignals(False)
         if target is None:
             self.metadata_table.set_entries({})
         elif target == PROJECT_METADATA_TARGET:
-            self.metadata_table.set_entries(self.project.project_metadata())
+            entries = dict(self.project.project_metadata())
+            # A field created for a folder shows, empty, on every folder
+            # (1.17): the catalogue names the fields, the values are the
+            # project's own.
+            for key in self.project.known_fields("folder"):
+                entries.setdefault(key, ("", "text", []))
+            self.metadata_table.set_entries(entries)
         else:
             # Type is never a table row: the Type row above owns the
-            # protected key (docs/MODEL.md).
+            # protected key (docs/MODEL.md). The template's own mark and
+            # design are the design panel's business, not the table's.
             entries = self.project.metadata_entries(target)
-            self.metadata_table.set_entries(
-                {key: entry for key, entry in entries.items() if key != "Type"}
-            )
+            rows = {key: entry for key, entry in entries.items()
+                    if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY)}
+            # A field created on one document of the kind shows, empty,
+            # on every document of the kind (1.17): the catalogue names
+            # the fields, the documents hold the values.
+            group = (self.project.type_group(current) if current
+                     else "document")
+            for key in self.project.known_fields(group):
+                rows.setdefault(key, ("", "text", []))
+            self.metadata_table.set_entries(rows)
 
     def _lock_toggled(self, locked: bool) -> None:
         """Lock or unlock the selected document.
@@ -3795,9 +4016,11 @@ class MainWindow(QMainWindow):
     def _fill_type_box(self, value: str) -> None:
         """Rebuild the Type dropdown and set it, without firing saves.
 
-        Options are the built-in suggestions plus every Type this
-        project uses — deduplicated case-insensitively so the list never
-        shows both 'Chapter' and 'chapter'.
+        The list is this document's own group's roles (1.17): a folder's
+        dropdown never offers a document's role, and the other way
+        round. The current value is always in the list — dropping it
+        would leave free text that findText cannot resolve, so the
+        exact-match snap could never fire.
         """
         previous, self.loading = self.loading, True
         try:
@@ -3807,16 +4030,18 @@ class MainWindow(QMainWindow):
             # resolve, so the exact-match snap could never fire. The
             # current value shows through the line edit, not the index.
             seen: set[str] = set()
-            for item in TYPE_SUGGESTIONS:
-                self.type_box.addItem(item)
-                seen.add(item.casefold())
-            if self.project:
-                # Case-insensitive against the built-ins only: 'chapter'
-                # is a distinct value the writer typed, so it is added.
-                for item in self.project.type_values():
-                    if item.casefold() not in seen:
-                        self.type_box.addItem(item)
-                        seen.add(item.casefold())
+            document = self._current_document()
+            group = "document"
+            if self.project is not None and document is not None:
+                group = self.project.type_group(document)
+            if self.project is not None:
+                for item in self.project.known_types(group):
+                    self.type_box.addItem(item)
+                    seen.add(item.casefold())
+            if value and value.casefold() not in seen:
+                # A role from another group, or one the writer typed and
+                # stored: it stays visible, so the box says what it is.
+                self.type_box.addItem(value)
             self.type_box.setCurrentText(value)
             self.type_warning.setVisible(False)
             self.type_keep_box.setChecked(False)
@@ -3824,6 +4049,25 @@ class MainWindow(QMainWindow):
             self._type_near_miss_text = ""
         finally:
             self.loading = previous
+
+    def _add_type(self) -> None:
+        """Add a new role for this document's group (1.17).
+
+        The catalogue is what the dropdown reads, so a role added here
+        is offered to every document of the kind that follows — storing
+        it on this one document alone would offer it to that one only.
+        """
+        if self.loading or not self.project or not self._type_target_id:
+            return
+        document = self._current_document()
+        group = self.project.type_group(document) if document else "document"
+        name = self.project.add_type(group, self.type_add_edit.text())
+        if not name:
+            return
+        self.type_add_edit.clear()
+        self._fill_type_box(name)
+        self._snap_to_type(self.type_box.findText(name))
+        self._save_metadata()
 
     def _type_changed(self) -> None:
         if self.loading or self._type_snapping:
@@ -3937,6 +4181,17 @@ class MainWindow(QMainWindow):
         value_types.pop("Type", None)
         options.pop("Type", None)
         target = self._metadata_target
+        # A field the writer names joins its group's catalogue (1.17), so
+        # it shows — empty — on every other document of the kind, even
+        # when this one is left blank.
+        group = "folder" if target == PROJECT_METADATA_TARGET else "document"
+        if target != PROJECT_METADATA_TARGET:
+            document = self._current_document()
+            if document is not None:
+                group = self.project.type_group(document)
+        for key in values:
+            if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY):
+                self.project.add_field(group, key)
         if target == PROJECT_METADATA_TARGET:
             self.project.set_project_metadata(
                 {key: (values[key], value_types[key], options[key]) for key in values}
@@ -3971,6 +4226,18 @@ class MainWindow(QMainWindow):
         values.pop("Type", None)
         value_types.pop("Type", None)
         options.pop("Type", None)
+        # The template's own mark and design are not the table's business
+        # (1.17): the design panel owns them, so they are carried over
+        # as they stand rather than written from the rows above.
+        for key in (TEMPLATE_KEY, TEMPLATE_CONFIG_KEY):
+            if key in stored:
+                values[key] = stored[key][0]
+                value_types[key] = stored[key][1]
+                options[key] = stored[key][2]
+            else:
+                values.pop(key, None)
+                value_types.pop(key, None)
+                options.pop(key, None)
         type_value = self.type_box.currentText().strip()
         if type_value and document is not None:
             if ("Type" in stored
@@ -4001,9 +4268,9 @@ class MainWindow(QMainWindow):
             group = QTreeWidgetItem([label])
             for document in documents:
                 child = QTreeWidgetItem(
-                    [f"{document.title}  ({self.project.type_of(document)})"])
+                    [f"{document.title}  ({self._kind_label(document)})"])
                 child.setData(0, Qt.UserRole, document.id)
-                child.setToolTip(0, self.project.type_of(document))
+                child.setToolTip(0, self._kind_label(document))
                 group.addChild(child)
             self.related_tree.addTopLevelItem(group)
             group.setExpanded(True)
@@ -4475,6 +4742,24 @@ class MainWindow(QMainWindow):
         self._refresh_corkboard()
         self._refresh_outliner()
 
+    def _tree_structure_changed(self, *args) -> None:
+        """A drop rewrote the binder: persist it once the tree settles.
+
+        The signals arrive while the tree is still half-written — the
+        source rows are already gone and the destination's children
+        are not all in yet — so sweeping then would read a transient
+        shape. One pass on the next turn of the event loop sees the
+        tree as it ended up.
+        """
+        if self.loading or not self.project or self._tree_move_pending:
+            return
+        self._tree_move_pending = True
+        QTimer.singleShot(0, self._run_tree_sweep)
+
+    def _run_tree_sweep(self) -> None:
+        self._tree_move_pending = False
+        self._tree_moved()
+
     def _tree_moved(self, *args) -> None:
         if self.loading or not self.project:
             return
@@ -4484,7 +4769,10 @@ class MainWindow(QMainWindow):
         # used to abort the sweep mid-way, leaving the tree showing one
         # order and the database another until the next reload. They are
         # skipped as parents *and* never renumbered as children.
+        failed: str | None = None
+
         def sweep(parent_item) -> None:
+            nonlocal failed
             count = (self.tree.topLevelItemCount()
                      if parent_item is None else parent_item.childCount())
             parent_id = (None if parent_item is None
@@ -4494,14 +4782,33 @@ class MainWindow(QMainWindow):
                         if parent_item is None
                         else parent_item.child(position))
                 document_id = item.data(0, Qt.UserRole)
-                if document_id is None or parent_id is None:
-                    continue          # a folder row of the area's own
-                self.project.reorder(document_id, parent_id, position)
+                if document_id is None:
+                    continue          # a row of furniture, not a document
+                # A row at the top level has no parent id, which is a
+                # real answer (the project root), not a reason to skip
+                # it: skipping here used to leave a drag to the root
+                # written nowhere at all.
+                if not self.project.reorder(document_id, parent_id, position):
+                    failed = failed or item.text(0)
 
         for parent_item in [None] + self._all_items():
             if parent_item is not None and parent_item.data(0, Qt.UserRole) is None:
                 continue              # the Templates group holds no documents
             sweep(parent_item)
+        if failed is not None:
+            # The folder tree would not take the move — a name already
+            # taken in the destination, most often — so nothing about
+            # that row was written. Put the binder back to the files,
+            # which are the truth, and say why.
+            self.statusBar().showMessage(
+                f"Cannot move “{failed}”: that name is already in the "
+                "destination folder", 6000)
+            self._reload_tree()
+            return
+        # The order files follow the binder, so a drag is not lost the
+        # next time the project is opened (docs/STORAGE.md).
+        self.project.write_order_files()
+        self._refresh_outliner()
 
     def _all_items(self) -> list[QTreeWidgetItem]:
         result = []
@@ -5221,6 +5528,18 @@ class MainWindow(QMainWindow):
         presets.addRow(self.margin_preset_label, self.margin_preset_box)
         presets.addRow("", self.margin_mirror_box)
         presets.addRow("", self.margin_custom_row)
+        # Page start (1.17): the design says where its own pages begin.
+        self.page_start_label = QLabel("Page start")
+        self.page_start_box = QComboBox()
+        for label, value in PAGE_START_CHOICES:
+            self.page_start_box.addItem(label, value)
+        self.page_start_box.setToolTip(
+            "Where this design's pages begin: recto is a right-hand "
+            "page, verso a left-hand one. The pick writes the "
+            "`New Chapter:` and `New Scene:` lines into the design "
+            "below — the vocabulary the print config speaks.")
+        self.page_start_box.currentIndexChanged.connect(self._page_start_changed)
+        presets.addRow(self.page_start_label, self.page_start_box)
         layout.addLayout(presets)
 
         default_file = QPushButton("Look at the default file")
@@ -5234,7 +5553,7 @@ class MainWindow(QMainWindow):
             "# comment lines and `key: value` lines — this is the head "
             "of the file, saved back to the top of the file.")
         self.template_config_box.setTabChangesFocus(False)
-        self.template_config_box.textChanged.connect(self._metadata_changed)
+        self.template_config_box.textChanged.connect(self._design_changed)
         layout.addWidget(self.template_config_box, 1)
 
         self.template_css_label = QLabel("CSS (style.css)")
@@ -5259,6 +5578,7 @@ class MainWindow(QMainWindow):
             self.size_custom_row,
             self.margin_preset_label, self.margin_preset_box,
             self.margin_mirror_box, self.margin_custom_row,
+            self.page_start_label, self.page_start_box,
             default_file, self.template_config_box,
             self.template_css_label, self.template_css_box,
             self.template_naming_note,
@@ -5285,18 +5605,31 @@ class MainWindow(QMainWindow):
         checked = self.template_check.isChecked()
         for widget in self.template_panel_body:
             widget.setVisible(checked)
+        if self._design_document_id is not None:
+            # CSS belongs to a template set, not to one document (1.17).
+            self.template_css_label.setVisible(False)
+            self.template_css_box.setVisible(False)
         self._refresh_custom_rows(checked)
         self.metadata_section.setVisible(not checked)
 
     def _template_flag_toggled(self, checked: bool) -> None:
-        """The big checkbox (§1.2): untick and the file stops being a
-        template — `Template: no` goes into its head, the metadata
-        comes back, and the file leaves the Templates listing; tick
-        and it all reverses. The write happens here rather than on the
-        debounce because the listing follows it: what is on disk is
-        what the listing says.
+        """The template switch (§1.2, 1.17).
+
+        On a template file it is the big checkbox in the design panel:
+        untick and the file stops being a template — `Template: no`
+        goes into its head, the metadata comes back, and the file leaves
+        the Templates listing; tick and it all reverses. The write
+        happens here rather than on the debounce because the listing
+        follows it: what is on disk is what the listing says.
+
+        On a document it is the tick beside the Type row: the body
+        becomes markup rather than manuscript, and the sidebar swaps to
+        the design panel.
         """
-        if self.loading or self.current_template_file is None:
+        if self.loading:
+            return
+        if self.current_template_file is None:
+            self._document_template_toggled(checked)
             return
         head, _rest = split_head(set_template_flag(
             join_head(self.template_config_box.toPlainText(), ""), checked))
@@ -5320,6 +5653,82 @@ class MainWindow(QMainWindow):
             f"‘{name}’ is kept in the folder but is no longer a template.",
             4000)
 
+    def _document_template_toggled(self, checked: bool) -> None:
+        """Mark the selected document as a template, or take the mark away.
+
+        The mark is the document's own metadata (and the file's head
+        beside it): it says the body is markup rather than manuscript,
+        so the document stays out of the book and the sidebar swaps to
+        the design panel. Unticking brings the metadata back.
+        """
+        if not self.project or not self._type_target_id:
+            return
+        document_id = self._type_target_id
+        self.project.set_template(document_id, checked)
+        # The big checkbox in the design panel is the same switch.
+        self.template_check.blockSignals(True)
+        self.template_check.setChecked(checked)
+        self.template_check.blockSignals(False)
+        if checked:
+            self._design_document_id = document_id
+            self._load_document_design(document_id)
+            self._show_template_panel(True)
+        else:
+            self._design_document_id = None
+            self._show_template_panel(False)
+        self.save_timer.start()          # the file follows on the next save
+        self._refresh_outliner()
+        document = self._current_document()
+        title = document.title if document else "This document"
+        self.statusBar().showMessage(
+            f"‘{title}’ is a template." if checked else
+            f"‘{title}’ is a document again.", 4000)
+
+    def _load_document_design(self, document_id: str) -> None:
+        """Put the document's own design into the panel (1.17).
+
+        The config box holds the yaml the design is written in — the
+        same lines a template file's head carries — and the CSS box
+        stands down: CSS belongs to a template set, not to one document.
+        """
+        config = self.project.metadata(document_id).get(TEMPLATE_CONFIG_KEY, "")
+        self.template_config_box.blockSignals(True)
+        self.template_config_box.setPlainText(config)
+        self.template_config_box.blockSignals(False)
+        self._prefill_preset_rows(config)
+
+    def _store_document_design(self, document_id: str) -> None:
+        """The design panel's yaml lines onto the document (1.17).
+
+        The lines are the template's design: they live with the document
+        and the file's head carries them too, so they travel with it.
+        The metadata table never shows them.
+        """
+        entries = self.project.metadata_entries(document_id)
+        values = {key: entry[0] for key, entry in entries.items()}
+        value_types = {key: entry[1] for key, entry in entries.items()}
+        options = {key: entry[2] for key, entry in entries.items()}
+        values[TEMPLATE_CONFIG_KEY] = self.template_config_box.toPlainText()
+        value_types[TEMPLATE_CONFIG_KEY] = "textarea"
+        options[TEMPLATE_CONFIG_KEY] = []
+        self.project.set_metadata(document_id, values, value_types, options)
+
+    def _design_changed(self) -> None:
+        """A change in the design box (§1.2, 1.17).
+
+        A template file's head is saved by the file's own save; a
+        document's design is stored on the document first, so the head
+        the next save writes carries it.
+        """
+        if self.loading:
+            return
+        if self._design_document_id is not None:
+            self._store_document_design(self._design_document_id)
+        # The rows follow the box: a line typed by hand shows in the
+        # pick that speaks for it, the way an opened file's rows do.
+        self._prefill_preset_rows(self.template_config_box.toPlainText())
+        self._metadata_changed()
+
     # -- the preset rows (1.2) ----------------------------------------------
 
     def _write_preset_line(self, key: str, line: str) -> None:
@@ -5329,6 +5738,26 @@ class MainWindow(QMainWindow):
         head, and what lands on disk is what a hand would have typed."""
         current = self.template_config_box.toPlainText()
         text = write_config_line(current, key, line)
+        if text != current:
+            # textChanged arms save; nothing else to do.
+            self.template_config_box.setPlainText(text)
+
+    def _page_start_changed(self, *_args) -> None:
+        """The page-start pick, written into the design (1.17).
+
+        The design says where its pages begin: `New Chapter: Recto` and
+        `New Scene: Recto` are the lines the print-config vocabulary
+        uses, and the export reads them. Automatic takes both lines
+        away, so the design says nothing it does not mean.
+        """
+        value = self.page_start_box.currentData() or ""
+        current = self.template_config_box.toPlainText()
+        text = current
+        for key in ("new chapter", "new scene"):
+            if value:
+                text = write_config_line(text, key, f"{key.title()}: {value}")
+            else:
+                text = drop_config_line(text, key)
         if text != current:
             # textChanged arms save; nothing else to do.
             self.template_config_box.setPlainText(text)
@@ -5569,6 +5998,16 @@ class MainWindow(QMainWindow):
         if custom_margins:
             self._set_margin_spins(readable)
         self.margin_custom_row.setVisible(custom_margins)
+
+        # The page start the design already says (1.17): the chapter
+        # line speaks for the design, and the scene line answers when
+        # there is no chapter line.
+        start = str(config.get("new chapter", "")
+                    or config.get("new scene", "")).strip().lower()
+        self.page_start_box.blockSignals(True)
+        self.page_start_box.setCurrentIndex(
+            max(0, self.page_start_box.findData(PAGE_START_WORDS.get(start, ""))))
+        self.page_start_box.blockSignals(False)
 
     def _open_default_config_file(self) -> None:
         """The config note's 'look at the default file' (§3.1), made a
@@ -5852,6 +6291,32 @@ class MainWindow(QMainWindow):
     def _duplicate_current_template(self) -> None:
         if self.current_template_set is not None:
             self._duplicate_template_prompt(self.current_template_set)
+
+    def _copy_default_templates(self) -> None:
+        """Copy the shipped default templates into the project (1.17).
+
+        The defaults ship inside the app and cannot be edited in place;
+        this puts an editable copy in the project's templates/ folder,
+        where the writer can change it.
+        """
+        if not self.project:
+            return
+        try:
+            copy_template_set(TemplateSet.builtin("default"), "default",
+                              self.project.root)
+        except FileExistsError:
+            self.statusBar().showMessage(
+                "This project already has a templates/default folder — "
+                "that is the copy to change.", 5000)
+            return
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot copy the default templates",
+                                str(error))
+            return
+        self._refresh_book_widgets(self._current_document())
+        self.statusBar().showMessage(
+            "The default templates are yours now — in templates/default.",
+            5000)
 
     def export(self, kind: str) -> None:
         if not self.project:

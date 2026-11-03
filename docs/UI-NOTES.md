@@ -228,3 +228,66 @@ few buttons". Two things followed:
 Text colour and highlight stay out: a colour button would promise
 something the compile does not keep (the book's words are plain body
 text), and a style can carry whatever colour the stylesheet gives it.
+
+## 11. The metadata section, in boxes — DONE (2026-11-02)
+
+The metadata was "undifferentiated text with no clear logic to it": one
+stack of labels and fields, and the two long boxes — the synopsis and the
+custom-fields table — free to grow until they overflowed the inspector.
+It is now four groups, each with a header that folds it away:
+
+- **Basic** — Kind (Type), the lock, the word-count goal, the template
+  set. Open by default: these are the facts a writer checks at a glance.
+- **Synopsis** — the synopsis box, capped so it scrolls inside its box.
+- **Format / Scene** — Page start, Scene divider, Cover, Page setup, and
+  the unpublished-links policy. Closed by default.
+- **Advanced / Custom** — the custom fields table, capped so a long list
+  of fields scrolls, with Add field / Remove selected under it. Closed by
+  default.
+
+The headers are tool buttons, not checkboxes: a fold is something you
+open, and the arrow says which way it goes. A group takes the height it
+needs and no more, so the surplus in a tall window stays at the bottom of
+the inspector instead of opening a gap under one box. The rows themselves
+are unchanged — the same widgets, the same storage, the same live saves;
+only the arrangement is new (ROADMAP 1.16).
+
+## 12. Type is a role, the template is a tick — DONE (2026-11-03)
+
+The Type dropdown used to carry the whole vocabulary of the writing life —
+Book, Chapter, Scene, Part, Note — and the template had nowhere to live,
+because a template is not a role: it is a thing whose body is markup, not
+manuscript. Two changes, in the Basic group:
+
+- **Type is a role, and there are two of them to begin with.** A folder is
+  a Folder and a document is a Document, and the dropdown offers only the
+  roles of the *kind* it is showing: a folder's list never shows a
+  document's role, a document's never shows a folder's. Beside the
+  dropdown a **"New type…" box** adds a role: it joins that kind's list in
+  the database, so the documents that follow can pick it. A folder with book
+  settings is still a Folder — "Book" is a role you add, not one the app
+  guesses.
+- **The template is a tick.** Beside the Type row, **Template**: ticked, the
+  document's body becomes markup, it stays out of the book, and the sidebar
+  swaps to the template design panel; unticked, the ordinary metadata comes
+  back.
+
+Under the Type row, the **Apply template** dropdown lists every template the
+project knows — the sets' own slots, the one-file templates in `templates/`,
+and the documents marked as templates — and beside it the note
+**"Copy default templates to customize"**, which puts an editable copy of
+the shipped default set in the project's `templates/` folder (the shipped
+ones cannot be edited in place).
+
+**Page start has finally left the inspector** (§9), and it left Format /
+Scene with it (§11): the page start belongs to the template's design panel,
+where a pick writes the `New Chapter:` / `New Scene:` lines the print config
+speaks — "whether this page design begins on x kind of page". §9 was right
+from the start; the code kept the widget anyway, and both landed together
+in commit `bed28c5`. Values older projects stored are still honoured by the
+export, silently.
+
+The Outliner's Kind column, the binder tooltip, the related-files list and
+the link picker now show the *physical* kind — folder, chapter, scene,
+note. The role is the writer's own label and says nothing about what the
+thing is; it belongs in the inspector (ROADMAP 1.17).

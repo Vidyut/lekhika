@@ -208,6 +208,19 @@ def write_config_line(text: str, key: str, line: str) -> str:
     return join_head("\n".join(kept).strip("\n"), fragment)
 
 
+def drop_config_line(text: str, key: str) -> str:
+    """The text with its `key` config line taken away (§1.2).
+
+    The counterpart of write_config_line: a pick that means "nothing
+    said" removes its line rather than leaving an empty one behind, so
+    the file says what it means and nothing more.
+    """
+    wanted = config_key(key) or key.strip().lower()
+    head, fragment = split_head(join_head(text, ""))
+    kept = [held for held in head.split("\n") if config_key(held) != wanted]
+    return join_head("\n".join(kept).strip("\n"), fragment)
+
+
 def is_template_fragment(text: str) -> bool:
     """Whether a file is a template (§1.2): everything is, unless its
     head says `Template: no`."""

@@ -43,6 +43,19 @@ _RTF_NAMED = {
 _HEX_ESCAPE = re.compile(r"([0-9a-fA-F]{2})")
 _WORD = re.compile(r"([a-zA-Z]+)(-?\d*) ?")
 
+# Control *symbols*: a backslash and one character, standing for a
+# character rather than a formatting instruction. Scrivener writes a
+# non-breaking space as ``\~`` — often several times in a sentence —
+# and an importer that does not know the symbol drops it, which glues
+# the words around it together: ``she'd\~expected\~trouble`` comes out
+# as ``she'dexpectedtrouble``. Lekhak keeps these as ordinary spaces,
+# the way it already keeps ``\nbsp``.
+_RTF_SYMBOLS = {
+    "~": " ",      # non-breaking space
+    "_": "-",      # non-breaking hyphen
+    ".": " ",      # no-width space
+}
+
 
 @dataclass
 class ScrivItem:
@@ -91,6 +104,36 @@ def _escape(text: str, bold: bool, italic: bool) -> str:
     if italic:
         text = f"<i>{text}</i>"
     return text
+
+
+def _skip_fallback(rtf: str, index: int, uc: int) -> int:
+    """Where the fallback characters after a ``\\uN`` escape end.
+
+    RTF writes a Unicode character as ``\\u8220`` followed by ``uc``
+    fallback characters, for readers that do not know the escape. The
+    fallback is a *character*, not a number of source characters: for a
+    character outside ASCII, Scrivener writes the fallback as an escape
+    of its own — ``\\u8220\\'93`` — where the fallback is the one
+    character ``\\'93`` and the source is four characters long.
+
+    Counting source characters instead leaves the tail of the escape in
+    the prose, and every smart quote in the manuscript reads as
+    ``'93`` — which is exactly what the first Scrivener import did.
+    """
+    if index >= len(rtf):
+        return index
+    if rtf[index] != "\\":
+        # Plain characters: the fallback is as long as the writer said.
+        return index + uc
+    if rtf[index + 1:index + 2] == "'":
+        # \'xx — one character, four characters of source.
+        return index + 4
+    if rtf[index + 1:index + 2].isalpha():
+        match = _WORD.match(rtf, index + 1)
+        if match:
+            return match.end()
+    # Any other control symbol: one character.
+    return index + 2
 
 
 def rtf_to_html(rtf: str) -> str:
@@ -154,6 +197,9 @@ def rtf_to_html(rtf: str) -> str:
                     i = digits.end()
                 else:
                     i += 1
+            elif char in _RTF_SYMBOLS:
+                para.append(_escape(_RTF_SYMBOLS[char], bold, italic))
+                i += 1
             else:
                 match = _WORD.match(rtf, i)
                 if not match:
@@ -175,7 +221,7 @@ def rtf_to_html(rtf: str) -> str:
                     code = int(arg)
                     para.append(_escape(chr(code + 65536 if code < 0
                                              else code), bold, italic))
-                    i += uc          # skip the fallback characters
+                    i = _skip_fallback(rtf, i, uc)   # one character, however long its source
                 elif word in _RTF_NAMED:
                     para.append(_escape(_RTF_NAMED[word], bold, italic))
                 # everything else — font ids, codepages, cell marks —

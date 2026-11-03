@@ -60,24 +60,28 @@ publish exactly like that.
 
 ## For builders
 
-The physical structure is `kind ∈ {folder, document}`-shaped and nothing
-else; `chapter`, `scene` and `note` survive only as **Type values**, never as
-structural categories. The protected metadata key is `Type` (already reserved
-in `docs/TEMPLATES.md` §2); its vocabulary is the writer's, matching
-opportunistically against template names per §2's chain.
+The physical kinds are labels — `folder`, `chapter`, `scene`, `note` — and
+any kind may hold any other; the *role* is the protected metadata key
+`Type` (already reserved in `docs/TEMPLATES.md` §2), and its vocabulary is
+the writer's, matching opportunistically against template names per §2's
+chain.
 
 - **`Project.type_of(document)`** (project.py) is the single source of truth:
-  stored `Type` metadata if set, else the derived default — `folder` →
-  `Book` when the folder has `book_settings` or `page_setup`, else `Folder`;
-  `chapter` → `Chapter`, `scene` → `Scene`, `note` → `Note`, anything else →
-  `Document`. Derivation *is* the migration: old projects need no backfill,
-  and new documents get their Type seeded at creation.
-- **No publish flag exists.** Exclusion is Type + a blank template slot, or
-  the export scope selection (`ExportOptionsDialog`).
-- The inspector's Type row (app.py) is an **editable dropdown**: the
-  novel-writing defaults (`TYPE_SUGGESTIONS`), plus every Type already
-  used in the project (so a typed value — typo included — is selectable
-  next time), plus free text. It edits the **document's own** metadata —
+  stored `Type` metadata if set, else the derived default — **Folder** for a
+  folder, **Document** for anything else. Two base roles, as close to the
+  truth on disk as a role can be (1.17); every other role is one the writer
+  adds. Derivation *is* the migration: old projects need no backfill.
+- **Roles and metadata fields are kept per group.** `type_group(document)`
+  says whether a document is a folder or a document, and `known_types(group)`
+  is what that group's dropdown offers — the base role, the roles added to
+  it, and the roles already stored on the group's documents. `known_fields(group)`
+  does the same for metadata field names: a field named on one scene shows,
+  empty, on every other scene, and only filled values are stored. Both
+  catalogues live in the `settings` table (`known_types`, `known_fields`), so
+  no schema change was needed.
+- The inspector's Type row (app.py) is an **editable dropdown** offering only
+  that group's roles, plus free text, and a **"New type…" box** beside it
+  that adds a role to the group. It edits the **document's own** metadata —
   folders included, even though the custom-fields table below a folder
   selection shows project metadata (§3.1). It shows `type_of` defaults
   and is always populated; emptying it returns the item to its derived
@@ -91,11 +95,25 @@ opportunistically against template names per §2's chain.
   Text/Text area/Checkbox/Date) — renamed from "Type" to end the collision
   with the metadata key. The Edit Metadata dialog hides the Type row and
   preserves the stored value on save; the inspector's Type row owns it.
-- Outliner "Kind" column, binder tooltips and Quick Open show `type_of`,
-  never the raw physical kind.
-- Page setup, book templates and covers hang off folders whose Type is
-  `Book` (the `type_of` heal makes existing book folders visible as books);
-  project default otherwise. Export stamps each book's own paper and warns
-  on mixed trims (author decision, 2026-10-23).
-- Templates live on disk only (`<project>/templates/`, one folder per set,
+- **A template is not a role.** It is a **tick** in the inspector: the
+  metadata key `Template` (`yes`), with the design itself in `Template
+  config`. A template document's body is markup rather than manuscript, so
+  it stays out of the export and the sidebar shows the template design panel
+  instead of the metadata. The mark travels into the file's head as
+  `template: yes`.
+- **No publish flag exists.** Exclusion is the template mark, a blank
+  template slot, or the export scope selection (`ExportOptionsDialog`).
+- The Outliner's "Kind" column, the binder tooltip, the related-files list
+  and the link picker show the **physical kind** — the role is the writer's
+  own label and lives in the inspector.
+- Page setup, book templates and covers hang off the folder that carries
+  the book settings, not off a role: a folder with book settings is still a
+  Folder, and "Book" is a role the writer adds. Project default otherwise.
+  Export stamps each book's own paper and warns on mixed trims (author
+  decision, 2026-10-23).
+- **Templates live on disk** (`<project>/templates/`, one folder per set,
   §1.1 of TEMPLATES.md): no flag, no binder mark — the folder is the truth.
+  A **one-file template** is a single file with its yaml in the head
+  (`templates/<name>.html`), listed and applied like a set's slot. A
+  **template document** is a document marked as a template; its own body is
+  the markup.

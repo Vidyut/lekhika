@@ -325,6 +325,101 @@ class MetadataPanelTests(unittest.TestCase):
         )
 
 
+class MetadataBoxesTests(unittest.TestCase):
+    """1.16: the inspector's metadata in four collapsible groups.
+
+    The author's complaint: the metadata was "undifferentiated text with no
+    clear logic to it". The groups give it that logic; the fold and the
+    height caps keep the long ones from pushing the editor off-screen.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project = Project.create(Path(self.temporary.name) / "Novel", "Novel")
+        self.folder = self.project.documents()[0]          # Draft, kind "folder"
+        self.scene = self.project.add_document(
+            "Scene", parent_id=self.folder.id, kind="scene"
+        )
+        self.window = MainWindow()
+        self.window._switch_project(self.project)
+
+    def tearDown(self):
+        self.window.project = None
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _fold(self, title):
+        for fold in self.window.metadata_folds:
+            if fold.header.text() == title:
+                return fold
+        self.fail(f"no group titled {title}")
+
+    def _widgets(self, fold):
+        return self._widgets_in(fold.body_layout)
+
+    def _widgets_in(self, layout):
+        found = []
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            if item.widget() is not None:
+                found.append(item.widget())
+            elif item.layout() is not None:
+                found.extend(self._widgets_in(item.layout()))
+        return found
+
+    def test_the_panel_reads_as_four_groups_in_order(self):
+        titles = [fold.header.text() for fold in self.window.metadata_folds]
+        self.assertEqual(titles, ["Basic", "Synopsis", "Format / Scene",
+                                   "Advanced / Custom"])
+
+    def test_the_facts_land_in_their_groups(self):
+        basic = self._fold("Basic")
+        self.assertIn(self.window.type_box, self._widgets(basic))
+        self.assertIn(self.window.target, self._widgets(basic))
+        self.assertIn(self.window.doc_template_box, self._widgets(basic))
+        self.assertEqual(self._widgets(self._fold("Synopsis")),
+                         [self.window.synopsis])
+        format_fold = self._fold("Format / Scene")
+        self.assertIn(self.window.scene_divider_edit,
+                      self._widgets(format_fold))
+        self.assertIn(self.window.book_cover_edit, self._widgets(format_fold))
+        self.assertIn(self.window.page_setup_button,
+                      self._widgets(format_fold))
+        self.assertIn(self.window.metadata_table,
+                      self._widgets(self._fold("Advanced / Custom")))
+
+    def test_the_long_fields_are_capped(self):
+        # Capped, not shrunk: a long synopsis or field list scrolls inside
+        # its box instead of pushing the editor off-screen.
+        self.assertLessEqual(self.window.synopsis.maximumHeight(), 120)
+        self.assertLessEqual(self.window.metadata_table.maximumHeight(), 220)
+
+    def test_folding_a_group_hides_its_rows_and_unfolding_brings_them_back(self):
+        # The Format / Scene rows are the folder's (a scene has none of
+        # them), so the fold is checked on the folder.
+        self.window._select_document(self.folder.id)
+        fold = self._fold("Format / Scene")
+        self.assertFalse(fold.header.isChecked())
+        self.assertFalse(self.window.page_setup_button.isVisibleTo(self.window))
+
+        fold.header.setChecked(True)
+
+        self.assertTrue(self.window.page_setup_button.isVisibleTo(self.window))
+        fold.header.setChecked(False)
+        self.assertFalse(self.window.page_setup_button.isVisibleTo(self.window))
+
+    def test_the_synopsis_still_saves_from_inside_its_group(self):
+        self.window._select_document(self.scene.id)
+
+        self.window.synopsis.setPlainText("Maya waits on the bridge.")
+
+        # The signal still reaches the save timer after the re-parent.
+        self.assertTrue(self.window.save_timer.isActive())
+        self.window.save_current()
+        text = (self.project.root / self.scene.path).read_text(encoding="utf-8")
+        self.assertIn("synopsis: Maya waits on the bridge.", text)
+
+
 class TypeRowTests(unittest.TestCase):
     """The protected Type row (docs/MODEL.md): always filled, never a
     table row, snaps typos, and keeps folder/Type separate from the
@@ -348,7 +443,9 @@ class TypeRowTests(unittest.TestCase):
     def test_type_row_shows_the_derived_default_and_hides_it_in_the_table(self):
         self.window._select_document(self.scene.id)
 
-        self.assertEqual(self.window.type_box.currentText(), "Scene")
+        # Two base roles now (1.17): a scene is a Document until the
+        # writer says otherwise.
+        self.assertEqual(self.window.type_box.currentText(), "Document")
         # Type is never a table row.
         keys = [self.window.metadata_table.item(row, 0).text()
                 for row in range(self.window.metadata_table.rowCount())]
@@ -381,7 +478,7 @@ class TypeRowTests(unittest.TestCase):
         self.window._save_metadata()
 
         self.assertNotIn("Type", self.project.metadata(self.scene.id))
-        self.assertEqual(self.project.type_of(self.scene), "Scene")
+        self.assertEqual(self.project.type_of(self.scene), "Document")
 
     def test_default_type_is_not_written_to_storage(self):
         self.window._select_document(self.scene.id)
@@ -391,37 +488,39 @@ class TypeRowTests(unittest.TestCase):
         self.assertNotIn("Type", self.project.metadata(self.scene.id))
 
     def test_exact_match_snaps_to_the_existing_option(self):
+        self.project.set_metadata(self.scene.id, {"Type": "Part"})
         self.window._select_document(self.scene.id)
 
-        # setText, not setCurrentText: typing a free value. "Scene" is the
-        # box's pre-filled value at index 0, and lives at findText("Scene")
-        # — a working snap must move the index there, so a no-op fails.
-        self.window.type_box.lineEdit().setText("Scene")
+        # setText, not setCurrentText: typing a free value. "Part" is the
+        # document's own role and lives at findText("Part") — a working
+        # snap must move the index there, so a no-op fails.
+        self.window.type_box.lineEdit().setText("Part")
         self.window._type_changed()    # what editingFinished runs
 
         self.assertEqual(self.window.type_box.currentIndex(),
-                         self.window.type_box.findText("Scene"))
-        # "Scene" is this scene's derived default, so it is not written to
+                         self.window.type_box.findText("Part"))
+        # "Part" is not this scene's derived default, so it is written to
         # storage — _write_document_type keeps defaults out on purpose.
 
     def test_case_variant_snaps_and_offers_the_checkbox(self):
+        self.project.set_metadata(self.scene.id, {"Type": "Scene"})
         self.window._select_document(self.scene.id)
 
-        self.window.type_box.lineEdit().setText("chapter")
+        self.window.type_box.lineEdit().setText("scene")
         self.window._type_changed()
 
         # Snapped to the existing spelling; the warning offers the variant.
-        self.assertEqual(self.window.type_box.currentText(), "Chapter")
+        self.assertEqual(self.window.type_box.currentText(), "Scene")
         self.assertFalse(self.window.type_warning.isHidden())
         self.assertFalse(self.window.type_keep_box.isHidden())
         self.assertEqual(
-            self.project.metadata(self.scene.id)["Type"], "Chapter")
+            self.project.metadata(self.scene.id)["Type"], "Scene")
 
         # Ticking restores the typed variant and saves it.
         self.window.type_keep_box.setChecked(True)
-        self.assertEqual(self.window.type_box.currentText(), "chapter")
+        self.assertEqual(self.window.type_box.currentText(), "scene")
         self.assertEqual(
-            self.project.metadata(self.scene.id)["Type"], "chapter")
+            self.project.metadata(self.scene.id)["Type"], "scene")
 
     def test_dropdown_lists_types_the_project_already_uses(self):
         self.project.set_metadata(self.scene.id, {"Type": "Weird"})
@@ -452,7 +551,10 @@ class TypeRowTests(unittest.TestCase):
         self.assertNotIn("Type", self.project.project_metadata())
         self.assertEqual(self.project.type_of(self.folder), "Book")
 
-    def test_book_folder_defaults_to_book(self):
+    def test_a_folder_reads_as_a_folder_whatever_its_book_settings(self):
+        # The role is what the writer says it is (1.17): book settings
+        # do not make a folder a Book any more — "Book" is a role one
+        # adds, and it stays a folder's own.
         self.project.set_book_settings(self.folder.id, {"template": "x"})
         # Changing book settings fires no selection signal, and the
         # folder may already be current — repopulate to pick up the heal.
@@ -460,7 +562,10 @@ class TypeRowTests(unittest.TestCase):
         self.window._select_document(self.folder.id)
         self.window._populate_metadata_table()
 
-        self.assertEqual(self.window.type_box.currentText(), "Book")
+        self.assertEqual(self.window.type_box.currentText(), "Folder")
+        self.assertNotIn("Book", [
+            self.window.type_box.itemText(index)
+            for index in range(self.window.type_box.count())])
 
     def test_type_row_is_hidden_with_no_document_selected(self):
         # _switch_project auto-selects the first binder item; clear it so

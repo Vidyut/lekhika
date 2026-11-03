@@ -68,8 +68,13 @@ class ProjectTreeTests(unittest.TestCase):
 
     def test_type_becomes_the_nodes_own_role(self):
         nodes = {node.title: node for node in _flatten(self.project.to_nodes())}
-        self.assertEqual(nodes["Chapter One"].type, "Chapter")
-        self.assertEqual(nodes["1---One leaves"].type, "Scene")
+        # Two base roles now (1.17): a folder is a Folder, everything
+        # else a Document until the writer says otherwise. The physical
+        # kind still travels beside it.
+        self.assertEqual(nodes["Book One"].type, "Folder")
+        self.assertEqual(nodes["Chapter One"].type, "Document")
+        self.assertEqual(nodes["1---One leaves"].type, "Document")
+        self.assertEqual(nodes["1---One leaves"].kind, "document")
         # Type is the node's field, so it must not also sit in metadata.
         self.assertNotIn("Type", nodes["1---One leaves"].metadata)
 
