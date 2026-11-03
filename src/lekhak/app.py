@@ -6455,8 +6455,8 @@ class MainWindow(QMainWindow):
         if not self.project:
             return
         try:
-            copy_template_set(TemplateSet.builtin("default"), "default",
-                              self.project.root)
+            created = copy_template_set(TemplateSet.builtin("default"),
+                                        "default", self.project.root)
         except FileExistsError:
             self.statusBar().showMessage(
                 "This project already has a templates/default folder — "
@@ -6466,6 +6466,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Cannot copy the default templates",
                                 str(error))
             return
+        # Same landing as Duplicate (§1.1): the tree redrawn so the copy
+        # stops looking like the un-editable shipped set, and the writer
+        # standing in the copy that was just made — files and all.
+        self._reload_tree()
+        self._open_template_set(created)
         self._refresh_book_widgets(self._current_document())
         self.statusBar().showMessage(
             "The default templates are yours now — in templates/default.",

@@ -268,6 +268,11 @@ class TemplateInspectorTests(unittest.TestCase):
         copied = self.root / "templates" / "default"
         self.assertTrue(copied.is_dir())
         self.assertTrue((copied / "document.html").exists())
+        # And the writer lands in the copy: the button used to write the
+        # folder and leave the view on the shipped, read-only set.
+        landed = self.window.current_template_set
+        self.assertIsNotNone(landed)
+        self.assertEqual(landed.directory, copied)
 
 
 class TemplateSelectorTests(unittest.TestCase):
