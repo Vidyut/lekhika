@@ -343,6 +343,50 @@ binder folders, so nothing would have read it. Recording this matters more than
 the code: four of the five rules first proposed were mechanisms Lekhak already
 had, and the ledger is where that stays settled.
 
+## Placeholder vocabulary — what Scrivener calls things
+
+From Scrivener 3's *Help > List of All Placeholders* (a third-party
+transcription of it, the free-scrivener-themes compile guide, checked
+2026-11-04). Scrivener's syntax is `<$tag>`; Lekhak's is `${Name}`. The
+family worth borrowing is the numbering one:
+
+| Scrivener | Meaning | Lekhak |
+|---|---|---|
+| `<$n>` | Arabic number in the current stream: 1, 2, 3 | `${Position}` |
+| `<$w>` / `<$t>` / `<$W>` | the same number as words, lower / title / upper case: one / One / ONE | `${Position-spell}` (lowercase) |
+| `<$hn>` | hierarchical number: 1.1, 1.2, 2 | `${Position-depth:N}` |
+| `<$hn_levelN>`, `<$hn_0>` | start the hierarchy at a level / at zero | — (the depth states the cut instead) |
+| `<$rst>`, `<$rst_X>` | restart a numbering stream | — (nothing to restart: the binder is the stream) |
+| `<$n:name>`, `<$t:name>` | a named stream, e.g. figures | — (a Type face plus `${Position}` is the cheap version) |
+| `<$r>` / `<$R>`, `<$l>` / `<$L>` | roman and alphabetical numbering | — |
+| `<$title>`, `<$levelN_title>` | the current document's title, a title at an outline level | `${Title}`; levels unbuilt |
+| `<$custom:FieldName>` | custom metadata | `${FieldName}` / `${Metadata.FieldName}` |
+| `<$projecttitle>`, `<$draftname>` | project title, draft folder title | `${Book}` in print-config; the project `Title` setting |
+| `<$author>`, `<$surname>`, ... | the writing machine's user name, from the system account | project metadata `Author` — deliberately not the OS account |
+| `<$date>`, `<$date:HH:mm:ss>` | today's date, with a format | `${Date}` in print-config only; formats unbuilt |
+| `<$wc>`, `<$cc>`, `<$doccount>` | counts, with rounded variants (`<$wc50>`) | `${WordCount}` for the document; project counts unbuilt |
+| `<$p>`, `<$p-r>`, `<$pagecount>` | page numbers in heads and feet | `${Page}`/`${PagesTotal}` PROPOSED; DOCX fields today |
+| `<$toc>` | ebook table of contents | `${ToC}` |
+| `<$include>`, `<$img:...>` | insert a linked document / an image | `[[links]]` and image paths, resolved by the walk |
+
+**What the comparison settles.** Scrivener numbers by *stream*: a section
+layout owns a stream and `<$rst>` restarts it, which is how "1 again in part
+2" is expressed there. Lekhak's binder already gives every document one
+unambiguous place among its siblings, so `${Position}` is the stream's
+number with nothing to configure, and `${Position-depth:N}` is the
+hierarchical form. `<$w>` is why `${Position-spell}` exists at all: roman
+numerals on front matter are a style, word numbers ("Chapter Two") are prose.
+
+**Renaming across the manuscript.** Scrivener calls its project-wide find and
+replace *Project Replace* — the tool a writer actually reaches for when a
+character's name changes. Lekhak has the same thing under the same idea (the
+project-wide replace), and a `${Uncle}` that stands in for the name is
+replaced either way, once, at export.
+
+**What it does not settle:** named streams, restart points, roman and
+alphabetical forms, and a localisable spelling of the number. Those stay in
+`docs/TEMPLATES.md` §3.2 as the open half.
+
 ## Open questions (evidence we do not have yet)
 
 - The exact flatten-indent rule — which paragraphs flatten against what. The

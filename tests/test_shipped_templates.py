@@ -159,7 +159,7 @@ class BookSetAssignmentTests(unittest.TestCase):
         self.project.write_content(self.scene.id, "<p>First light.</p>")
         book = TemplateSet.builtin("Book")
         self.assertIn('class="scene"', book.document_slot("Scene"))
-        self.assertIn("${ChapterNumber}", book.document_slot("Chapter"))
+        self.assertIn("${Position}", book.document_slot("Chapter"))
         self.assertIn('class="part"', book.slot("folder"))
 
         destination = self.root / "book.html"

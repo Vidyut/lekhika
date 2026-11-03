@@ -25,6 +25,8 @@ from lekhak.project import (  # noqa: E402
     TEMPLATE_CONFIG_KEY, TEMPLATE_DOC_PREFIX, TEMPLATE_FILE_PREFIX,
     Project,
 )
+from lekhak.templates import BUILTIN_PLACEHOLDERS  # noqa: E402
+from html import escape  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
 _application.setOrganizationName("Lekhak")
@@ -541,6 +543,63 @@ class TemplateCreationTests(unittest.TestCase):
                          "Inside (spine)")
         self.assertEqual(self.window.margin_outside_label.text(),
                          "Outside")
+
+
+class PlaceholderReferenceTests(unittest.TestCase):
+    """Document > Placeholder Reference (3.2): the ${...} vocabulary as a
+    page — every built-in with one line, then this project's own metadata
+    grouped by the Type that carries it."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name) / "Novel"
+        self.project = Project.create(self.root, "Novel")
+        self.root = self.project.root
+        self.folder = self.project.documents()[0]
+        self.chapter = self.project.add_document(
+            "Chapter One", self.folder.id, "chapter")
+        self.scene = self.project.add_document(
+            "Opening", self.chapter.id, "scene")
+        self.project.set_metadata(self.chapter.id,
+                                  {"Type": "Chapter", "PoV": "Maren"})
+        self.project.set_metadata(self.scene.id,
+                                  {"Type": "Scene", "Location": "Harbour"})
+        self.project.set_project_metadata({"Author": ("A. Writer", "text", [])})
+        self.window = MainWindow()
+        self.window._switch_project(self.project)
+
+    def tearDown(self):
+        self.window.project = None
+        self.project.close()
+        self.temporary.cleanup()
+
+    def test_every_built_in_is_published_with_one_line(self):
+        page = self.window._placeholder_reference_page()
+
+        for name, meaning in BUILTIN_PLACEHOLDERS:
+            self.assertIn(f"${{{name}}}", page)
+            self.assertIn(escape(meaning), page)
+
+    def test_the_projects_metadata_is_published_under_its_type(self):
+        page = self.window._placeholder_reference_page()
+
+        self.assertIn("<h2>Project</h2>", page)
+        self.assertIn("${Author}", page)
+        self.assertIn("<h2>Type Chapter</h2>", page)
+        self.assertIn("${PoV}", page)
+        self.assertIn("on 1 Chapter document", page)
+        self.assertIn("${Location}", page)
+
+    def test_the_dialog_shows_the_page_and_closes_when_asked(self):
+        self.window.show_placeholder_reference()
+
+        dialog = self.window.placeholder_dialog
+        self.assertEqual(dialog.windowTitle(), "Placeholder Reference")
+        self.assertIn("Placeholders", dialog.browser.toPlainText())
+        self.assertTrue(dialog.isVisible())
+
+        dialog.close()
+        self.assertFalse(dialog.isVisible())
 
 
 if __name__ == "__main__":

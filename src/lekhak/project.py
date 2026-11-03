@@ -629,6 +629,32 @@ INSERT_SPAN_RE = re.compile(
     + r'[^>]*>)(.*?)(</span>)', re.I | re.S)
 
 
+_SPELLED_UNITS = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen",
+)
+_SPELLED_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty",
+                 "seventy", "eighty", "ninety")
+
+
+def _spelled_position(number: int) -> str:
+    """``one``, ``twenty-one`` — a number as prose spells it (3.2).
+
+    Hundreds are spelled out; beyond 999 the leading part is read as a
+    count of hundreds (``ten hundred``), which is not how a book of that
+    length numbers its chapters.
+    """
+    if number < 20:
+        return _SPELLED_UNITS[number]
+    if number < 100:
+        tens, unit = divmod(number, 10)
+        return _SPELLED_TENS[tens] + (f"-{_SPELLED_UNITS[unit]}" if unit else "")
+    hundreds, rest = divmod(number, 100)
+    text = f"{_SPELLED_UNITS[hundreds]} hundred"
+    return f"{text} {_spelled_position(rest)}" if rest else text
+
+
 def _template_numbers(chapter_number: int, scene_number: int,
                       words_total: int) -> dict[str, str]:
     """Counter placeholders for one rendered document."""
@@ -2666,6 +2692,32 @@ class Project:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def metadata_placeholders(self) -> dict[str, dict[str, int]]:
+        """Which metadata keys this project actually carries, by the Type
+        that carries them: "Project" for the project's own fields, else the
+        document's Type, each with how many documents set it. A key two
+        Types use appears under both (docs/TEMPLATES.md 3.2 — the
+        placeholder reference offers what is real, not what is possible).
+        """
+        grouped: dict[str, dict[str, int]] = {}
+        for key, entry in self.project_metadata().items():
+            if entry and entry[0].strip():
+                grouped.setdefault("Project", {})[key] = 1
+        types = {document.id: self.type_of(document)
+                 for document in self.documents()}
+        for document_id, entries in self.metadata_entries_all().items():
+            for key, entry in entries.items():
+                if key == "Type" or not entry[0].strip():
+                    continue
+                counts = grouped.setdefault(types.get(document_id, "Document"), {})
+                counts[key] = counts.get(key, 0) + 1
+        ordered: dict[str, dict[str, int]] = {}
+        if "Project" in grouped:
+            ordered["Project"] = dict(sorted(grouped.pop("Project").items()))
+        for name, keys in sorted(grouped.items()):
+            ordered[name] = dict(sorted(keys.items()))
+        return ordered
+
     def type_values(self) -> list[str]:
         """Every distinct Type value used in the project, sorted.
 
@@ -3595,20 +3647,92 @@ class Project:
                 export_docs.append(document)
         return export_docs
 
+    def _type_name(self, document_id: str, kind: str) -> str:
+        """A document's Type from its id and kind — type_of without a row."""
+        stored = self.metadata(document_id).get("Type", "").strip()
+        return stored or BASE_TYPE["folder" if kind == "folder" else "document"]
+
+    def _type_position(self, document_id: str, parent_id: str | None,
+                       type_name: str) -> int:
+        """Its place among the siblings that share its Type, counting from 1.
+
+        Numbering follows meaning, not raw order (3.2): a title page, a
+        dedication and a contents page above the first chapter do not push
+        the chapters to 2, 3, 4 — they are other Types. With no Type stored
+        every sibling shares the default Document/Folder, so this is plain
+        sibling order.
+        """
+        rows = self.db.execute(
+            "SELECT d.id, d.kind, m.value FROM documents d "
+            "LEFT JOIN document_metadata m ON m.document_id = d.id "
+            "AND m.key = 'Type' WHERE d.parent_id IS ? ORDER BY d.position",
+            (parent_id,)).fetchall()
+        wanted = type_name.casefold()
+        count = 0
+        for row_id, kind, stored in rows:
+            group = "folder" if kind == "folder" else "document"
+            name = (stored or "").strip() or BASE_TYPE[group]
+            if name.casefold() == wanted:
+                count += 1
+            if row_id == document_id:
+                return count
+        return 1
+
+    def _position_path(self, document: Document) -> list[int]:
+        """One-based positions from the book down to this document (3.2).
+
+        Each level is the document's place among its siblings of the same
+        Type; the outermost folder is the book the export dresses, so it is
+        not a numbered level — a chapter directly inside it is 1, 2, 3, not
+        1.1, 1.2, and a scene inside that chapter is 1.1.
+        """
+        levels = [(document.id, document.parent_id, document.kind)]
+        while levels[-1][1] is not None:
+            row = self.db.execute(
+                "SELECT id, parent_id, kind FROM documents WHERE id=?",
+                (levels[-1][1],)).fetchone()
+            if row is None:
+                break
+            levels.append((row[0], row[1], row[2]))
+        if len(levels) > 1 and levels[-1][2] == "folder":
+            levels.pop()
+        path = [self._type_position(document_id, parent_id,
+                                    self._type_name(document_id, kind))
+                for document_id, parent_id, kind in levels]
+        path.reverse()
+        return path
+
     def _template_values(self, document: Document, content: str | None = None,
                          extra: dict[str, str] | None = None) -> dict[str, str]:
         if content is None:
             content = self.read_content(document.id)
+        path = self._position_path(document)
         values = {
             "Title": document.title,
+            "Position": str(path[-1]),
+            "Position-spell": _spelled_position(path[-1]),
             "Kind": document.kind,
             "Synopsis": document.synopsis,
             "WordCount": str(document.word_count),
             "Content": content,
-            "Author": (self.project_metadata().get("Author", ("", "text", []))[0]
-                       if "Author" in self.project_metadata() else ""),
         }
+        # ${Position-depth:N} is the path cut to its N most specific
+        # numbers, so one name answers for a chapter (1) and a scene
+        # (1.1). Depths past the path's own length print the whole path.
+        for depth in range(1, max(4, len(path)) + 1):
+            values[f"Position-depth:{depth}"] = ".".join(
+                str(number) for number in path[-depth:])
+        # One namespace (docs/TEMPLATES.md 3.2): a metadata key answers
+        # under its own name and its Metadata. alias. The document's
+        # non-empty value wins over the project's — an empty field means
+        # "inherit", not "blank it" — and a built-in name wins over both.
+        metadata = {key: entry[0] for key, entry in self.project_metadata().items()
+                    if entry and entry[0].strip()}
         for key, value in self.metadata(document.id).items():
+            if value.strip():
+                metadata[key] = value
+        for key, value in metadata.items():
+            values.setdefault(key, value)
             values[f"Metadata.{key}"] = value
         if extra:
             values.update(extra)

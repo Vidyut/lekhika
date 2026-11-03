@@ -838,6 +838,57 @@ falls back to the shape slot silently); the EPUB docstring still promises a
 `toc_page` slot nothing reads; the naming note's old list of looked-up names
 was wrong and has been cut, but `docs/TEMPLATES.md` still lists them.
 
+### 1.20 Placeholders are an export-time vocabulary — DONE (2026-11-04)
+
+**Request:** "We need a simple document with the various placeholders ToC,
+Author, etc. And a button to click for placeholder reference that publishes
+this list + specific ones set in metadata by type. It should just shoot out an
+html popup that the user can close when they wish. A small line with each
+placeholder to explain what it means." Then: "placeholders should work in the
+regular manuscript as well... If there is a placeholder - for eg ${Uncle} in
+the text, it allows a writer to decide/change a character's name later... it
+will not be processed in the editor. Only at the time of export." And: "Maybe
+see what jargon and configuration Scrivener uses?"
+
+**Implemented (2026-11-04):**
+
+- **`${Position}`, `${Position-spell}`, `${Position-depth:N}`** replace the
+  chapter/scene counters as what a face asks for. Position is the place among
+  the siblings that share the document's Type — front matter typed Title or
+  Frontmatter above the chapters does not push them to 2, 3, 4, and with no
+  Type set it is plain sibling order. The book folder above is not a numbered
+  level, so a chapter is `2` and its scenes `2.1`, `2.2`. The spell form reads
+  `two`, the depth form is the hierarchical number. `${ChapterNumber}` /
+  `${SceneNumber}` stay for templates that already say them. With no Type set
+  it is raw sibling order, and that is the intent: `${Position}` appears only
+  in sets a writer opts into, and the Book set's front-matter section says
+  which Types make the numbers read right.
+- **One namespace, in prose and in fragments.** A metadata key answers under
+  its own name (`${PoV}`, `${Uncle}`) as well as `Metadata.PoV`; the
+  document's non-empty value wins over the project's, and a built-in name
+  beats both, so `${Title}` stays the binder title. Prose was already
+  expanded at export — only the bare-name half was missing.
+- **Document > Placeholder Reference** (and a *Placeholders...* button in the
+  template panel): one non-modal page, built from the live project, listing
+  every built-in with one line of meaning and the metadata keys this project
+  carries grouped by Type (`Project`, `Type Chapter`, ...), each with how many
+  documents set it. It is generated from `BUILTIN_PLACEHOLDERS` in
+  `templates.py`, so the page and the code cannot drift.
+- **Names follow Scrivener's numbering family** (`<$n>`, `<$w>`, `<$hn>`),
+  recorded with the rest of its jargon in `docs/SCRIVENER-BEHAVIOR.md`; why
+  streams and `<$rst>` are not needed here is written down there too.
+
+Suite 965, exit 0.
+
+**Relations:** 1.18/1.19 (Types, faces), `docs/TEMPLATES.md` §3.2,
+`docs/SCRIVENER-BEHAVIOR.md`.
+
+**Still open:** ancestor-folder metadata inheritance and the Preferences
+metadata list (the nearest-first chain); named numbering streams, restart
+points, roman and alphabetical forms; `${Format}`, `${Page}`, `${PagesTotal}`
+in fragments; an escape for a literal `${`; and the reference page has no
+search or copy button.
+
 ## Phase 2 — books, variants, and conditional content
 
 ### 2.1 Book-level compile settings — DONE

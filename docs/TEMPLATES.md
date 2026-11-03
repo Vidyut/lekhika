@@ -626,12 +626,15 @@ HTML escaping applies to expanded values, as in a fragment.
 | `${Title}`, `${Kind}`, `${Synopsis}`, `${WordCount}` | the unit being rendered |
 | `${Content}` | the unit's prose (raw, not escaped) |
 | `${Children}`, `${ToC}` | nested units / TOC entries (raw) |
+| `${Position}` | the unit's place among the siblings that share its Type, counting from 1 — the chapter number a chapter fragment wants. No Type set means plain sibling order, so a homogeneous folder numbers 1, 2, 3 either way; front matter of another Type never shifts it |
+| `${Position-spell}` | the same number spelled out: `one`, `two`, `twenty-one` |
+| `${Position-depth:N}` | positions from the book down, cut to N numbers: a chapter `2`, its scenes `2.1`, `2.2`. The book folder itself is not a numbered level |
 | `${ChapterNumber}`, `${SceneNumber}`, `${WordsTotal}` | counters; template and heading pages never take numbers (2.1) |
 | `${Anything}` | built-in values first, then any metadata key — see *one namespace* below; `${Metadata.Key}` still works as the explicit spelling |
-| `${Parent}` | the immediate container's title |
+| `${Parent}` | PROPOSED: the immediate container's title |
 | `${Book}` | PROPOSED: the nearest ancestor that is "the book being dressed" — a folder with a page setup or a template association; failing that, the export's title-page container |
-| `${Format}` | the format being written (`docx`, `pdf`, `epub`, `html`, `text`) — the value that makes `$if(Format = docx)` possible, so a small difference never needs a second template |
-| `${Page}`, `${PagesTotal}` | page numbers, where the format has pages (below) |
+| `${Format}` | the format being written (`docx`, `pdf`, `epub`, `html`, `text`) — the value that makes `$if(Format = docx)` possible, so a small difference never needs a second template. Resolved today in print-config values; not yet in fragments |
+| `${Page}`, `${PagesTotal}` | PROPOSED: page numbers, where the format has pages (below) |
 
 **Metadata inherits down the binder, and outward from the writer.** A value
 resolves nearest-first: the document's own metadata, then each ancestor
@@ -641,6 +644,10 @@ deliberately shows the chapter's or the book's value rather than blanking it.
 This is what makes `${Metadata.Author}` in a scene's page footer, or
 `${Metadata.Status}` on a single scene, work without repeating anything:
 folder metadata is metadata for everything inside the folder.
+
+**Built 2026-11-04:** the document's own metadata and the project's, a
+non-empty document value winning and an empty one inheriting. Ancestor
+folders and the preference list are still open (ROADMAP 1.20).
 
 **What is special: exactly two things.** `${…}` is a value and `$if(…)` /
 `$else` / `$endif` are conditionals. Everything else is literal text, and this
@@ -698,6 +705,22 @@ Nothing is set by default, so an unset `${title}` resolves to nothing — and
 the check says so *while the template is being written*, which is when that
 is cheap to fix. The one collision worth a warning remains a
 metadata key named exactly `Title`, where the built-in wins.
+
+**The reference is in the app (built 2026-11-04).** *Document > Placeholder
+Reference* — and the *Placeholders...* button in the template panel — opens a
+page listing every built-in value with one line of meaning, then the metadata
+keys this project actually carries, grouped by the Type carrying them
+(`Project`, `Type Chapter`, `Type Scene`). It is what the writer needs at the
+moment of writing a `${...}`, and it is generated from the live project, so a
+key exists on the page because some document already sets it. Scrivener's
+precedent is its *Help > List of All Placeholders*; ours adds the project's
+own vocabulary, which is the part no general list can know.
+
+**The names follow Scrivener's numbering family** where it has one
+(`docs/SCRIVENER-BEHAVIOR.md`): `<$n>` → `${Position}`, `<$w>` (word numbers)
+→ `${Position-spell}`, `<$hn>` (hierarchical) → `${Position-depth:N}`. The
+tags differ in spelling because `${...}` is the syntax that already exists;
+the concepts are the same ones writers have met before.
 
 **Application-level metadata (Preferences).** A key/value list in
 Preferences applies to every export of every project: set `Author = …` once

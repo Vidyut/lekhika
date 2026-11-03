@@ -66,7 +66,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
     QPushButton, QSizePolicy, QSlider, QSpinBox, QSplitter, QStatusBar,
     QStyle, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QToolBar,
+    QTableWidget, QTableWidgetItem, QTextEdit, QTextBrowser, QToolBar,
     QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -94,7 +94,8 @@ from .project import (
 from .preferences import LINK_POLICY_CHOICES, PreferencesDialog
 from .pageview import PageView
 from .templates import (
-    PLACEHOLDER_RE, TEMPLATE_CONFIG_NOTE, TEMPLATE_NAMING_NOTE,
+    BUILTIN_PLACEHOLDERS, PLACEHOLDER_RE, TEMPLATE_CONFIG_NOTE,
+    TEMPLATE_NAMING_NOTE,
     TemplateSet, _shipped_text, copy_template_file, copy_template_set,
     discover_template_sets, document_template_stem, drop_config_line,
     file_paths, is_template_fragment, join_head, named_template_sets,
@@ -662,6 +663,29 @@ class MetadataDialog(QDialog):
         return self.table.values_types_options()
 
 
+class PlaceholderReferenceDialog(QDialog):
+    """The ``${...}`` reference as a page (docs/TEMPLATES.md §3.2): what an
+    export can fill, and which metadata keys this project actually carries.
+
+    Shown, not exec'd — it is read while the writer keeps working, and it
+    is closed when they are done. No Project access here: the window builds
+    the page and hands it over.
+    """
+
+    def __init__(self, page: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Placeholder Reference")
+        self.resize(600, 620)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        layout = QVBoxLayout(self)
+        self.browser = QTextBrowser()
+        self.browser.setHtml(page)
+        layout.addWidget(self.browser, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
+
 class RefreshCombo(QComboBox):
     """A dropdown that asks for a fresh list when it opens (1.17).
 
@@ -782,8 +806,9 @@ class ExportOptionsDialog(QDialog):
         layout.addWidget(self.warning_label)
         layout.addWidget(QLabel(
             "Template — slot files with ${Title}, ${Content}, "
-            "${Synopsis}, ${WordCount}, ${ChapterNumber}, ${SceneNumber}, "
-            "${WordsTotal}, ${Metadata.Key}, and ${ToC} in a contents template"
+            "${Synopsis}, ${WordCount}, ${Position}, ${WordsTotal}, "
+            "${Metadata.Key}, and ${ToC} in a contents template. "
+            "The template panel's Placeholders... button lists them all."
         ))
         set_row = QHBoxLayout()
         self.set_box = QComboBox()
@@ -5154,6 +5179,64 @@ class MainWindow(QMainWindow):
             self._populate_metadata_table()
             self._refresh_outliner()
 
+    def show_placeholder_reference(self) -> None:
+        """Publish the placeholder vocabulary (docs/TEMPLATES.md §3.2).
+
+        One line per built-in value, then the metadata keys this project
+        actually carries, grouped by the Type that carries them: the useful
+        answer to "what can I write" is what an export of *this* project can
+        fill. Shown, not exec'd — a reference is read while working.
+        """
+        if not self.project:
+            return
+        self.placeholder_dialog = PlaceholderReferenceDialog(
+            self._placeholder_reference_page(), self)
+        self.placeholder_dialog.show()
+
+    def _placeholder_reference_page(self) -> str:
+        rows = "".join(
+            f"<tr><td><code>${{{escape(name)}}}</code></td>"
+            f"<td>{escape(meaning)}</td></tr>"
+            for name, meaning in BUILTIN_PLACEHOLDERS)
+        groups = []
+        for type_name, keys in self.project.metadata_placeholders().items():
+            items = []
+            for key, count in keys.items():
+                if type_name == "Project":
+                    where = "on the project"
+                else:
+                    plural = "" if count == 1 else "s"
+                    where = f"on {count} {type_name} document{plural}"
+                items.append(
+                    f"<tr><td><code>${{{escape(key)}}}</code></td>"
+                    f"<td>{escape(where)}</td></tr>")
+            title = "Project" if type_name == "Project" else f"Type {type_name}"
+            groups.append(f"<h2>{escape(title)}</h2>"
+                          f"<table cellspacing='6'>{''.join(items)}</table>")
+        if not groups:
+            groups.append(
+                "<h2>Your metadata</h2><p>No metadata keys yet. "
+                "<i>Document &gt; Edit Metadata...</i> adds one; with nothing "
+                "selected (or a folder selected) the field belongs to the "
+                "whole project.</p>")
+        return (
+            "<h1>Placeholders</h1>"
+            "<p>A placeholder is written <code>${Name}</code>. It stays "
+            "exactly as typed in the editor and in the saved file; an export "
+            "replaces it — in a template and in the manuscript alike. An "
+            "unknown name prints nothing, so a typo is silent: copy a name "
+            "from this page.</p>"
+            "<h2>Built in</h2>"
+            f"<table cellspacing='6'>{rows}</table>"
+            + "".join(groups) +
+            "<h2>Naming</h2>"
+            "<p>A name is matched as written, case and spaces included. A "
+            "built-in name wins over a metadata key of the same name, so "
+            "<code>${Title}</code> is the binder title and <code>${title}</code> "
+            "is the writer's own field. The <code>Metadata.</code> spelling "
+            "(<code>${Metadata.PoV}</code>) means the same key.</p>"
+        )
+
     def restore_snapshot(self) -> None:
         if not self.project or not self.current_id:
             return
@@ -5632,6 +5715,12 @@ class MainWindow(QMainWindow):
             "tags a print config is written with.")
         default_file.clicked.connect(self._open_default_config_file)
         layout.addWidget(default_file)
+        reference = QPushButton("Placeholders...")
+        reference.setToolTip(
+            "Every ${...} an export fills, one line each, plus the\n"
+            "metadata keys this project actually carries.")
+        reference.clicked.connect(self.show_placeholder_reference)
+        layout.addWidget(reference)
         self.template_config_box = QPlainTextEdit()
         self.template_config_box.setPlaceholderText(
             "# comment lines and `key: value` lines — this is the head "
@@ -5664,7 +5753,7 @@ class MainWindow(QMainWindow):
             self.margin_preset_label, self.margin_preset_box,
             self.margin_mirror_box, self.margin_custom_row,
             self.page_start_label, self.page_start_box,
-            default_file, self.template_config_box,
+            default_file, reference, self.template_config_box,
             self.template_css_label, self.template_css_box,
             self.template_naming_note,
         )

@@ -363,19 +363,46 @@ def document_template_stem(text: str) -> str:
 
 # Every value key the compile actually supplies (2.4 slot editor): mirrors
 # Project._template_values plus the compile extras and the TOC's Entries.
-# Metadata.<key> is open-ended and validated by prefix only. fill() is
-# case-sensitive, so validation is too — ${title} renders empty and should
-# be flagged, not silently accepted.
+# Metadata.<key> and Position-depth:<n> are open-ended and validated by
+# prefix only. fill() is case-sensitive, so validation is too — ${title}
+# renders empty and should be flagged, not silently accepted.
 TEMPLATE_KEYS = (
-    "Title", "Kind", "Synopsis", "WordCount", "Content",
-    "ChapterNumber", "SceneNumber", "WordsTotal", "ToC", "Scenes", "Children",
+    "Title", "Position", "Position-spell", "Kind", "Synopsis", "WordCount",
+    "Content", "ChapterNumber", "SceneNumber", "WordsTotal", "ToC", "Scenes",
+    "Children",
+)
+
+# What the reference page says each built-in means (docs/TEMPLATES.md 3.2),
+# in the order it lists them. One source: the popup, never a second copy of
+# the documentation that can drift.
+BUILTIN_PLACEHOLDERS: tuple[tuple[str, str], ...] = (
+    ("Title", "the document's title in the binder"),
+    ("Position", "its place among the siblings that share its Type, "
+                 "counting from 1 — the chapter number a chapter's face "
+                 "usually wants. With no Type set, plain sibling order"),
+    ("Position-spell", "the same number as prose spells it: one, two, "
+                       "twenty-one"),
+    ("Position-depth:2", "positions from the book down, cut to two numbers: "
+                         "a chapter 2, its scenes 2.1, 2.2 — raise the depth "
+                         "for a deeper tree"),
+    ("Kind", "what the binder calls it: folder, chapter, scene or note"),
+    ("Synopsis", "the synopsis in the inspector"),
+    ("WordCount", "the words in this document"),
+    ("Content", "its prose (a fragment only — inside prose it stays as "
+                "typed)"),
+    ("Scenes", "the child scenes, already dressed (a chapter's fragment)"),
+    ("ToC", "the contents list (a contents fragment)"),
+    ("ChapterNumber", "chapters met so far in this export, in binder order"),
+    ("SceneNumber", "scenes met so far in this export, in binder order"),
+    ("WordsTotal", "words met so far in this export, in binder order"),
+    ("Author", "the Author field of the project's metadata"),
 )
 
 # What the slot editor's completer offers, as the exact strings an
 # activated item inserts (closing brace included; Metadata. stays open
 # for the writer's own key).
 TEMPLATE_COMPLETIONS = tuple(f"${{{key}}}" for key in TEMPLATE_KEYS) + (
-    "${Metadata.", "$if(", "$else", "$endif",
+    "${Position-depth:2}", "${Metadata.", "$if(", "$else", "$endif",
 )
 
 
@@ -398,7 +425,7 @@ def validate_slot(text: str, *, html: bool = True,
     extra = set(known_keys)
     for key in PLACEHOLDER_RE.findall(text):
         name = key.strip()
-        if name.startswith("Metadata."):
+        if name.startswith(("Metadata.", "Position-depth:")):
             continue
         if name not in TEMPLATE_KEYS and name not in extra:
             issues.append(f"unknown placeholder ${{{name}}}")
@@ -1439,8 +1466,11 @@ delete.
 
 A chapter prints its number and nothing else — its name is on the contents
 page (and the part page above it, if the chapters sit in parts).
-`${ChapterNumber}` counts the chapters in binder order, so a chapter's
-number is its place among the chapters in the manuscript folder.
+`${Position}` is the chapter's place among the siblings that share its
+Type — a title page and a dedication above the first chapter are other
+Types, so they do not push the chapters to 2, 3, 4. Write
+`${Position-spell}` for "two" instead of "2", and `${Position-depth:2}`
+for a dotted number a scene inherits from its chapter: 2.1, 2.2.
 
 A scene prints no heading of its own. Give the scene a `PoV` field in its
 Metadata (the metadata panel adds any field you name) and the face prints it
@@ -1523,10 +1553,10 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
         # title (a part page), and the contents page lists them all.
         "documents/Chapter.html": (
             '<section class="chapter">\n'
-            '<p class="chapter-number">${ChapterNumber}</p>\n'
+            '<p class="chapter-number">${Position}</p>\n'
             '<div class="content">${Content}</div>\n'
             '<div class="scenes">${Scenes}</div>\n</section>'),
-        "documents/Chapter.txt": "${ChapterNumber}\n\n${Content}\n\n${Scenes}",
+        "documents/Chapter.txt": "${Position}\n\n${Content}\n\n${Scenes}",
         # A scene has no heading unless the writer gives it one: a `PoV`
         # field in the scene's Metadata prints above the prose (2.2).
         "documents/Scene.html": (
