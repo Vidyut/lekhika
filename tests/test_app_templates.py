@@ -270,5 +270,273 @@ class TemplateInspectorTests(unittest.TestCase):
         self.assertTrue((copied / "document.html").exists())
 
 
+class TemplateSelectorTests(unittest.TestCase):
+    """Both template rows speak the selected Type (1.18).
+
+    A Book folder asks for a "Book template" and means the set named
+    after Book; a chapter document under it means the Chapter face of
+    the set its folder chose. Both are shown, never stored, until the
+    writer changes the row.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name) / "Novel"
+        self.project = Project.create(self.root, "Novel")
+        self.root = self.project.root
+        self.folder = self.project.documents()[0]      # Draft, kind "folder"
+        self.scene = self.project.add_document(
+            "Scene", self.folder.id, "scene")
+        self.window = MainWindow()
+        self.window._switch_project(self.project)
+
+    def tearDown(self):
+        self.window.project = None
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _set_type(self, document_id, name, group):
+        self.project.add_type(group, name)
+        self.project.set_metadata(document_id, {"Type": name})
+
+    def _template_set(self, name, *files):
+        folder = self.root / "templates" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        for file in files:
+            (folder / file).write_text("<p>${Content}</p>\n",
+                                       encoding="utf-8")
+
+    def _document(self, document_id):
+        return next(d for d in self.project.documents()
+                    if d.id == document_id)
+
+    def _show(self, document_id):
+        """Select a document, after one the panel is not already on.
+
+        The inspector refreshes on a selection *change* (a project opens
+        with its first folder already selected), so a selection that
+        changes nothing would read the panel's previous state.
+        """
+        elsewhere = (self.scene.id if document_id == self.folder.id
+                     else self.folder.id)
+        self.window._select_document(elsewhere)
+        self.window._select_document(document_id)
+
+    def test_each_row_is_named_after_its_own_type(self):
+        self._show(self.folder.id)
+        self.assertEqual(self.window.book_template_label.text(),
+                         "Folder template")
+
+        self._show(self.scene.id)
+        self.assertEqual(self.window.doc_template_label.text(),
+                         "Document template")
+
+        self._set_type(self.folder.id, "Book", "folder")
+        self._show(self.folder.id)
+        self.assertEqual(self.window.book_template_label.text(),
+                         "Book template")
+
+    def test_changing_the_type_retitles_the_row_at_once(self):
+        self.project.add_type("folder", "Book")
+        self._show(self.folder.id)
+
+        self.window.type_box.setCurrentIndex(
+            self.window.type_box.findText("Book"))
+
+        self.assertEqual(self.project.type_of(self._document(self.folder.id)),
+                         "Book")
+        self.assertEqual(self.window.book_template_label.text(),
+                         "Book template")
+
+    def test_a_folder_defaults_to_the_set_named_after_its_type(self):
+        self._template_set("Book", "chapter.html")
+        self._set_type(self.folder.id, "Book", "folder")
+
+        self._show(self.folder.id)
+
+        box = self.window.book_template_box
+        self.assertEqual(box.currentData(), "Book")
+        # Stored, not merely shown: naming a set after the Type is the
+        # assignment, so the export reads the same answer (1.18).
+        self.assertEqual(
+            self.project.book_settings(self.folder.id).get("template", ""),
+            "Book")
+
+        # And it stays a choice: picking a set stores that one.
+        self.assertGreater(box.count(), 1)
+        box.setCurrentIndex(1)
+        self.assertEqual(
+            self.project.book_settings(self.folder.id)["template"],
+            box.itemData(1))
+
+    def test_a_stored_choice_outranks_a_matching_name(self):
+        self._template_set("Book", "chapter.html")
+        self._template_set("Other", "chapter.html")
+        self._set_type(self.folder.id, "Book", "folder")
+        self.project.set_book_settings(self.folder.id, {"template": "Other"})
+
+        self._show(self.folder.id)
+
+        self.assertEqual(self.window.book_template_box.currentData(), "Other")
+
+    def test_no_matching_name_stores_nothing(self):
+        self._template_set("Other", "chapter.html")
+        self._set_type(self.folder.id, "Book", "folder")
+
+        self._show(self.folder.id)
+
+        self.assertEqual(self.window.book_template_box.currentData(), "")
+        self.assertEqual(
+            self.project.book_settings(self.folder.id).get("template", ""), "")
+
+    def test_a_document_defaults_to_the_face_named_after_its_type(self):
+        self._template_set("Mine", "Chapter.html")
+        self.project.set_book_settings(self.folder.id, {"template": "Mine"})
+        self._set_type(self.scene.id, "Chapter", "document")
+
+        self._show(self.scene.id)
+
+        self.assertEqual(self.window.doc_template_box.currentData(), "Chapter")
+        self.assertEqual(self.window.doc_template_label.text(),
+                         "Chapter template")
+        # Stored, so the export wears the same face the row shows (1.18).
+        self.assertEqual(self._document(self.scene.id).doc_template, "Chapter")
+
+    def test_a_document_takes_the_face_of_the_set_its_parent_chose(self):
+        self._template_set("Chosen", "Note.html")
+        self._template_set("Elsewhere", "Chapter.html")
+        self._set_type(self.scene.id, "Chapter", "document")
+
+        # The parent chose nothing, so nothing is derived from a set.
+        self._show(self.scene.id)
+        self.assertEqual(self.window.doc_template_box.currentData(), "")
+
+        # The chosen set carries no Chapter face: the set's own slot
+        # stays, even though another set offers a Chapter one.
+        self.project.set_book_settings(self.folder.id, {"template": "Chosen"})
+        self._show(self.scene.id)
+        self.assertEqual(self.window.doc_template_box.currentData(), "")
+
+    def test_a_stored_face_outranks_a_matching_name(self):
+        self._template_set("Mine", "Chapter.html", "Note.html")
+        self.project.set_book_settings(self.folder.id, {"template": "Mine"})
+        self._set_type(self.scene.id, "Chapter", "document")
+        self.project.update_document(self.scene.id, doc_template="Note")
+
+        self._show(self.scene.id)
+
+        self.assertEqual(self.window.doc_template_box.currentData(), "Note")
+
+
+class TemplateCreationTests(unittest.TestCase):
+    """What making a document inside a template means (1.18)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name) / "Novel"
+        self.project = Project.create(self.root, "Novel")
+        self.root = self.project.root
+        self.folder = self.project.documents()[0]      # Draft, kind "folder"
+        self.window = MainWindow()
+        self.window._switch_project(self.project)
+
+    def tearDown(self):
+        self.window.project = None
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _template_folder(self):
+        book = self.project.add_document("Book", self.folder.id, "folder")
+        self.project.set_template(book.id, True)
+        self.window._reload_tree(book.id)
+        return book
+
+    def _made_in(self, parent_id):
+        return [document for document in self.project.documents()
+                if document.parent_id == parent_id]
+
+    def test_a_document_made_inside_a_template_is_a_template(self):
+        book = self._template_folder()
+
+        self.window.add_chapter()
+
+        made = self._made_in(book.id)
+        self.assertEqual(len(made), 1)
+        self.assertTrue(self.project.is_template(made[0].id))
+        # The tick is the writer's: unticking makes it a document again.
+        self.project.set_template(made[0].id, False)
+        self.assertFalse(self.project.is_template(made[0].id))
+
+    def test_a_document_made_outside_a_template_is_not_one(self):
+        self.window._reload_tree(self.folder.id)
+
+        self.window.add_scene()
+
+        made = [document for document in self._made_in(self.folder.id)
+                if document.title == "New Document"]
+        self.assertEqual(len(made), 1)
+        self.assertFalse(self.project.is_template(made[0].id))
+
+    def test_a_sub_template_follows_the_template_folders_paper(self):
+        """Trim and mirroring are the folder's; margins and page start
+        are the page's own, so a title page can be wider and begin
+        where it likes (1.18)."""
+        book = self._template_folder()
+        self.window.add_chapter()
+
+        note = self.window.template_geometry_note
+        self.assertTrue(note.isVisibleTo(self.window))
+        self.assertIn("Book", note.text())
+        self.assertIn("set on the template folder", note.text())
+        self.assertFalse(self.window.size_preset_box.isVisibleTo(self.window))
+        self.assertFalse(
+            self.window.margin_mirror_box.isVisibleTo(self.window))
+        self.assertTrue(
+            self.window.margin_preset_box.isVisibleTo(self.window))
+        self.assertTrue(self.window.page_start_box.isVisibleTo(self.window))
+
+        # A template outside any template keeps its own geometry rows.
+        loose = self.project.add_document("Loose", self.folder.id, "chapter")
+        self.project.set_template(loose.id, True)
+        self.window._reload_tree(loose.id)
+
+        self.assertFalse(
+            self.window.template_geometry_note.isVisibleTo(self.window))
+        self.assertTrue(self.window.size_preset_box.isVisibleTo(self.window))
+        self.assertTrue(
+            self.window.margin_mirror_box.isVisibleTo(self.window))
+
+    def test_a_sub_template_can_set_its_own_margins(self):
+        """The margins row must reach the document's design, not only a
+        template file's head (1.18) — a band pick is stored at once."""
+        book = self._template_folder()
+        self.window.add_chapter()
+        made = self._made_in(book.id)
+        self.assertEqual(len(made), 1)
+
+        box = self.window.margin_preset_box
+        box.setCurrentIndex(box.findData(0.75))          # a KDP band
+
+        self.assertIn("Margins", self.window.template_config_box.toPlainText())
+        self.assertIn("Margins",
+                      self.project.metadata(made[0].id)[TEMPLATE_CONFIG_KEY])
+
+    def test_the_margin_labels_follow_the_books_mirroring(self):
+        """A sub-template cannot write the mirroring, so its edge boxes
+        are named by the book's (1.18)."""
+        self._template_folder()
+        self.project.set_page_setup(
+            self.folder.id,
+            {"trim": "6x9", "width": 6.0, "height": 9.0, "top": 0.5,
+             "bottom": 0.5, "inside": 0.5, "outside": 0.5, "mirror": True,
+             "gutter": 0.0})
+        self.window.add_chapter()
+
+        self.assertEqual(self.window.margin_inside_label.text(),
+                         "Inside (spine)")
+        self.assertEqual(self.window.margin_outside_label.text(),
+                         "Outside")
+
+
 if __name__ == "__main__":
     unittest.main()

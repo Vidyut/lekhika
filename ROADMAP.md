@@ -734,6 +734,57 @@ the editor; a template document does not appear in the Outliner's Templates
 listing; custom metadata values stay in the database — they are not written
 into the file's head (pre-existing, not 1.17's doing).
 
+### 1.18 One paper for the book, margins per page — DONE (2026-11-03)
+
+**Request:** "a template in a template folder shouldn't offer full document
+level stuff - trim, mirrored. Margins is okay - unless you spot a flaw in that
+plan... pages that may need bigger margins or even no headers and footers, title
+page, dedication and such." Then the rule: "a document is assigned a template at
+the highest level as far as possible and carry the trim through when exported.
+But at the time of export we have an option for an override, and that option
+will be used... If a template outside the selected template folder is used, it
+may have its own trim/paper size, but it will be silently ignored unless a
+standalone page is being printed. If a standalone page is printed, whatever is
+on the page as size is the truth."
+
+**Implemented (2026-11-03):**
+
+- **The Type speaks both template rows.** The folder row reads "Book template"
+  for a folder typed Book and preselects the set named after it; the document
+  row reads "Chapter template" and preselects that set's `Chapter.html` face
+  when the parent chose one, else the set's own slot. Display only — a refresh
+  never writes; a Type change re-reads the panel at the end of `_save_metadata`.
+- **Made inside a template, it is a template** (`_new_document` +
+  `_nearest_template`); the tick is still the writer's to clear.
+- **A sub-template's panel** hides Page size and Mirror margins, keeps Margins
+  and Page start, and says where the paper comes from. Its edge boxes are named
+  by the book's mirroring, since it cannot write that line.
+- **Margins print per page**: an exported document whose own design states
+  `Margins` gets its own DOCX section carrying them (`config_margins`,
+  `_apply_section_margins`); paper, gutter and mirroring stay the book's.
+- **`Header: none` / `Footer: none`** is the spelling for "nothing there"
+  (an empty line still means "inherit the sample"); it applies to that page's
+  section, and is documented in the shipped config reference.
+- **Standalone page**: `standalone_page_setup()` lets the page's own design win
+  for the Page preview and for any export or print whose scope is one document.
+  A book export keeps the book's trim and ignores the page's silently; the
+  export dialog's template set is still the export-time override.
+- **Fixed on the way:** a template *document* could not write custom margins or
+  mirroring at all — the preset handlers were gated on a template file being
+  open (`_design_open`).
+- Top bar says "New Document"; the item it makes is titled so (kind stays
+  `scene`).
+
+Suite 942, exit 0.
+
+**Relations:** 1.17 (the tick, the design panel, the Type), 1.15 (page setup),
+§3.1 (the print config), `docs/TEMPLATES.md` (naming by Type),
+`docs/MODEL.md`.
+
+**Still open:** the panel has no rows for `Header:`/`Footer:` — they are typed
+in the config box; the preview's status line does not say when the size shown
+came from the page's own design rather than the book's.
+
 ## Phase 2 — books, variants, and conditional content
 
 ### 2.1 Book-level compile settings — DONE

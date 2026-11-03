@@ -291,3 +291,30 @@ The Outliner's Kind column, the binder tooltip, the related-files list and
 the link picker now show the *physical* kind — folder, chapter, scene,
 note. The role is the writer's own label and says nothing about what the
 thing is; it belongs in the inspector (ROADMAP 1.17).
+
+## 13. A book has one paper, a page has its own margins — DONE (2026-11-03)
+
+Printing has one paper size — a book is one object on one trim — but the
+pages inside it are not all the same page. A title page wants wider margins,
+a dedication wants no running head, and neither is a reason to print the
+whole book differently.
+
+- **The template folder owns the paper.** A template made inside a template
+  folder no longer shows Page size or Mirror margins: those are the folder's
+  to set, and the note above the rows says so. **Margins** and **Page start**
+  stay on the sub-template, because they are about where *this* page sits on
+  that paper and how much of it it uses.
+- **Those margins print.** An exported document whose own design states a
+  `Margins` line gets its own DOCX section carrying them; the paper, gutter
+  and mirroring stay the book's.
+- **`Header: none` / `Footer: none`** is how a page says it carries no
+  running head. An empty line still means "inherit the sample", which is not
+  the same thing.
+- **Standalone beats the book.** A page printed on its own — the Page tab, a
+  one-document export or print — is printed as its own design states it, size
+  included. A book export keeps the book's trim and ignores the page's
+  silently; the export dialog's template set is the override that wins.
+
+The edge boxes' names (Inside/Outside vs Left/Right) follow the mirroring in
+force: a sub-template's own mirror line stands down with the checkbox, so the
+book's answer names the boxes.

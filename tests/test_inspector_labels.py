@@ -8,7 +8,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QToolBar  # noqa: E402
 
 from lekhak.app import MainWindow  # noqa: E402
 from lekhak.project import Project  # noqa: E402
@@ -52,6 +52,15 @@ class InspectorLabelTests(unittest.TestCase):
     def test_the_second_tab_is_called_page_preview(self):
         index = self.window.views.indexOf(self.window.page_view)
         self.assertEqual(self.window.views.tabText(index), "Page preview")
+
+    def test_the_toolbar_makes_documents_not_scenes(self):
+        # Scene is a role a document can carry (1.17), not the thing the
+        # toolbar makes: what it makes is a document.
+        toolbar = next(bar for bar in self.window.findChildren(QToolBar)
+                       if bar.windowTitle() == "Writing")
+        texts = [action.text() for action in toolbar.actions()]
+        self.assertIn("New Document", texts)
+        self.assertNotIn("New Scene", texts)
 
 
 class PageFallbackTests(unittest.TestCase):

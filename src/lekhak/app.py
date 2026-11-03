@@ -97,8 +97,8 @@ from .templates import (
     PLACEHOLDER_RE, TEMPLATE_CONFIG_NOTE, TEMPLATE_NAMING_NOTE,
     TemplateSet, _shipped_text, copy_template_file, copy_template_set,
     discover_template_sets, document_template_stem, drop_config_line,
-    file_paths, is_template_fragment, join_head, parse_docx_config,
-    project_template_root, set_template_flag, split_head,
+    file_paths, is_template_fragment, join_head, named_template_sets,
+    parse_docx_config, project_template_root, set_template_flag, split_head,
     write_config_line,
 )
 
@@ -2411,7 +2411,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         toolbar.addAction("New Folder", self.add_folder)
         toolbar.addAction("New Chapter", self.add_chapter)
-        toolbar.addAction("New Scene", self.add_scene)
+        toolbar.addAction("New Document", self.add_scene)
         toolbar.addAction("Delete", self.delete_section)
         toolbar.addSeparator()
         toolbar.addWidget(self.search_box)
@@ -3650,6 +3650,14 @@ class MainWindow(QMainWindow):
         self.scene_divider_edit.setVisible(is_folder)
         if not document or not self.project:
             return
+        # Both rows speak the document's Type (docs/MODEL.md), so a
+        # folder typed Book asks for a "Book template" and a document
+        # typed Scene for a "Scene template" — only a document with no
+        # Type of its own falls back to "Document template".
+        document_type = self.project.type_of(document)
+        type_label = f"{document_type} template"
+        self.book_template_label.setText(type_label)
+        self.doc_template_label.setText(type_label)
         settings = self.project.book_settings(document.id) if is_folder else {}
         self.book_template_box.blockSignals(True)
         self.book_template_box.clear()
@@ -3661,7 +3669,13 @@ class MainWindow(QMainWindow):
         # name. A stored name that no longer exists finds nothing and
         # falls back to Automatic, healing on the next change rather than
         # pointing at a folder id that means nothing.
-        offered: set[str] = set()
+        offered: list[str] = []
+        # Nothing assigned: the set named after this folder's own Type is
+        # the one it means (docs/TEMPLATES.md asks the writer to name
+        # templates by Type). That is an assignment, not a suggestion
+        # (1.18): the match is stored below, so the export reads the
+        # same answer the row shows.
+        wanted = settings.get("template", "").strip()
         for template_set in discover_template_sets(self.project.root):
             if template_set.name in offered:
                 # A project folder named after a shipped set: listed in
@@ -3669,12 +3683,19 @@ class MainWindow(QMainWindow):
                 # rows with one name cannot be told apart here, and the
                 # name is the shipped set's (see named_template_sets).
                 continue
-            offered.add(template_set.name)
+            offered.append(template_set.name)
             self.book_template_box.addItem(template_set.name, template_set.name)
+            if (not wanted
+                    and template_set.name.casefold()
+                    == document_type.casefold()):
+                wanted = template_set.name
         self.book_template_box.setCurrentIndex(
-            max(0, self.book_template_box.findData(settings.get("template", "")))
+            max(0, self.book_template_box.findData(wanted))
         )
         self.book_template_box.blockSignals(False)
+        if is_folder and not settings.get("template", "").strip() and wanted:
+            settings["template"] = wanted
+            self.project.set_book_settings(document.id, settings)
         self.book_cover_edit.setText(settings.get("cover", ""))
         self.page_setup_button.setText(self._page_setup_text(document.id))
         self.link_policy_box.blockSignals(True)
@@ -3730,10 +3751,43 @@ class MainWindow(QMainWindow):
             if not stored.startswith((TEMPLATE_FILE_PREFIX, TEMPLATE_DOC_PREFIX)):
                 label = stored + ".html"
             self.doc_template_box.addItem(label, stored)
+        # Nothing stored: the template the parent folder chose may carry
+        # a file named after this document's own Type — the naming
+        # convention of docs/TEMPLATES.md — and that is the one to use.
+        # With no such file the set's own slot stays, which is the
+        # document template itself. Like the folder row, the match is
+        # stored (1.18), so the export reads what the row shows.
+        wanted = stored
+        if not wanted:
+            parent_id = self.project.parent_of(document.id)
+            sets = named_template_sets(self.project.root)
+            chosen_name = (self.project.book_settings(parent_id)
+                           .get("template", "").strip()
+                           if parent_id else "")
+            if parent_id and not chosen_name:
+                # The parent's own default is the set named after its
+                # Type (1.18) — read it even when the folder itself has
+                # not been opened this session.
+                parent = next((d for d in self.project.documents()
+                               if d.id == parent_id), None)
+                parent_type = (self.project.type_of(parent)
+                               if parent is not None else "")
+                chosen_name = next(
+                    (name for name in sets
+                     if name.casefold() == parent_type.casefold()), "")
+            chosen = sets.get(chosen_name) if chosen_name else None
+            if chosen is not None:
+                type_face = document_type.casefold()
+                wanted = next(
+                    (stem for stem in sorted(chosen.document_template_faces())
+                     if stem.casefold() == type_face),
+                    "")
         self.doc_template_box.setCurrentIndex(
-            max(0, self.doc_template_box.findData(stored))
+            max(0, self.doc_template_box.findData(wanted))
         )
         self.doc_template_box.blockSignals(False)
+        if not is_folder and not stored and wanted:
+            self.project.update_document(document.id, doc_template=wanted)
 
         # Scene divider (per folder).
         if is_folder:
@@ -3817,15 +3871,16 @@ class MainWindow(QMainWindow):
         Only runs while the Page tab is showing — a refresh rebuilds a
         whole QTextDocument, and while the tab shows nothing can change
         underneath (the canvas is read-only), so tab switches are the
-        refresh trigger. Geometry is the nearest book's setup — the
-        export's own walk — and the HTML comes from the live editor
+        refresh trigger. Geometry is a page printed on its own (1.18):
+        the nearest book's setup, but a design of this page's own has
+        the last word on its size. The HTML comes from the live editor
         document, so unsaved edits appear."""
         if self.views.currentWidget() is not self.page_view:
             return
         if not self.project or not self.current_id:
             self.page_view.set_page("", None, None)
             return
-        geometry = self.project.effective_page_setup(self.current_id)
+        geometry = self.project.standalone_page_setup(self.current_id)
         # Stored sizes, not display ones: the projection has to paginate
         # the way the export will, so zoom is the canvas's own scale (see
         # PageView.set_user_scale) and never a font size.
@@ -4200,6 +4255,10 @@ class MainWindow(QMainWindow):
                 self._write_document_type(self._type_target_id, None)
         else:
             self._write_document_type(target, (values, value_types, options))
+        # The template rows are titled and defaulted from the Type, so
+        # the panel is re-read after a save that may have changed it.
+        # Nothing is stored by the refresh itself.
+        self._refresh_book_widgets(self._current_document())
 
     def _write_document_type(self, document_id: str,
                              fields: tuple | None) -> None:
@@ -4925,6 +4984,11 @@ class MainWindow(QMainWindow):
             else:
                 parent_id = self.project.parent_of(current_id)
         document = self.project.add_document(title, parent_id, kind)
+        if self._nearest_template(parent_id):
+            # Made inside a template (1.18): its body is markup like its
+            # neighbours', so it is a template too. The tick is the
+            # writer's to clear.
+            self.project.set_template(document.id, True)
         self._reload_tree(document.id)
         item = self.tree.currentItem()
         if item:
@@ -4937,7 +5001,7 @@ class MainWindow(QMainWindow):
         self._new_document("New Chapter", "chapter")
 
     def add_scene(self) -> None:
-        self._new_document("New Scene", "scene")
+        self._new_document("New Document", "scene")
 
     def _binder_path(self, document_id: str) -> str:
         """'Series → Book → Chapter → Scene' — how a dialog names a target
@@ -5434,6 +5498,15 @@ class MainWindow(QMainWindow):
         self.template_config_note.setWordWrap(True)
         layout.addWidget(self.template_config_note)
 
+        # A template made inside a template folder does not choose the
+        # book's paper (1.18): page size and mirroring stay the folder's,
+        # and this note stands in for the rows it takes away. Margins
+        # and page start remain below — they are the page's own.
+        self.template_geometry_note = QLabel("")
+        self.template_geometry_note.setWordWrap(True)
+        self.template_geometry_note.setVisible(False)
+        layout.addWidget(self.template_geometry_note)
+
         # The two preset rows (§1.2): trim size and margins — the
         # settings a print file must not get wrong, picked rather than
         # typed. A pick writes nothing of its own: it says what a
@@ -5541,6 +5614,17 @@ class MainWindow(QMainWindow):
         self.page_start_box.currentIndexChanged.connect(self._page_start_changed)
         presets.addRow(self.page_start_label, self.page_start_box)
         layout.addLayout(presets)
+        # The rows the note above takes away when this design is a
+        # sub-template (1.18): the book's paper and its mirroring are
+        # the template folder's to set. Margins and page start stay —
+        # a title page's own margins, a dedication's page start, are
+        # this design's business.
+        self.template_geometry_widgets = (
+            self.size_preset_label, self.size_preset_box, self.size_custom_row,
+            self.margin_mirror_box,
+        )
+        self.template_geometry_hidden = False
+        self.template_inherited_mirror = False
 
         default_file = QPushButton("Look at the default file")
         default_file.setToolTip(
@@ -5574,6 +5658,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.template_naming_note)
         self.template_panel_body = (
             self.template_config_note,
+            self.template_geometry_note,
             self.size_preset_label, self.size_preset_box,
             self.size_custom_row,
             self.margin_preset_label, self.margin_preset_box,
@@ -5603,14 +5688,69 @@ class MainWindow(QMainWindow):
             self.metadata_section.setVisible(True)
             return
         checked = self.template_check.isChecked()
-        for widget in self.template_panel_body:
-            widget.setVisible(checked)
+        self._apply_template_body(checked)
         if self._design_document_id is not None:
             # CSS belongs to a template set, not to one document (1.17).
             self.template_css_label.setVisible(False)
             self.template_css_box.setVisible(False)
-        self._refresh_custom_rows(checked)
         self.metadata_section.setVisible(not checked)
+
+    def _apply_template_body(self, shown: bool) -> None:
+        """What the design panel shows — and what a sub-template is spared.
+
+        A template made inside a template folder (1.18) does not choose
+        the book's paper: page size and mirroring are set on the folder
+        that dresses the book, so those rows stand down and the note
+        says where they are set. Its margins and page start are its own
+        — a title page's wider margins are the reason.
+        """
+        folder = (self._nearest_template(self.project.parent_of(
+                      self._design_document_id))
+                  if shown and self.project and self._design_document_id
+                  else None)
+        self.template_geometry_hidden = bool(folder)
+        self.template_inherited_mirror = False
+        for widget in self.template_panel_body:
+            widget.setVisible(shown)
+        self._refresh_custom_rows(shown)
+        self.template_geometry_note.setVisible(bool(folder))
+        if folder:
+            self.template_geometry_note.setText(
+                f"Page size and mirroring are set on the template folder "
+                f"‘{folder}’ — this template prints on that paper. Its own "
+                f"margins and page start are below, and a `Header:` or "
+                f"`Footer:` line here speaks for its own pages.")
+            self.template_inherited_mirror = bool(
+                (self.project.effective_page_setup(
+                    self._design_document_id) or {}).get("mirror"))
+            self.margin_mirror_box.blockSignals(True)
+            self.margin_mirror_box.setChecked(self.template_inherited_mirror)
+            self.margin_mirror_box.blockSignals(False)
+            for widget in self.template_geometry_widgets:
+                widget.setVisible(False)
+        self._refresh_margin_labels()
+
+    def _nearest_template(self, document_id: str | None) -> str | None:
+        """The title of the nearest template at or above a document (1.18).
+
+        A document made inside a template is markup like its neighbours,
+        and a sub-template takes the paper of the template folder it
+        lives in (1.18).
+        """
+        if not self.project or document_id is None:
+            return None
+        by_id = {document.id: document
+                 for document in self.project.documents()}
+        seen: set[str] = set()
+        while document_id and document_id not in seen:
+            seen.add(document_id)
+            node = by_id.get(document_id)
+            if node is None:
+                return None
+            if self.project.is_template(document_id):
+                return node.title
+            document_id = node.parent_id
+        return None
 
     def _template_flag_toggled(self, checked: bool) -> None:
         """The template switch (§1.2, 1.17).
@@ -5641,9 +5781,7 @@ class MainWindow(QMainWindow):
         if not self._save_template_file():
             return
         checked_now = self.template_check.isChecked()
-        for widget in self.template_panel_body:
-            widget.setVisible(checked_now)
-        self._refresh_custom_rows(checked_now)
+        self._apply_template_body(checked_now)
         self.metadata_section.setVisible(not checked_now)
         if self.current_template_set is not None:
             self._refresh_outliner()
@@ -5781,7 +5919,8 @@ class MainWindow(QMainWindow):
         if self.loading:
             return
         trim_id = self.size_preset_box.currentData()
-        self.size_custom_row.setVisible(trim_id == "custom")
+        self.size_custom_row.setVisible(
+            trim_id == "custom" and not self.template_geometry_hidden)
         if not trim_id:
             return
         if trim_id == "custom":
@@ -5802,7 +5941,7 @@ class MainWindow(QMainWindow):
         and only in Custom mode — the spin boxes fire that signal on a
         mere focus-out too, and stepping back to a preset is not a
         choice to write what the head already says."""
-        if (self.loading or self.current_template_file is None
+        if (self.loading or not self._design_open()
                 or self.size_preset_box.currentData() != "custom"):
             return
         size = (self.size_width_spin.value(), self.size_height_spin.value())
@@ -5873,7 +6012,7 @@ class MainWindow(QMainWindow):
         editingFinished and only in Custom mode, same as the size row's
         — a focus-out after no edit writes nothing, because the head
         already says those numbers."""
-        if (self.loading or self.current_template_file is None
+        if (self.loading or not self._design_open()
                 or self.margin_preset_box.currentData() != "custom"):
             return
         values = (self.margin_inside_spin.value(),
@@ -5893,18 +6032,30 @@ class MainWindow(QMainWindow):
         geometry follows the file rather than a guess at the folder.
         Written straight away, unlike a spin: a toggle is a decision,
         and there is no half-typed state to wait out."""
-        if self.loading or self.current_template_file is None:
+        if self.loading or not self._design_open():
             return
         self._write_preset_line(
             "mirror margins",
             f"Mirror margins: {'yes' if checked else 'no'}")
         self._refresh_margin_labels()
 
+    def _design_open(self) -> bool:
+        """True while a design is on screen (1.17): a template file's
+        head, or a template document's own design. The preset rows write
+        into the config box either way, and the box's own signal saves
+        it — to the file on save, to the document at once."""
+        return (self.current_template_file is not None
+                or self._design_document_id is not None)
+
     def _refresh_margin_labels(self) -> None:
-        """The edge boxes naming themselves the way the file lays pages
+        """The edge boxes naming themselves the way the book lays pages
         out (§1.2): mirrored, inside/outside — even pages swap — and
-        plainly, the left and right of each page."""
-        mirrored = self.margin_mirror_box.isChecked()
+        plainly, the left and right of each page. On a sub-template
+        (1.18) the mirroring is the template folder's, not a line this
+        design writes, so the labels follow the book."""
+        mirrored = (self.template_inherited_mirror
+                    if self.template_geometry_hidden
+                    else self.margin_mirror_box.isChecked())
         self.margin_inside_label.setText(
             "Inside (spine)" if mirrored else "Left")
         self.margin_outside_label.setText(
@@ -5916,6 +6067,7 @@ class MainWindow(QMainWindow):
         would open boxes for a row that is sitting on a preset."""
         self.size_custom_row.setVisible(
             body_shown
+            and not self.template_geometry_hidden
             and self.size_preset_box.currentData() == "custom")
         self.margin_custom_row.setVisible(
             body_shown
@@ -5962,7 +6114,8 @@ class MainWindow(QMainWindow):
         self.size_preset_box.setCurrentIndex(max(0, index))
         self.size_preset_box.blockSignals(False)
         self.size_custom_row.setVisible(
-            size is not None and trim_id not in AMAZON_TRIMS)
+            not self.template_geometry_hidden
+            and size is not None and trim_id not in AMAZON_TRIMS)
 
         mirror = str(config.get("mirror margins", "")).strip().lower()
         self.margin_mirror_box.blockSignals(True)

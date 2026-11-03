@@ -12,6 +12,8 @@ from pathlib import Path
 
 from lekhak.project import (
     Project,
+    TEMPLATE_CONFIG_KEY,
+    TEMPLATE_DOC_PREFIX,
     config_geometry,
     config_headings,
     config_page_size,
@@ -313,6 +315,110 @@ class DocxPrintTests(unittest.TestCase):
 
         document = self.export()
         self.assertIn("SAMPLE HEAD", document.sections[0].header.paragraphs[0].text)
+
+
+class PerPagePrintTests(unittest.TestCase):
+    """A page's own design speaks for its own section (1.18): wider
+    margins for a title page, no running head for a dedication — while
+    the book keeps one paper size."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.project = Project.create(self.root / "Novel", "Novel")
+        self.draft = self.project.documents()[0]
+        self.chapter = self.project.add_document("Chapter One",
+                                                 self.draft.id, "chapter")
+        self.project.write_content(self.chapter.id, "<p>Chapter opener.</p>")
+        self.scene = self.project.add_document("First Light",
+                                               self.chapter.id, "scene")
+        self.project.write_content(self.scene.id, "<p>First light prose.</p>")
+        self.templates = create_template_set("print", self.project.root)
+
+    def tearDown(self):
+        self.project.close()
+        self.temporary.cleanup()
+
+    def load(self):
+        return TemplateSet.load("print", self.templates.directory)
+
+    def write_config(self, lines):
+        body = "Docx\n# Sample configuration to present the text as docx.\n"
+        body += "\n".join(lines) + "\n"
+        (self.templates.directory / "components.txt").write_text(
+            body, encoding="utf-8")
+
+    def design_a_page(self, lines):
+        """A template document — the design a scene wears (1.17)."""
+        page = self.project.add_document("Title Page", self.draft.id, "scene")
+        self.project.set_template(page.id, True)
+        self.project.set_metadata(
+            page.id, {TEMPLATE_CONFIG_KEY: "\n".join(lines) + "\n"})
+        self.project.update_document(
+            self.scene.id, doc_template=TEMPLATE_DOC_PREFIX + page.id)
+        return page
+
+    def export(self):
+        destination = self.root / "book.docx"
+        self.project.export_docx(destination, None, self.load())
+        from docx import Document
+
+        return Document(str(destination))
+
+    def test_a_pages_own_margins_print_on_its_own_pages(self):
+        self.write_config(
+            ["Margins (L,T,R,B/I,T,O,B): 0.5, 0.75, 0.5, 0.75"])
+        self.design_a_page(
+            ["Margins (L,T,R,B/I,T,O,B): 1.25, 1, 1, 1"])
+
+        sections = self.export().sections
+        # The chapter kept the book's margins; the scene wore its own.
+        self.assertAlmostEqual(sections[0].top_margin.inches, 0.75)
+        self.assertAlmostEqual(sections[1].top_margin.inches, 1.0)
+        self.assertAlmostEqual(sections[1].left_margin.inches, 1.25)
+        # ...and the book's paper, not a paper of its own.
+        self.assertAlmostEqual(sections[1].page_width.inches,
+                               sections[0].page_width.inches)
+
+    def test_a_page_can_say_it_carries_no_running_head(self):
+        self.write_config(["Header: ,{Book},", "Footer: {Book} folio"])
+        self.design_a_page(["Header: none"])
+
+        document = self.export()
+        self.assertIn("Novel",
+                      document.sections[0].header.paragraphs[0].text)
+        # `none` is not "inherit": that page has no head at all.
+        self.assertEqual(document.sections[1].header.paragraphs[0].text, "")
+        # ...and only the head it named: the folio still stands.
+        self.assertIn("Novel folio",
+                      document.sections[1].footer.paragraphs[0].text)
+
+    def test_a_page_printed_alone_takes_its_own_designs_paper(self):
+        self.design_a_page(
+            ["Page size (inches - horizontal, vertical): 5,7"])
+        self.project.set_setting(
+            "page_setup",
+            json.dumps({self.draft.id: {
+                "trim": "6x9", "width": 6.0, "height": 9.0, "top": 0.5,
+                "bottom": 0.5, "inside": 0.5, "outside": 0.5,
+                "mirror": True, "gutter": 0.0}}))
+
+        # In the book, the trim is the book's: the page's size is
+        # silently ignored.
+        self.assertAlmostEqual(self.project.effective_page_setup(
+            self.scene.id)["width"], 6.0)
+        self.assertAlmostEqual(self.export().sections[0].page_width.inches,
+                               6.0)
+
+        # Printed on its own, the page states the truth.
+        self.assertAlmostEqual(self.project.standalone_page_setup(
+            self.scene.id)["width"], 5.0)
+        destination = self.root / "page.docx"
+        self.project.export_docx(destination, {self.scene.id}, self.load())
+        from docx import Document
+
+        self.assertAlmostEqual(
+            Document(str(destination)).sections[0].page_width.inches, 5.0)
 
 if __name__ == "__main__":
     unittest.main()

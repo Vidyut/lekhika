@@ -1182,6 +1182,9 @@ DEFAULT_CONFIG = """Docx
 #   New Scene: page-break
 #   Header: left, middle, right     and Header left / Header right for a
 #   Footer: left, middle, right     mirrored book's verso and recto heads
+#   Header: none                    this page carries no running head —
+#   Footer: none                    a title page, a dedication — where an
+#                                   empty line would keep the sample's own
 #   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
 #   Title style: Book Title         Chapter style / Scene style / Body style
 #
@@ -1244,6 +1247,9 @@ Page size: A4
 #   New Scene: page-break
 #   Header: left, middle, right     and Header left / Header right for a
 #   Footer: left, middle, right     mirrored book's verso and recto heads
+#   Header: none                    this page carries no running head —
+#   Footer: none                    a title page, a dedication — where an
+#                                   empty line would keep the sample's own
 #   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
 #   Title style: Book Title         Chapter style / Scene style / Body style
 #

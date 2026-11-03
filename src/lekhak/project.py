@@ -284,6 +284,19 @@ def _apply_page_geometry(document, geometry: dict) -> None:
         settings.remove(mirrored)
 
 
+def _apply_section_margins(section, geometry: dict) -> None:
+    """One section's margins (1.18): a page's own design may ask for
+    wider ones — a title page, a dedication — while the book's paper,
+    gutter and mirroring stay the book's."""
+    from docx.shared import Inches
+
+    section.top_margin = Inches(geometry["top"])
+    section.bottom_margin = Inches(geometry["bottom"])
+    section.left_margin = Inches(geometry["inside"])
+    section.right_margin = Inches(geometry["outside"])
+    section.gutter = Inches(geometry["gutter"])
+
+
 # 3.1 print handling — the config vocabulary an export reads. The keys
 # are the writer's own (the parenthetical in "Page size (inches -
 # horizontal, vertical)" is documentation and already stripped by
@@ -297,6 +310,16 @@ DOCX_CONFIG_KEYS = (
     "new chapter", "new scene", "font",
     "title style", "chapter style", "scene style", "body style",
 )
+
+# The running-head half of the vocabulary: the lines a single page's own
+# design may say for its own section (1.18).
+RUNNING_HEAD_KEYS = ("header", "header left", "header right",
+                     "footer", "footer left", "footer right")
+
+# A running-head line that asks for nothing (`Header: none`): unlike an
+# empty line — which means "inherit the sample" — it says the page
+# carries no head at all, which is what a title page wants.
+NO_RUNNING_HEAD = {"none", "no", "off"}
 
 # The running-head/folio vocabulary's one non-string value (§3.1): a
 # Header or Footer line whose middle piece is exactly `${Page}` asks for
@@ -458,6 +481,18 @@ def config_geometry(config: dict) -> dict:
     elif mirror in {"no", "false", "off", "0"}:
         overlay["mirror"] = False
     return overlay
+
+
+def config_margins(config: dict) -> dict | None:
+    """Only the margins a print config states (§3.1), in inches: the
+    per-page half of config_geometry, without the paper it prints on.
+    A page's own design may widen its margins while the book keeps its
+    trim (1.18)."""
+    overlay = config_geometry(config)
+    margins = {key: overlay[key]
+               for key in ("top", "bottom", "inside", "outside")
+               if key in overlay}
+    return margins or None
 
 
 def config_headings(text) -> list[str]:
@@ -2964,10 +2999,11 @@ class Project:
 
     def effective_page_setup(self, document_id: str) -> dict | None:
         """Print geometry in force for one document (1.15/3.2): the
-        nearest ancestor folder's stored setup — the same walk export
-        uses, so the Page view renders exactly what export prints.
-        None means no override anywhere; callers fall back to the
-        default Letter box, as export does."""
+        nearest ancestor folder's stored setup. None means no override
+        anywhere; callers fall back to the default Letter box, as
+        export does. A page printed on its own goes through
+        standalone_page_setup (1.18) instead, which lets the page's own
+        design have the last word."""
         raw = self.get_setting("page_setup")
         try:
             stored = json.loads(raw) if raw else {}
@@ -2985,6 +3021,27 @@ class Project:
                     return cleaned
             current = parents.get(current)
         return None
+
+    def standalone_page_setup(self, document_id: str) -> dict | None:
+        """Print geometry for one page printed on its own (1.18).
+
+        The nearest book folder's setup seeds it as usual, but a
+        standalone page is printed as its own design states it: a
+        template outside the selected set may carry a Page size, and
+        there that size is the truth. A book export keeps the book's
+        trim and ignores it — silently, as the design's owner asked.
+        """
+        document = next((d for d in self.documents()
+                         if d.id == document_id), None)
+        if document is None:
+            return None
+        base = self.effective_page_setup(document_id)
+        overlay = config_geometry(self.template_config(document.doc_template))
+        if not overlay:
+            return base
+        candidate = dict(base or DEFAULT_PAGE_SETUP)
+        candidate.update(overlay)
+        return clean_page_setup(candidate)
 
     def resolve_template(self, name: str) -> TemplateSet | None:
         """A discovered template by name (docs/TEMPLATES.md §2), or None
@@ -4199,6 +4256,10 @@ class Project:
         *the template* stated paper, which is what recto chapter openers
         respond to: a trim is a trim whenever it arrived.
 
+        A scope of one document is a page printed on its own, and there
+        the page's own design has the last word (1.18): whatever it
+        states as size is the truth.
+
         Each layer is validated by the same ``clean_page_setup`` the page
         setup dialog's accept path uses, so a line nobody meant cannot
         reach the page — the rejected layer is dropped as a whole and
@@ -4220,11 +4281,25 @@ class Project:
             cleaned = clean_page_setup(candidate)
             if cleaned is not None:
                 geometry, stated = cleaned, True
+        # A page printed on its own (1.18) is printed as its own design
+        # states it: a template outside the selected set may carry a
+        # Page size, and there that size is the truth. A book export
+        # keeps the book's trim and ignores it silently.
+        pages = scope.get("export_docs") or []
+        if len(pages) == 1:
+            own = config_geometry(
+                self.template_config(pages[0].doc_template))
+            if "width" in own:
+                candidate = dict(geometry)
+                candidate.update(own)
+                cleaned = clean_page_setup(candidate)
+                if cleaned is not None:
+                    geometry, stated = cleaned, True
         return geometry, stated
 
     @staticmethod
     def _apply_print_headings(output, config: dict, values: dict,
-                              geometry: dict) -> None:
+                              geometry: dict, sections=None) -> None:
         """``Header``/``Footer`` lines as running heads and folios
         (§3.1): one line, three pieces — left, middle, right — set on
         tab stops at the middle and the end of the text width, filled
@@ -4235,10 +4310,20 @@ class Project:
         says nothing, so the sample's own head stands (§3.1: the config
         overrides only the lines it names). A piece that is exactly
         ``${Page}`` becomes a PAGE field, so the folio numbers the
-        pages rather than spelling "Page" on every one of them."""
+        pages rather than spelling "Page" on every one of them.
+
+        ``sections`` limits the pass to one page's own section (1.18);
+        the default is every section of the file. ``Header: none`` is
+        the one line that means *nothing there* rather than *inherit*:
+        a title page or a dedication carries no running head.
+        """
         from docx.enum.text import WD_TAB_ALIGNMENT
         from docx.shared import Inches
 
+        if sections is None:
+            sections = output.sections
+        else:
+            sections = list(sections)
         width = (geometry["width"] - geometry["inside"] - geometry["outside"])
 
         def line(part, pieces):
@@ -4282,6 +4367,23 @@ class Project:
                 key = noun + suffix
                 if key not in config:
                     continue
+                said = str(config[key] or "").strip()
+                if not said:
+                    continue            # an empty line says nothing
+                if said.lower() in NO_RUNNING_HEAD:
+                    # `Header: none` — this page carries no head. The
+                    # plain key stands for the pair, so both parts go.
+                    for section in sections:
+                        if noun == "header":
+                            pair = (section.header,
+                                    section.even_page_header)
+                        else:
+                            pair = (section.footer,
+                                    section.even_page_footer)
+                        for part in pair:
+                            part.is_linked_to_previous = False
+                            line(part, [])
+                    continue
                 pieces = []
                 for piece in config_headings(config[key]):
                     # The page request is recognised on the *raw* piece:
@@ -4298,7 +4400,7 @@ class Project:
                     continue            # an empty line says nothing
                 even_odd = even_odd or which == "even"
                 parts = (which == "odd")
-                for section in output.sections:
+                for section in sections:
                     if noun == "header":
                         part = section.header if parts else section.even_page_header
                     else:
@@ -4422,6 +4524,11 @@ class Project:
                        or paragraph_style(output, "Heading 2"))
         containers = {parent for parent in scope["parent_map"].values() if parent}
         explicit = scope.get("explicit_breaks", set())
+        # Pages that carry a section of their own (1.18): index into
+        # output.sections — recorded as an index, because every later
+        # add_section() appends and a Section object would follow the
+        # sentinel rather than the page it was taken for.
+        layout: list[tuple[int, dict | None, dict]] = []
         for position, document in enumerate(assembled):
             # Baseline (Phase 1): every exported document starts a fresh
             # page — the first needs no break, there being nothing above it.
@@ -4430,6 +4537,14 @@ class Project:
             # baseline; a template that stated paper puts chapters recto
             # the same way a book's own page setup does.
             start = scope.get("breaks", {}).get(document.id, "page")
+            # The design this page wears (1.17/1.18): its page start and
+            # its own margins and running heads, which speak for its own
+            # section while the book's paper stays the book's.
+            own = (self.template_config(document.doc_template)
+                   if document.doc_template else {})
+            page_margins = config_margins(own)
+            page_heads = {key: value for key, value in own.items()
+                          if key in RUNNING_HEAD_KEYS}
             key = ("new chapter" if document.kind == "chapter"
                    else "new scene" if document.kind == "scene" else None)
             if document.id not in explicit and key is not None:
@@ -4438,17 +4553,15 @@ class Project:
                     # The template this document wears may state a page
                     # start of its own (1.17): the design's say, under
                     # the print config's and over the baseline.
-                    demanded = page_break_value(
-                        self.template_config(document.doc_template).get(key, ""))
+                    demanded = page_break_value(own.get(key, ""))
                 if demanded is not None:
                     start = demanded
                 elif (start == "page" and trim_stated
                           and (document.kind == "chapter"
                                or document.id in containers)):
                     start = "right"
+            page_section = len(output.sections) - 1
             if not first:
-                if start == "page":
-                    output.add_page_break()
                 # 1.6 page starts: a marked document opens a new section with
                 # the demanded parity; Word itself inserts the blank page when
                 # the flow lands on the wrong side. "right" and "next-odd" are
@@ -4459,6 +4572,17 @@ class Project:
                     output.add_section(WD_SECTION_START.ODD_PAGE)
                 elif start in ("left", "next-even"):
                     output.add_section(WD_SECTION_START.EVEN_PAGE)
+                elif page_margins or page_heads:
+                    # A page whose design says something about its own
+                    # margins or heads needs a section to say it in.
+                    output.add_section(
+                        WD_SECTION_START.CONTINUOUS if start == "flow"
+                        else WD_SECTION_START.NEW_PAGE)
+                elif start == "page":
+                    output.add_page_break()
+                page_section = len(output.sections) - 1
+            if page_margins or page_heads:
+                layout.append((page_section, page_margins, page_heads))
             first = False
             heading = output.add_paragraph(
                 document.title,
@@ -4499,9 +4623,24 @@ class Project:
         # or page setup (1.15), or A4 — in that order, and one source
         # rather than a cascade (§1 "The trim lives in the template").
         _apply_page_geometry(output, geometry)
-        self._apply_print_headings(output, config,
-                                   self.docx_config_values(selected_ids,
-                                                           fmt=fmt), geometry)
+        values = self.docx_config_values(selected_ids, fmt=fmt)
+        self._apply_print_headings(output, config, values, geometry)
+        # A page's own design, section by section (1.18): the book's
+        # paper with wider margins — a title page's, a dedication's —
+        # and its own running heads, `Header: none` included.
+        sections = output.sections
+        for index, margins, heads in layout:
+            if index >= len(sections):
+                continue
+            page = dict(geometry)
+            if margins:
+                page.update(margins)
+            cleaned = clean_page_setup(page) or geometry
+            if margins:
+                _apply_section_margins(sections[index], cleaned)
+            if heads:
+                self._apply_print_headings(output, heads, values, cleaned,
+                                           sections=[sections[index]])
         self._save_docx(output, destination)
 
     @staticmethod
