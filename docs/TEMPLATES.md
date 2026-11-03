@@ -75,7 +75,7 @@ template that ended up listed nowhere. What stands now:
 - **The Outliner lists every set that exists.** View → *Template Sets* shows
   them: the project's own `<project>/templates/` folders and the app
   library's, one row per set, flat: `templates/Book` is a row of its own,
-  never `Book > Something`. The three shipped sets come first with
+  never `Book > Something`. The four shipped sets come first with
   **`default` on top** — it is what every export answers to when nothing is
   assigned — then the folders under the project's `templates/`, then the app
   library's. The binder holds only the writer's own tree: a template set is

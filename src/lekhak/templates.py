@@ -1375,6 +1375,12 @@ BOOK_CSS = DEFAULT_CSS + """\
   text-indent: 0;
   margin: 0 0 0.3em;
 }
+.pov {
+  font-variant: small-caps;
+  letter-spacing: 0.12em;
+  text-indent: 0;
+  margin: 0 0 1em;
+}
 .title-page { text-align: center; margin-top: 28%; }
 .book-title {
   font-size: 2.4em;
@@ -1402,8 +1408,8 @@ only the pieces you like.
 | File | What it dresses | Which Type it matches |
 |---|---|---|
 | folder.html | a part: the title page of a section, its scenes under it | the set's own slot |
-| documents/Chapter.html | a chapter: its number, its title, its scenes | `Chapter` |
-| documents/Scene.html | a scene, with no heading of its own | `Scene` |
+| documents/Chapter.html | a chapter: its number, its scenes — titles come from the part page and the contents page | `Chapter` |
+| documents/Scene.html | a scene, with a PoV head only when the scene's Metadata has one | `Scene` |
 | documents/Title.html | a title page: the title, the author | `Title` |
 | documents/Frontmatter.html | a dedication page, filled with placeholder text | `Frontmatter` |
 | (built in) contents | a contents page, from the ${ToC} placeholder | `Contents` |
@@ -1428,6 +1434,25 @@ Document template row.
 The dedication's text here is placeholder prose on purpose: it shows the
 page without asking you to write anything, and it is the first thing to
 delete.
+
+## Chapter numbers, scene points of view
+
+A chapter prints its number and nothing else — its name is on the contents
+page (and the part page above it, if the chapters sit in parts).
+`${ChapterNumber}` counts the chapters in binder order, so a chapter's
+number is its place among the chapters in the manuscript folder.
+
+A scene prints no heading of its own. Give the scene a `PoV` field in its
+Metadata (the metadata panel adds any field you name) and the face prints it
+above the prose:
+
+    $if(Metadata.PoV)<p class="pov">${Metadata.PoV}</p>
+    $endif
+
+That is a conditional (§2.2 of docs/TEMPLATES.md): with no `PoV` field the
+line disappears, so no scene is forced to have one. Change `PoV` for
+`Location`, `Date`, `Status` — whatever the field is called — and it prints
+the same way.
 
 ## Paper, margins, running heads
 
@@ -1494,31 +1519,40 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
                         '<div class="content">${Content}</div>\n'
                         '<div class="scenes">${Scenes}</div>\n</section>'),
         "folder.txt": "${Title}\n\n${Content}\n\n${Scenes}",
+        # A chapter is its number: the folder it sits in carries the
+        # title (a part page), and the contents page lists them all.
         "documents/Chapter.html": (
             '<section class="chapter">\n'
             '<p class="chapter-number">${ChapterNumber}</p>\n'
-            '<h1>${Title}</h1>\n'
             '<div class="content">${Content}</div>\n'
             '<div class="scenes">${Scenes}</div>\n</section>'),
-        "documents/Chapter.txt": "${ChapterNumber}\n\n${Title}\n\n${Content}\n\n${Scenes}",
-        "documents/Scene.html": '<div class="scene">${Content}</div>',
-        "documents/Scene.txt": "${Content}",
+        "documents/Chapter.txt": "${ChapterNumber}\n\n${Content}\n\n${Scenes}",
+        # A scene has no heading unless the writer gives it one: a `PoV`
+        # field in the scene's Metadata prints above the prose (2.2).
+        "documents/Scene.html": (
+            '<!-- Add a PoV field in this scene\'s Metadata and it prints\n'
+            '     above the prose; without one, the scene has no heading. -->\n'
+            '<section class="scene">\n'
+            '$if(Metadata.PoV)<p class="pov">${Metadata.PoV}</p>\n$endif'
+            '<div class="content">${Content}</div>\n</section>'),
+        "documents/Scene.txt": (
+            "$if(Metadata.PoV)${Metadata.PoV}\n\n$endif${Content}"),
         "documents/Title.html": ('<section class="title-page">\n'
                                  '<h1 class="book-title">${Title}</h1>\n'
                                  '<p class="byline">${Author}</p>\n</section>'),
         "documents/Title.txt": "${Title}\n\n${Author}",
         "documents/Frontmatter.html": (
             '<section class="dedication">\n'
-            '<p>For the ones who kept the light on.</p>\n'
             '<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed\n'
-            'do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n'
-            'Ut enim ad minim veniam, quis nostrud exercitation ullamco\n'
+            'do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>\n'
+            '<p>Ut enim ad minim veniam, quis nostrud exercitation ullamco\n'
             'laboris nisi ut aliquip ex ea commodo consequat.</p>\n'
             '</section>'),
         "documents/Frontmatter.txt": (
-            "For the ones who kept the light on.\n\n"
             "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do\n"
-            "eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"),
+            "eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\n"
+            "Ut enim ad minim veniam, quis nostrud exercitation ullamco\n"
+            "laboris nisi ut aliquip ex ea commodo consequat.\n"),
         "print-config.txt": DEFAULT_CONFIG,
         "style.css": BOOK_CSS,
         "README": BOOK_README,

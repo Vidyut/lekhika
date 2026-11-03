@@ -121,8 +121,12 @@ class ShippedSetsTests(unittest.TestCase):
         for type_name in ("Chapter", "Scene", "Title", "Frontmatter"):
             self.assertEqual(faces.get(type_name), f"{type_name}.html")
         self.assertIn('class="part"', book.slot("folder"))
-        self.assertEqual(book.document_slot("Scene"),
-                         '<div class="scene">${Content}</div>')
+        scene = book.document_slot("Scene")
+        self.assertIn('class="scene"', scene)
+        # A scene has no heading unless the writer adds one to its
+        # Metadata: the PoV line is inside a conditional (2.2).
+        self.assertIn("$if(Metadata.PoV)", scene)
+        self.assertNotIn("${Title}", scene)
         # The set states no paper: page setup in the inspector answers,
         # which is where the writer sets trim and margins.
         self.assertEqual(book.docx_config, {})
@@ -154,8 +158,7 @@ class BookSetAssignmentTests(unittest.TestCase):
         # scene's face, so both cases are checked through the resolver.
         self.project.write_content(self.scene.id, "<p>First light.</p>")
         book = TemplateSet.builtin("Book")
-        self.assertEqual(book.document_slot("Scene"),
-                         '<div class="scene">${Content}</div>')
+        self.assertIn('class="scene"', book.document_slot("Scene"))
         self.assertIn("${ChapterNumber}", book.document_slot("Chapter"))
         self.assertIn('class="part"', book.slot("folder"))
 
@@ -178,9 +181,28 @@ class BookSetAssignmentTests(unittest.TestCase):
         self.project.export_html(destination, None, TemplateSet.builtin("Book"))
         exported = destination.read_text(encoding="utf-8")
 
-        self.assertIn('<div class="scene">', exported)     # Scene's face
-        self.assertIn('class="chapter-number"', exported)  # Chapter's
-        self.assertIn("<h1>Chapter One</h1>", exported)
+        self.assertIn('<section class="scene">', exported)  # Scene's face
+        self.assertIn('class="chapter-number"', exported)   # Chapter's
+        # A chapter is its number: the title lives on the folder's part
+        # page and in the contents page, not above every chapter.
+        self.assertNotIn("<h1>Chapter One</h1>", exported)
+
+    def test_a_scene_prints_a_pov_only_when_its_metadata_has_one(self):
+        self.project.set_metadata(self.scene.id, {"Type": "Scene"})
+        self.project.write_content(self.scene.id, "<p>First light.</p>")
+        book = TemplateSet.builtin("Book")
+
+        plain = self.root / "plain.html"
+        self.project.export_html(plain, None, book)
+        self.assertNotIn('class="pov"', plain.read_text(encoding="utf-8"))
+
+        # Replaces, not merges: the Type stays on, the PoV joins it.
+        self.project.set_metadata(self.scene.id,
+                                  {"Type": "Scene", "PoV": "Maren"})
+        named = self.root / "pov.html"
+        self.project.export_html(named, None, book)
+        self.assertIn('<p class="pov">Maren</p>',
+                      named.read_text(encoding="utf-8"))
 
     def test_a_stored_face_still_outranks_the_type(self):
         self.project.set_metadata(self.chapter.id, {"Type": "Chapter"})

@@ -800,9 +800,12 @@ to extremely customizable".
 **Implemented (2026-11-04):**
 
 - **A fourth shipped set, `Book`:** `folder.html` is a part page,
-  `documents/Chapter.html`, `Scene.html`, `Title.html`, `Frontmatter.html`
-  (a dedication in placeholder prose), an inert config, its own CSS and a
-  README; the built-in `contents` face is the ToC page (`${ToC}`).
+  `documents/Chapter.html` is a chapter's number (its title is on the part
+  page and the contents page), `Scene.html` prints a PoV head only when the
+  scene's Metadata has one (`$if(Metadata.PoV)`, with the comment saying so),
+  `Title.html`, `Frontmatter.html` (a dedication in placeholder prose), an
+  inert config, its own CSS and a README; the built-in `contents` face is the
+  ToC page (`${ToC}`).
 - **The naming convention is read at export, not only in the row** —
   `_render_document` falls back to a face named after the document's Type when
   nothing is stored, so a project typed by hand dresses the same way whether or
