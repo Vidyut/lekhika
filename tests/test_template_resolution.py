@@ -159,7 +159,7 @@ class TemplateResolutionTests(unittest.TestCase):
         # discovery's own order with the default on top and answering.
         self.assertEqual(preselected.name, "default")
         self.assertEqual([s.name for s in ordered],
-                         ["default", "short story", "nothing",
+                         ["default", "short story", "Book", "nothing",
                           "Editorial", "Other"])
         self.assertEqual(warnings, [])
 
@@ -176,7 +176,7 @@ class TemplateResolutionTests(unittest.TestCase):
         # Everything discovery found is still offered below it: the
         # ordering is the explanation, not a filter.
         self.assertEqual({s.name for s in ordered},
-                         {"default", "short story", "nothing",
+                         {"default", "short story", "Book", "nothing",
                           "Editorial", "Other"})
 
     def test_nearest_first_between_two_assignments(self):

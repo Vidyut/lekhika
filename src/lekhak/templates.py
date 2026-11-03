@@ -333,7 +333,8 @@ FORMATS = ("html", "epub", "docx", "pdf", "text")
 # files under documents/<name>.html|.txt — a news-item preamble, and on.
 BUILTIN_DOCUMENT_TEMPLATES: dict[str, dict[bool, str]] = {
     "no-title": {True: "${Content}", False: "${Content}"},
-    "contents": {True: "<h1>${Title}</h1>\n<ol>${ToC}</ol>",
+    "contents": {True: ('<section class="contents">\n<h1>${Title}</h1>\n'
+                        '<ol>${ToC}</ol>\n</section>'),
                  False: "${Title}\n\n${ToC}"},
 }
 
@@ -1150,19 +1151,24 @@ back to the head of the file, where the export reads it. If you edit it
 and need to refer to the original tags, you can look at the default
 file."""
 
-TEMPLATE_NAMING_NOTE = """Remember to name this file according to your folder or document TYPE in
-the manuscript metadata? The export's own names already follow it:
-chapter.html dresses chapters, scene.html scenes, documents/document.html
-documents that name no face of their own, documents/no-title.html a
-document printed without its heading. Any other file dresses
-whatever asks for it by name — pick or type its filename in the
-Document template box; a name no file answers saves just the same, and
-the export falls back to the set's own slot. The names an export looks
-up are project_header, project_footer, toc_page, chapter, chapter_end,
-scene, first_scene, scene_end and scene_divider — any other name is
-yours to choose, and a name nothing asks for costs nothing. Metadata is
-separate: ${Title}, ${WordCount} and ${Metadata.AnyKey} are filled in
-from the document at export, whatever this file is called."""
+TEMPLATE_NAMING_NOTE = """A file is picked by the TYPE it is named after. Type a folder Book and it
+takes the Book set; type a chapter Chapter and it wears documents/Chapter.html
+from the set its folder uses; type a scene Scene and it wears
+documents/Scene.html. The Type row is where the name goes, the Book template
+and Document template rows show what the name found — and changing the row
+leaves the Type alone. The match is stored, so the export reads what you see.
+
+Front matter is binder content, not template content: a title page, a
+dedication and a contents page sit at the top of the folder, above the first
+chapter, and export in that order. Type them Title, Frontmatter, Contents and
+the names dress them; anything else is picked in the Document template row.
+
+Every export looks up two book-level names whatever the set is called:
+project_header (before the manuscript) and project_footer (after it). Any
+other name dresses whatever asks for it, and a name no file answers saves
+just the same — the export then falls back to the set's own slot. Metadata is
+separate: ${Title}, ${WordCount} and ${Metadata.AnyKey} are filled in from
+the document at export, whatever this file is called."""
 
 
 SET_README = """This folder is one template set: the instructions for turning your project
@@ -1198,7 +1204,7 @@ copy the folder) before changing anything you might want back.
 # One file map per set: what a duplicate is written out as is exactly what
 # the shipped entry already is, so a writer who duplicates and inspects sees
 # the variant's names rather than a surprise.
-SHIPPED_TEMPLATE_SETS = ("default", "short story", "nothing")
+SHIPPED_TEMPLATE_SETS = ("default", "short story", "Book", "nothing")
 
 DEFAULT_CONFIG = """Docx
 # Sample configuration for DOCX and PDF. Every line below is a comment, so
@@ -1223,9 +1229,8 @@ DEFAULT_CONFIG = """Docx
 # Type: family, size, line spacing, first-line indent.
 # Font: Georgia, 11pt, 1.15, 1cm
 #
-# What the book is made of: `content` is the manuscript; other names are
-# binder content pulled in, in this order. Nothing is sorted.
-# Pieces: frontmatter, content, backmatter
+# The book is the binder: what sits above the manuscript in the folder
+# tree — a title page, a dedication, a contents page — exports before it.
 #
 # Printing from Lekhak (DOCX and PDF)
 # ===================================
@@ -1348,6 +1353,90 @@ Page size: A4
 #
 """
 
+# The Book set (docs/TEMPLATES.md §1.1): a whole book, dressed the way the
+# naming convention asks for — the folder is a Book, its chapters are
+# Chapters, its scenes are Scenes, and the names do the assigning (1.18).
+# Nothing here is required of a writer; it is what "some formatting" looks
+# like once you want more than the built-in fragments.
+BOOK_CSS = DEFAULT_CSS + """\
+
+/* The Book set's own: a part page, a title page, a dedication, a
+   contents page. Delete a rule and nothing breaks — the text stays. */
+.part { text-align: center; margin: 6em 0 0; }
+.part-title {
+  font-size: 1.7em;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  text-indent: 0;
+}
+.chapter-number {
+  font-variant: small-caps;
+  letter-spacing: 0.35em;
+  text-indent: 0;
+  margin: 0 0 0.3em;
+}
+.title-page { text-align: center; margin-top: 28%; }
+.book-title {
+  font-size: 2.4em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 0;
+  margin: 0 0 0.8em;
+}
+.byline { font-style: italic; text-indent: 0; }
+.dedication { margin: 22% 8% 0; font-style: italic; }
+.dedication p { text-indent: 0; margin-bottom: 0.7em; }
+.contents h1 { text-align: center; }
+.contents ol { list-style: none; padding: 0; margin: 1.5em 0 0; }
+.contents li { text-indent: 0; margin: 0.4em 0; }
+"""
+
+BOOK_README = """# Book — one book, dressed from the filename up
+
+This set is the worked example of the one rule: a template is named after
+the Type it dresses. Nothing in it is needed. Copy it, change it, or use
+only the pieces you like.
+
+## What is in here
+
+| File | What it dresses | Which Type it matches |
+|---|---|---|
+| folder.html | a part: the title page of a section, its scenes under it | the set's own slot |
+| documents/Chapter.html | a chapter: its number, its title, its scenes | `Chapter` |
+| documents/Scene.html | a scene, with no heading of its own | `Scene` |
+| documents/Title.html | a title page: the title, the author | `Title` |
+| documents/Frontmatter.html | a dedication page, filled with placeholder text | `Frontmatter` |
+| (built in) contents | a contents page, from the ${ToC} placeholder | `Contents` |
+
+## How the assigning works
+
+Name the folder `Book`, and this set is its template (the Book template
+row in the sidebar lists it). Type a chapter `Chapter`, and its document
+template is documents/Chapter.html. Type a scene `Scene`, and it is
+documents/Scene.html. The Type row in the sidebar is where the name goes;
+the Document template row shows what the name found, and you can change it
+there without changing the Type.
+
+## Front matter
+
+Front matter is binder content, not template content: put the title page,
+the dedication and the contents page at the top of the folder, above the
+first chapter, and the export prints them in that order. Type each one
+`Title`, `Frontmatter`, `Contents` — or pick the face by hand in the
+Document template row.
+
+The dedication's text here is placeholder prose on purpose: it shows the
+page without asking you to write anything, and it is the first thing to
+delete.
+
+## Paper, margins, running heads
+
+Page setup in the sidebar is where the trim and margins live, so this set
+states no paper of its own; print-config.txt is the same annotated manual
+every set starts with, all comments. Uncomment a line to try it: the
+config overrides page setup, and page setup overrides the built-in A4.
+"""
+
 # One map per shipped set: relative path -> file text. A `.html`/`.txt`
 # entry in the root is a fragment slot, a file opening with the `Docx`
 # marker is print configuration, and anything else — including nested
@@ -1394,6 +1483,45 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
         "documents/document.txt": "${Title}\n${Author}\n\n${Content}",
         "print-config.txt": SHORT_STORY_CONFIG,
         "style.css": DEFAULT_CSS,
+    },
+    "Book": {
+        # A whole book, dressed the way the naming convention asks: the
+        # folder is a Book, its chapters Chapters, its scenes Scenes. No
+        # file here is required — delete one and the built-in fragment or
+        # the set's own slot answers instead (§3.2).
+        "folder.html": ('<section class="part">\n'
+                        '<p class="part-title">${Title}</p>\n'
+                        '<div class="content">${Content}</div>\n'
+                        '<div class="scenes">${Scenes}</div>\n</section>'),
+        "folder.txt": "${Title}\n\n${Content}\n\n${Scenes}",
+        "documents/Chapter.html": (
+            '<section class="chapter">\n'
+            '<p class="chapter-number">${ChapterNumber}</p>\n'
+            '<h1>${Title}</h1>\n'
+            '<div class="content">${Content}</div>\n'
+            '<div class="scenes">${Scenes}</div>\n</section>'),
+        "documents/Chapter.txt": "${ChapterNumber}\n\n${Title}\n\n${Content}\n\n${Scenes}",
+        "documents/Scene.html": '<div class="scene">${Content}</div>',
+        "documents/Scene.txt": "${Content}",
+        "documents/Title.html": ('<section class="title-page">\n'
+                                 '<h1 class="book-title">${Title}</h1>\n'
+                                 '<p class="byline">${Author}</p>\n</section>'),
+        "documents/Title.txt": "${Title}\n\n${Author}",
+        "documents/Frontmatter.html": (
+            '<section class="dedication">\n'
+            '<p>For the ones who kept the light on.</p>\n'
+            '<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed\n'
+            'do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n'
+            'Ut enim ad minim veniam, quis nostrud exercitation ullamco\n'
+            'laboris nisi ut aliquip ex ea commodo consequat.</p>\n'
+            '</section>'),
+        "documents/Frontmatter.txt": (
+            "For the ones who kept the light on.\n\n"
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do\n"
+            "eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"),
+        "print-config.txt": DEFAULT_CONFIG,
+        "style.css": BOOK_CSS,
+        "README": BOOK_README,
     },
     "nothing": {
         # One empty body, not an emptied vocabulary (§3). This file (and

@@ -17,8 +17,8 @@ a readable manuscript** — titles, heading pages, page breaks, A4 — and
 everything beyond that is opt-in, visible, and shareable.
 
 The other goal, no less important: **a writer never has to read source code
-or guess a filename to find their templates.** Three sets ship with Lekhak —
-`default`, `short story`, `nothing` — listed together in the Outliner,
+or guess a filename to find their templates.** Four sets ship with Lekhak —
+`default`, `short story`, `Book`, `nothing` — listed together in the Outliner,
 duplicable with a right-click, their folders opening on a click, and serving
 as the worked examples the documentation points at.
 
@@ -96,9 +96,10 @@ template that ended up listed nowhere. What stands now:
   |---|---|---|
   | `default` | nothing is required: the built-in fragments, an inert config | `print-config.txt` |
   | `short story` | one document dressed on its own, A4 stated | `documents/document.html` |
+  | `Book` | a whole book by name: chapters, scenes, a title page, a dedication, a contents page | `README` |
   | `nothing` | silence: one empty body (`nothing.html`), and nothing results | `nothing.html` |
 - **A project folder named after a shipped set never takes its slot.**
-  `templates/default/` — or `short story`, or `nothing`, any case — is
+  `templates/default/` — or `short story`, `Book`, `nothing`, any case — is
   listed as its own row *after* the shipped three, under its folder name,
   so its files stay visible and editable while the top slot stays Lekhak's.
   Listing and naming are separate: the *name* `default` keeps meaning the

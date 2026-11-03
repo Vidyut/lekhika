@@ -785,6 +785,56 @@ Suite 942, exit 0.
 in the config box; the preview's status line does not say when the size shown
 came from the page's own design rather than the book's.
 
+### 1.19 A book that names itself — DONE (2026-11-04)
+
+**Request:** "a book template with a book.html that includes a book-title.html
+(for title page), a copyright page, a ToC page using the placeholder... and then
+include chapters and scenes", "add note in the sidebar to assign the
+types/templates accordingly to their scenes", "with no alternative folder/
+document formats available in the template, that's what the export will use
+automatically >> this is wrong... we should have section template for folder
+and scene or chapter template for document as well". Then: "Pieces doesn't feel
+necessary", "so now we have a variety of samples for the reader from dead easy
+to extremely customizable".
+
+**Implemented (2026-11-04):**
+
+- **A fourth shipped set, `Book`:** `folder.html` is a part page,
+  `documents/Chapter.html`, `Scene.html`, `Title.html`, `Frontmatter.html`
+  (a dedication in placeholder prose), an inert config, its own CSS and a
+  README; the built-in `contents` face is the ToC page (`${ToC}`).
+- **The naming convention is read at export, not only in the row** —
+  `_render_document` falls back to a face named after the document's Type when
+  nothing is stored, so a project typed by hand dresses the same way whether or
+  not its rows were opened. A stored `doc_template` still wins.
+- **A set's own slot files stop being document faces** (`folder.html`,
+  `document.html` at the set root): the shape's dress is "Default (set's own
+  slot)", and a face is a shelf file or a fragment the writer named.
+- **`print-config.txt` is not a face** — it is a `.txt`, so it was offered in
+  the Document template box; picking it would have dressed a document with the
+  comment block. A face is now a fragment whose head is neither print
+  configuration nor `Template: no`.
+- **Every set starts with a `style.css`** (`DEFAULT_CSS`): headings apart,
+  indented prose, a quiet scene break. HTML/EPUB only; DOCX/PDF keep taking
+  type from the sample `.docx` and the design lines.
+- **`Pieces:` is gone from the config reference.** It was documented and never
+  implemented (only `exclude_ids` plumbing existed); the user judged it
+  unnecessary. Front matter is binder content above the manuscript.
+- The sidebar's naming note now says how to assign: Type the folder `Book`,
+  the chapter `Chapter`, the scene `Scene`; front matter sits at the top of the
+  folder and is typed Title / Frontmatter / Contents.
+
+Suite 950, exit 0.
+
+**Relations:** 1.17/1.18 (Types, the two rows, per-page paper),
+`docs/TEMPLATES.md` §1.1–§2, `docs/MODEL.md`.
+
+**Still open:** the Document template box still gathers faces from *every*
+discovered set rather than the folder's chosen one (picking a foreign face
+falls back to the shape slot silently); the EPUB docstring still promises a
+`toc_page` slot nothing reads; the naming note's old list of looked-up names
+was wrong and has been cut, but `docs/TEMPLATES.md` still lists them.
+
 ## Phase 2 — books, variants, and conditional content
 
 ### 2.1 Book-level compile settings — DONE

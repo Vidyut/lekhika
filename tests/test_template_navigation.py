@@ -145,7 +145,8 @@ class TemplateNavigationTests(unittest.TestCase):
             TEMPLATE_SET_KIND)]
         self.assertEqual(names, [s.name for s in discover_template_sets(
             self.project.root)])
-        self.assertEqual(names, ["default", "short story", "nothing"])
+        self.assertEqual(names,
+                         ["default", "short story", "Book", "nothing"])
 
     def test_the_templates_folder_is_not_a_row_of_its_own(self):
         # The area is the project's templates/ folder on disk, not
@@ -399,8 +400,7 @@ class TemplateNavigationTests(unittest.TestCase):
         self._open_fragment()
 
         shown = self.window.template_naming_note.text()
-        self.assertIn("name this file according to your folder or "
-                      "document TYPE", shown)
+        self.assertIn("A file is picked by the TYPE it is named after", shown)
         self.assertEqual(shown, TEMPLATE_NAMING_NOTE)
 
     def test_the_config_note_is_the_shared_text(self):

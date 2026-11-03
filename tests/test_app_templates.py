@@ -386,7 +386,7 @@ class TemplateSelectorTests(unittest.TestCase):
 
     def test_no_matching_name_stores_nothing(self):
         self._template_set("Other", "chapter.html")
-        self._set_type(self.folder.id, "Book", "folder")
+        self._set_type(self.folder.id, "Diary", "folder")
 
         self._show(self.folder.id)
 

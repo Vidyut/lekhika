@@ -3705,6 +3705,18 @@ class Project:
                 override = templates.document_slot(document.doc_template, html=html)
             if override is not None:
                 return templates.fill(override, values, html=html)
+        # Nothing stored: this document's set may carry a face named after
+        # the document's own Type (1.18) — the naming convention, read at
+        # export as well as in the sidebar, so a project typed by hand
+        # dresses the same way whether or not a row was ever opened.
+        type_face = self.type_of(document).casefold()
+        derived = next(
+            (stem for stem in templates.document_template_names()
+             if stem.casefold() == type_face), "")
+        if derived:
+            override = templates.document_slot(derived, html=html)
+            if override is not None:
+                return templates.fill(override, values, html=html)
         if slot is None:
             slot = "folder" if document.kind == "chapter" else "document"
         return templates.render(slot, values, html=html)
