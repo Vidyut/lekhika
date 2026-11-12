@@ -39,6 +39,7 @@ There is no "local-first rule" and no opinion about what anyone else should do. 
 
 - **Quick open (`Ctrl+P`).** The question asked was whether it differs from clicking a title in the binder. Clicking *selects and shows*; quick open *finds*. In a 300-document binder the difference is twenty seconds of scrolling versus three letters — but it is only worth building if the binder feels slow in practice.
 - **“Keep me honest to my story bible”.** A central document (or set of notes) holding character and worldbuilding context — a story bible — that the app can use to flag where the manuscript contradicts that context or doesn’t fit (e.g. with optional LLM assistance). Useful for longer-form work; needs careful design so it helps without being noisy or overreaching. Draft workflow: `docs/STORY-BIBLE-CHECKS.md`.
+- **Corkboard visual indexing.** Collapsible cards (title + narrow band) so more fit when collapsed; assign colours to elements (characters, locations, POV, etc.) and show each present element’s colour in the band for instant visual indexing. A selector/filter to highlight only cards containing a chosen element (e.g. outline toggle) would make it easy to scan threads without heavy UI. Could pair with persistent cross-card “murder board” connections if explored later.
 - Import UI wording and flow (see `docs/IMPORTS.md`).
 
 ## Ceiling note
