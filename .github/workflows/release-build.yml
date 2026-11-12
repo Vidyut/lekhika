@@ -22,7 +22,7 @@ jobs:
             pyinstaller_args: --windowed --icon packaging/lekhika.ico
             archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows.zip
             shell: pwsh
-          - os: macos-latest
+          - os: macos-13
             artifact_name: Lekhika-macos
             pyinstaller_args: --windowed
             archive_cmd: cd dist && zip -r Lekhika-macos.zip Lekhika
