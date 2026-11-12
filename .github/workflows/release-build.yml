@@ -1,0 +1,128 @@
+name: Build release artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: Lekhika-windows
+            pyinstaller_args: --windowed --icon packaging/lekhika.ico
+            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows.zip
+            shell: pwsh
+          - os: macos-latest
+            artifact_name: Lekhika-macos
+            pyinstaller_args: --windowed
+            archive_cmd: cd dist && zip -r Lekhika-macos.zip Lekhika
+            shell: bash
+          - os: ubuntu-latest
+            artifact_name: Lekhika-linux
+            pyinstaller_args: --windowed
+            archive_cmd: cd dist && zip -r Lekhika-linux.zip Lekhika
+            shell: bash
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libfuse2 desktop-file-utils file wget
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller --noconfirm --clean --name Lekhika ${{ matrix.pyinstaller_args }} --collect-all lekhika --collect-all PySide6 --collect-all docx --collect-all reportlab src/lekhika/app.py
+
+      - name: Archive build
+        run: ${{ matrix.archive_cmd }}
+
+      - name: Build AppImage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          APP=Lekhika
+          APPDIR=dist/AppDir
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+          cp -r dist/Lekhika/* "$APPDIR/usr/bin/"
+          cp packaging/lekhika.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/lekhika.png"
+          cp packaging/lekhika.png "$APPDIR/lekhika.png"
+          cat > "$APPDIR/usr/share/applications/lekhika.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Lekhika
+          Comment=An environment for long-form writing
+          Exec=Lekhika
+          Icon=lekhika
+          Categories=Office;WordProcessor;
+          Terminal=false
+          EOF
+          cp "$APPDIR/usr/share/applications/lekhika.desktop" "$APPDIR/lekhika.desktop"
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "$HERE/usr/bin/Lekhika" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+          wget -q -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool "$APPDIR" "dist/Lekhika-linux-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
+
+      - name: Upload AppImage artifact (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lekhika-linux-appimage
+          path: dist/Lekhika-linux-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Attach zip to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach AppImage to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Lekhika-linux-x86_64.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
