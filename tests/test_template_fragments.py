@@ -302,7 +302,7 @@ class CssTests(unittest.TestCase):
         # No folder to read, so the stylesheet comes from the same map a
         # duplicate writes: the copy and the shipped set dress alike.
         self.assertIn("h1 {", TemplateSet.builtin().css())
-        self.assertEqual(TemplateSet.builtin("nothing").css(), "")
+        self.assertEqual(TemplateSet.builtin("no-export").css(), "")
 
 
 class CssExportTests(unittest.TestCase):

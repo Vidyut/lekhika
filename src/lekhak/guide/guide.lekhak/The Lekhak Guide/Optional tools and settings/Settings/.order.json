@@ -1,0 +1,9 @@
+{
+  "children": [
+    "index.html",
+    "Preferences.html",
+    "Appearance.html",
+    "Spelling.html",
+    "Keyboard shortcuts.html"
+  ]
+}

@@ -1,0 +1,95 @@
+/* A book on the screen: a heading you can find, prose you can follow.
+   Delete a rule, or all of them, and the export goes back to plain. */
+body {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 100%;
+  line-height: 1.55;
+  color: #1a1a1a;
+  margin: 0 auto;
+  max-width: 34em;
+  padding: 0 1.25em 3em;
+}
+h1, h2, h3, h4 {
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 2em 0 0.6em;
+}
+h1 { font-size: 1.9em; margin-top: 1.2em; }
+h2 { font-size: 1.4em; }
+h3 { font-size: 1.12em; font-variant: small-caps; letter-spacing: 0.04em; }
+h4 { font-size: 1em; font-style: italic; }
+p { margin: 0; text-indent: 1.4em; }
+h1 + p, h2 + p, h3 + p, h4 + p, p:first-child { text-indent: 0; }
+blockquote { margin: 1.2em 1.5em; font-style: italic; }
+blockquote p { text-indent: 0; }
+hr {
+  width: 30%;
+  margin: 1.6em auto;
+  border: 0;
+  border-top: 1px solid #b9b9b9;
+}
+section { margin: 0 0 2em; }
+a { color: #2a4d69; }
+@media print {
+  body { max-width: none; padding: 0; }
+}
+
+/* The guide's own: a shaded heading for each section, and a little more
+   room for each step into the detail. Delete a rule and nothing breaks
+   — the text stays. */
+
+.section-head {
+  background: #5b4b8a;
+  color: #ffffff;
+  padding: 0.5em 0.9em;
+  margin: 0 0 1.1em;
+  border-radius: 2px;
+}
+
+.section-head h1 {
+  margin: 0;
+  font-size: 1.45em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 0;
+  color: #ffffff;
+}
+
+.section-body ul {
+  list-style: disc;
+  margin: 0 0 0 1.3em;
+  padding: 0;
+}
+
+.section-body li {
+  margin: 0 0 0.45em 0;
+}
+
+/* Each step into the detail is indented a little further, and marked
+   with a quieter bullet in the accent, so the levels read at a glance. */
+.section-body ul ul {
+  list-style: circle;
+  margin: 0.35em 0 0 1.5em;
+}
+
+.section-body ul ul li::marker {
+  color: #5b4b8a;
+}
+
+.section-body ul ul li {
+  margin: 0 0 0.3em 0;
+}
+
+.section-body ul ul ul {
+  list-style: square;
+  margin: 0.3em 0 0 1.5em;
+}
+
+.section-body p {
+  margin: 0 0 0.8em;
+}
+
+/* Links wear the accent too, so a reader can see them at a glance. */
+a {
+  color: #5b4b8a;
+}

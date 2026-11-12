@@ -1,9 +1,9 @@
 """The sets that ship with Lekhak (docs/TEMPLATES.md §1.1): `default`,
-`short story`, `Book` and `nothing` — seeded by discovery without a folder,
-duplicable into the project with their own files, and standing for the whole
-range the system can express: the built-in look with an inert config, a
-variant that dresses units and states paper, a whole book dressed by Type
-name, and silence (§3).
+`short story`, `Book`, `Guide` and `no-export` — seeded by discovery without
+a folder, duplicable into the project with their own files, and standing for
+the whole range the system can express: the built-in look with an inert
+config, a variant that dresses units and states paper, a whole book dressed
+by Type name, a manual dressed by its own two Types, and silence (§3).
 """
 
 from __future__ import annotations
@@ -34,9 +34,10 @@ class ShippedSetsTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_the_three_shipped_sets_need_no_folder_anywhere(self):
+    def test_the_five_shipped_sets_need_no_folder_anywhere(self):
         self.assertEqual(SHIPPED_TEMPLATE_SETS,
-                         ("default", "short story", "Book", "nothing"))
+                         ("default", "short story", "Book", "Guide",
+                          "no-export"))
         for name in SHIPPED_TEMPLATE_SETS:
             self.assertIsNone(TemplateSet.builtin(name).directory)
             self.assertFalse(TemplateSet.builtin(name).editable)
@@ -44,25 +45,25 @@ class ShippedSetsTests(unittest.TestCase):
     def test_discovery_seeds_them_before_any_folder(self):
         (self.root / "templates" / "Editorial").mkdir(parents=True)
         names = [s.name for s in discover_template_sets(self.root)]
-        self.assertEqual(names, ["default", "short story", "Book", "nothing",
-                                 "Editorial"])
+        self.assertEqual(names, ["default", "short story", "Book", "Guide",
+                                 "no-export", "Editorial"])
 
     def test_a_folder_named_after_a_shipped_set_is_listed_beside_it(self):
         # The `default` rule (§1.1) generalised: the shipped set keeps
         # its slot — the top of the list is always Lekhak's own — and the
-        # project's copy appears after the three as a set of its own,
-        # under its folder name, so its files are never hidden.
+        # project's copy appears after them as a set of its own, under
+        # its folder name, so its files are never hidden.
         directory = self.root / "templates" / "Short Story"
         directory.mkdir(parents=True)
         (directory / "folder.html").write_text("<p>${Content}</p>",
                                                 encoding="utf-8")
         sets = discover_template_sets(self.root)
         self.assertEqual([s.name for s in sets],
-                         ["default", "short story", "Book", "nothing",
-                          "Short Story"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export", "Short Story"])
         self.assertIsNone(sets[1].directory)       # the shipped one, still
-        self.assertEqual(sets[4].directory, directory)
-        self.assertEqual(sets[4].slot("folder"), "<p>${Content}</p>")
+        self.assertEqual(sets[5].directory, directory)
+        self.assertEqual(sets[5].slot("folder"), "<p>${Content}</p>")
 
     def test_default_is_the_builtin_fragments_with_an_inert_config(self):
         default = TemplateSet.builtin("default")
@@ -88,16 +89,16 @@ class ShippedSetsTests(unittest.TestCase):
         self.assertFalse(short.prints_nothing)
 
     def test_no_export_is_one_empty_file(self):
-        silent = TemplateSet.builtin("nothing")
+        silent = TemplateSet.builtin("no-export")
         # The whole set: one file whose body is empty, and its notes. No
         # fragment is emptied to say it, so changing one's mind costs one
         # deletion, not rebuilding a vocabulary.
-        self.assertEqual(sorted(SHIPPED_FILES["nothing"]),
-                         ["nothing.html"])
-        self.assertTrue(SHIPPED_FILES["nothing"]["nothing.html"].endswith(
+        self.assertEqual(sorted(SHIPPED_FILES["no-export"]),
+                         ["no-export.html"])
+        self.assertTrue(SHIPPED_FILES["no-export"]["no-export.html"].endswith(
             "<body></body>"))
         self.assertIn("prints nothing",
-                      SHIPPED_FILES["nothing"]["nothing.html"])
+                      SHIPPED_FILES["no-export"]["no-export.html"])
         self.assertTrue(silent.prints_nothing)
         # Nothing results from it: every slot answers empty in both modes,
         # and so does a document's own dress.
@@ -112,21 +113,44 @@ class ShippedSetsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             TemplateSet.builtin("mine")
 
+    def test_guide_dresses_a_manual_by_its_own_two_types(self):
+        # The guide's set is the documentation example: a `heading` page
+        # is a shaded banner, a `section` page is banner and prose, and
+        # the classes both carry are the ones its stylesheet rules.
+        guide = TemplateSet.builtin("Guide")
+        heading = guide.document_slot("heading")
+        section = guide.document_slot("section")
+        self.assertIn('<section class="section-head">', heading)
+        self.assertIn("${Title}", heading)
+        self.assertNotIn("${Content}", heading)
+        self.assertIn('<div class="section-body">', section)
+        self.assertIn("${Content}", section)
+        self.assertIn(".section-head", guide.css())
+
     def test_book_names_every_face_after_the_type_it_dresses(self):
         book = TemplateSet.builtin("Book")
-        # The naming convention, as a shipped set: a folder typed Book,
-        # chapters typed Chapter, scenes typed Scene, and front matter
-        # typed after its own page (docs/MODEL.md).
+        # The naming convention, as a shipped set: the book, its
+        # chapters, its scenes, each named after the Type it dresses
+        # (docs/MODEL.md).
         faces = book.document_template_faces()
-        for type_name in ("Chapter", "Scene", "Title", "Frontmatter"):
-            self.assertEqual(faces.get(type_name), f"{type_name}.html")
-        self.assertIn('class="part"', book.slot("folder"))
-        scene = book.document_slot("Scene")
-        self.assertIn('class="scene"', scene)
-        # A scene has no heading unless the writer adds one to its
-        # Metadata: the PoV line is inside a conditional (2.2).
-        self.assertIn("$if(Metadata.PoV)", scene)
-        self.assertNotIn("${Title}", scene)
+        for name in ("book", "chapter", "scene", "title-page"):
+            self.assertEqual(faces.get(name), f"{name}.html")
+        chapter = book.document_slot("chapter")
+        self.assertIn("${Title}", chapter)
+        # A chapter carries its children: without the slot they would not
+        # print at all, because a chapter is what wraps them.
+        self.assertIn("${children}", chapter)
+        scene = book.document_slot("scene")
+        # An epigraph and the who/where line are conditionals (2.2): a
+        # scene with those fields empty prints no heading.
+        self.assertIn("$if(Quote)", scene)
+        self.assertIn("$if(PoV)", scene)
+        self.assertIn("${Content}", scene)
+        # The book page is where a cover goes; it prints no prose of its
+        # own, and asks for nothing the writer must have written first.
+        page = book.document_slot("book")
+        self.assertIn("cover", page)
+        self.assertNotIn("${Content}", page)
         # The set states no paper: page setup in the inspector answers,
         # which is where the writer sets trim and margins.
         self.assertEqual(book.docx_config, {})
@@ -152,27 +176,26 @@ class BookSetAssignmentTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_the_faces_reach_an_export_by_name_alone(self):
-        # No assignment is made anywhere: the set is used whole, and the
-        # folder slot dresses the chapter while the scene face dresses
-        # the scene — but only a document whose Type says Scene gets the
-        # scene's face, so both cases are checked through the resolver.
+        # Naming files after Types (1.18) is read at export as well as in
+        # the sidebar: nothing is stored on these documents, and each one
+        # still wears the face its Type is named after.
+        self.project.set_metadata(self.chapter.id, {"Type": "chapter"})
+        self.project.set_metadata(self.scene.id, {"Type": "Scene"})
         self.project.write_content(self.scene.id, "<p>First light.</p>")
         book = TemplateSet.builtin("Book")
-        self.assertIn('class="scene"', book.document_slot("Scene"))
-        self.assertIn("${Position}", book.document_slot("Chapter"))
-        self.assertIn('class="part"', book.slot("folder"))
+        self.assertIn('class="scene"', book.document_slot("scene"))
+        # The chapter carries its children: the slot is what places them.
+        self.assertIn("${children}", book.document_slot("chapter"))
 
         destination = self.root / "book.html"
         self.project.export_html(destination, None, book)
         exported = destination.read_text(encoding="utf-8")
-        self.assertIn('class="part"', exported)
+        self.assertIn('<section class="chapter">', exported)
+        self.assertIn('<section class="scene">', exported)
         self.assertIn("First light.", exported)
 
     def test_the_type_alone_dresses_the_export(self):
-        # Naming files after Types (1.18) is read at export as well as in
-        # the sidebar: nothing was ever stored on these documents, and
-        # each one still wears the face its Type is named after.
-        self.project.set_metadata(self.chapter.id, {"Type": "Chapter"})
+        self.project.set_metadata(self.chapter.id, {"Type": "chapter"})
         self.project.set_metadata(self.scene.id, {"Type": "Scene"})
         self.project.write_content(self.chapter.id, "<p>Late prose.</p>")
         self.project.write_content(self.scene.id, "<p>First light.</p>")
@@ -181,33 +204,42 @@ class BookSetAssignmentTests(unittest.TestCase):
         self.project.export_html(destination, None, TemplateSet.builtin("Book"))
         exported = destination.read_text(encoding="utf-8")
 
-        self.assertIn('<section class="scene">', exported)  # Scene's face
-        self.assertIn('class="chapter-number"', exported)   # Chapter's
-        # A chapter is its number: the title lives on the folder's part
-        # page and in the contents page, not above every chapter.
-        self.assertNotIn("<h1>Chapter One</h1>", exported)
+        self.assertIn('<section class="scene">', exported)     # Scene's face
+        self.assertIn('<p class="chapter-title">Chapter One</p>',
+                      exported)                                # Chapter's
+        # A chapter is a title and its scenes — no number is imposed on
+        # it, because the design does not print one.
+        self.assertNotIn("chapter-number", exported)
 
-    def test_a_scene_prints_a_pov_only_when_its_metadata_has_one(self):
+    def test_a_scene_prints_its_epigraph_and_head_only_when_filled(self):
         self.project.set_metadata(self.scene.id, {"Type": "Scene"})
         self.project.write_content(self.scene.id, "<p>First light.</p>")
         book = TemplateSet.builtin("Book")
 
         plain = self.root / "plain.html"
         self.project.export_html(plain, None, book)
-        self.assertNotIn('class="pov"', plain.read_text(encoding="utf-8"))
+        bare = plain.read_text(encoding="utf-8")
+        self.assertNotIn('class="scene-head"', bare)
+        self.assertNotIn('class="quote"', bare)
+        self.assertIn("First light.", bare)      # prose prints regardless
 
-        # Replaces, not merges: the Type stays on, the PoV joins it.
-        self.project.set_metadata(self.scene.id,
-                                  {"Type": "Scene", "PoV": "Maren"})
+        # Replaces, not merges: the Type stays on, the fields join it.
+        self.project.set_metadata(
+            self.scene.id,
+            {"Type": "Scene", "PoV": "Maren", "Location": "the clinic",
+             "Quote": "Blink if you understand me.", "Source": "Aaxyl",
+             "Date": "Thursday, July 4, 2430"})
         named = self.root / "pov.html"
         self.project.export_html(named, None, book)
-        self.assertIn('<p class="pov">Maren</p>',
-                      named.read_text(encoding="utf-8"))
+        filled = named.read_text(encoding="utf-8")
+        self.assertIn('<h3 class="scene-head">Maren: the clinic</h3>', filled)
+        self.assertIn('<p class="quote">Blink if you understand me.</p>', filled)
+        self.assertIn("~ Aaxyl, Thursday, July 4, 2430", filled)
 
     def test_a_stored_face_still_outranks_the_type(self):
-        self.project.set_metadata(self.chapter.id, {"Type": "Chapter"})
+        self.project.set_metadata(self.chapter.id, {"Type": "chapter"})
         self.project.write_content(self.chapter.id, "<p>Late prose.</p>")
-        self.project.update_document(self.chapter.id, doc_template="Title")
+        self.project.update_document(self.chapter.id, doc_template="title-page")
 
         destination = self.root / "chosen.html"
         self.project.export_html(destination, None, TemplateSet.builtin("Book"))
@@ -261,11 +293,11 @@ class ShippedDuplicateTests(unittest.TestCase):
             (created.directory / "examples" / "formatting.docx").is_file())
 
     def test_duplicating_no_export_writes_its_one_file_and_its_notes(self):
-        created = copy_template_set(TemplateSet.builtin("nothing"),
+        created = copy_template_set(TemplateSet.builtin("no-export"),
                                     "quiet", self.root)
         # The copy is the shipped entry, not a seeded vocabulary: one empty
         # file and the notes, nothing else (§3).
-        self.assertEqual(self.files(created), ["nothing.html"])
+        self.assertEqual(self.files(created), ["no-export.html"])
         self.assertTrue(created.prints_nothing)
         self.assertEqual(created.slot("folder"), "")
         self.assertNotIn("examples/formatting.docx", self.files(created))
@@ -370,20 +402,20 @@ class ShippedExportTests(unittest.TestCase):
             for section in document.sections))
 
     def test_no_export_writes_an_empty_document(self):
-        document = self.export_docx("nothing")
+        document = self.export_docx("no-export")
         self.assertEqual([p.text for p in document.paragraphs if p.text.strip()],
                          [])
 
     def test_no_export_writes_an_empty_text_file(self):
         destination = self.root / "quiet.txt"
         self.project.export_text(destination, None,
-                                 TemplateSet.builtin("nothing"))
+                                 TemplateSet.builtin("no-export"))
         self.assertEqual(destination.read_text(encoding="utf-8"), "")
 
     def test_no_export_keeps_the_html_wrapper_with_nothing_inside(self):
         destination = self.root / "quiet.html"
         self.project.export_html(destination, None,
-                                 TemplateSet.builtin("nothing"))
+                                 TemplateSet.builtin("no-export"))
         text = destination.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("<!doctype html>"))
         self.assertIn("<title>", text)
@@ -393,7 +425,7 @@ class ShippedExportTests(unittest.TestCase):
     def test_no_export_leaves_an_epub_with_an_empty_body(self):
         destination = self.root / "quiet.epub"
         self.project.export_epub(destination, None,
-                                 TemplateSet.builtin("nothing"))
+                                 TemplateSet.builtin("no-export"))
         import zipfile
 
         with zipfile.ZipFile(destination) as archive:

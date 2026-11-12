@@ -66,6 +66,13 @@ class OutlinerScopeTests(unittest.TestCase):
         self.window.current_id = None
         self.assertEqual(self._titles(), ["Draft"])
 
+    def test_an_empty_folder_shows_its_contents_not_the_project(self):
+        # A childless folder's contents are nothing — not the whole
+        # project (the siblings fallback is for documents).
+        empty = self.project.add_document("Empty", self.root.id, "folder")
+        self.window.current_id = empty.id
+        self.assertEqual(self._titles(), [])
+
     def test_the_scope_follows_a_binder_click_without_a_tab_switch(self):
         # The gap the first pass missed: while the Outliner tab is already
         # showing, moving the binder selection used to leave the old rows
@@ -76,6 +83,138 @@ class OutlinerScopeTests(unittest.TestCase):
             [self.window.outliner.topLevelItem(index).text(0)
              for index in range(self.window.outliner.topLevelItemCount())],
             ["One"])
+
+    # -- the open-time structure prompt -------------------------------------
+
+    def _drifted_project(self):
+        """A second, already-open project with a tampered order file."""
+        temporary = tempfile.TemporaryDirectory()
+        project = Project.create(Path(temporary.name) / "Other", "Other")
+        book = project.add_document("Book", kind="folder")
+        project.add_document("Scene", book.id, "scene")
+        order_file = project.root / "Book" / ".order.json"
+        order_file.write_text('{"children": ["Wrong.html"]}',
+                              encoding="utf-8")
+        return temporary, project
+
+    def test_opening_a_drifted_project_asks_which_is_right(self):
+        temporary, project = self._drifted_project()
+        try:
+            seen: dict = {}
+
+            def fake_dialog(problems):
+                seen["problems"] = problems
+                return "order"
+
+            original = self.window._drift_dialog
+            self.window._drift_dialog = fake_dialog
+            try:
+                self.window._switch_project(project)
+            finally:
+                self.window._drift_dialog = original
+            self.assertTrue(seen["problems"])
+            # The writer chose the order files; the wrong name was ignored
+            # and the project opens clean.
+            self.assertEqual(project.validate_alignment(), [])
+            self.assertIs(self.window.project, project)
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
+
+    def test_cancelling_the_drift_prompt_aborts_the_switch(self):
+        temporary, project = self._drifted_project()
+        try:
+            self.window._drift_dialog = lambda problems: None
+            self.window._switch_project(project)
+            # Still on the original project; the drifted one is untouched.
+            self.assertIs(self.window.project, self.project)
+            project.open()
+            self.assertTrue(project.validate_alignment())
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
+
+    def test_opening_with_a_manifest_choice_follows_the_root_order(self):
+        import json as _json
+
+        temporary = tempfile.TemporaryDirectory()
+        project = Project.create(Path(temporary.name) / "Other", "Other")
+        try:
+            project.add_document("Alpha", kind="folder")
+            manifest = project.root / "manifest.json"
+            manifest.write_text(_json.dumps({
+                "title": "Other", "version": 1,
+                "children": ["Alpha", "Draft"]}), encoding="utf-8")
+            self.window._drift_dialog = lambda problems: "manifest"
+            self.window._switch_project(project)
+            self.assertEqual(
+                [d.title for d in project.documents() if d.parent_id is None],
+                ["Alpha", "Draft"])
+            self.assertEqual(project.validate_alignment(), [])
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
+
+    def test_missing_files_ok_removes_their_entries(self):
+        temporary = tempfile.TemporaryDirectory()
+        project = Project.create(Path(temporary.name) / "Other", "Other")
+        try:
+            book = project.add_document("Book", kind="folder")
+            scene = project.add_document("Scene", book.id, "scene")
+            project.write_content(scene.id, "<p>Gone.</p>")
+            (project.root / "Book" / "Scene.html").unlink()
+            self.window._missing_dialog = lambda missing: "remove"
+            self.window._warn_missing_files(project)
+            self.assertEqual(project.missing_files(), [])
+            self.assertEqual(project.validate_alignment(), [])
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
+
+    def test_missing_files_leave_keeps_the_entries(self):
+        temporary = tempfile.TemporaryDirectory()
+        project = Project.create(Path(temporary.name) / "Other", "Other")
+        try:
+            book = project.add_document("Book", kind="folder")
+            scene = project.add_document("Scene", book.id, "scene")
+            project.write_content(scene.id, "<p>Gone.</p>")
+            (project.root / "Book" / "Scene.html").unlink()
+            self.window._missing_dialog = lambda missing: "leave"
+            self.window._warn_missing_files(project)
+            self.assertEqual(project.missing_files(), ["Book/Scene.html"])
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
+
+    def test_missing_files_recheck_closes_when_fixed(self):
+        temporary = tempfile.TemporaryDirectory()
+        project = Project.create(Path(temporary.name) / "Other", "Other")
+        try:
+            book = project.add_document("Book", kind="folder")
+            scene = project.add_document("Scene", book.id, "scene")
+            project.write_content(scene.id, "<p>Gone.</p>")
+            gone = project.root / "Book" / "Scene.html"
+            gone.unlink()
+
+            def fake_dialog(missing):
+                # The writer put the file back, then clicked Recheck.
+                self.assertEqual(missing, ["Book/Scene.html"])
+                gone.write_text("<p>Back.</p>", encoding="utf-8")
+                return "recheck"
+
+            self.window._missing_dialog = fake_dialog
+            self.window._warn_missing_files(project)
+            self.assertEqual(project.missing_files(), [])
+            self.assertIn(scene.id, [d.id for d in project.documents()])
+        finally:
+            self.window.project = None
+            project.close()
+            temporary.cleanup()
 
 
 if __name__ == "__main__":

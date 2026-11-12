@@ -44,14 +44,15 @@ class DiscoveryTests(unittest.TestCase):
         return [s.name for s in discover_template_sets(self.root)]
 
     def test_an_empty_project_has_exactly_the_shipped_sets(self):
-        # §1.1: three sets ship with Lekhak and need no folder anywhere,
+        # §1.1: five sets ship with Lekhak and need no folder anywhere,
         # so an empty project still offers all of them, default first.
         self.assertEqual(self._names(),
-                         ["default", "short story", "Book", "nothing"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export"])
 
     def test_a_default_folder_is_listed_beside_the_shipped_default(self):
         # §1.1 flat, and §1.1's other half: the folder is a row of its
-        # own, after the shipped three, under its folder name — so its
+        # own, after the shipped sets, under its folder name — so its
         # files are never hidden — while the top slot stays Lekhak's own,
         # the answer when nobody picked a set.
         directory = self.root / "templates" / "default"
@@ -61,11 +62,12 @@ class DiscoveryTests(unittest.TestCase):
         sets = discover_template_sets(self.root)
 
         self.assertEqual(self._names(),
-                         ["default", "short story", "Book", "nothing", "default"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export", "default"])
         self.assertIsNone(sets[0].directory)          # shipped, not the folder
         self.assertEqual(sets[0].slot("folder"),
                          TemplateSet.builtin("default").slot("folder"))
-        owned = sets[4]
+        owned = sets[5]
         self.assertEqual(owned.directory, directory)
         self.assertEqual(owned.slot("folder"), "<p>${Title}${Content}</p>")
 
@@ -95,7 +97,8 @@ class DiscoveryTests(unittest.TestCase):
         directory.mkdir(parents=True)
 
         self.assertEqual(self._names(),
-                         ["default", "short story", "Book", "nothing", "Default"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export", "Default"])
         named = named_template_sets(self.root)
         self.assertIsNone(named["default"].directory)
         self.assertEqual(named["Default"].directory, directory)
@@ -121,14 +124,16 @@ class DiscoveryTests(unittest.TestCase):
         # The shipped sets keep the top, one slot each; a project's own
         # folders follow in their own order.
         self.assertEqual(self._names(), ["default", "short story", "Book",
-                                         "nothing", "Editorial", "Print"])
+                                         "Guide", "no-export",
+                                         "Editorial", "Print"])
 
     def test_files_in_templates_are_not_templates(self):
         (self.root / "templates").mkdir(parents=True)
         (self.root / "templates" / "notes.txt").write_text("x",
                                                            encoding="utf-8")
         self.assertEqual(self._names(),
-                         ["default", "short story", "Book", "nothing"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+{
+  "children": [
+    "index.html",
+    "The editor.html",
+    "Styles, fonts and zoom.html",
+    "Focus mode.html",
+    "Dates and page breaks.html",
+    "Paste.html",
+    "Finding and replacing.html",
+    "Page view and pagination.html",
+    "Word counts, goals and progress.html"
+  ]
+}

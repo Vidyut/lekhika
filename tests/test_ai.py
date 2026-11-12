@@ -198,16 +198,19 @@ class AIWindowTests(unittest.TestCase):
         for row in rows:
             self.assertEqual(row.author, "AI")
 
-    def test_proofread_without_a_selection_does_nothing(self):
+    def test_proofread_without_a_selection_proofreads_the_whole_scene(self):
         cursor = self.window.editor.textCursor()
         cursor.clearSelection()
         self.window.editor.setTextCursor(cursor)
 
-        with patch("lekhak.ai.complete") as call:
+        with patch("lekhak.ai.complete",
+                   return_value="First Light!") as call:
             self.window._ai_proofread_selection()
 
-        call.assert_not_called()
-        self.assertEqual(self.project.revisions(self.scene.id), [])
+        call.assert_called_once()
+        self.assertEqual(call.call_args[0][1], "First light prose.")
+        rows = self.project.revisions(self.scene.id)
+        self.assertEqual([row.kind for row in rows], ["delete", "insert"])
 
     def test_ai_error_shows_a_warning_and_writes_nothing(self):
         with patch("lekhak.ai.complete",

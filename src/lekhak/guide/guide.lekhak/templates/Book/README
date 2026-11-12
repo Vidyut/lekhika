@@ -1,0 +1,90 @@
+# Book — one page per kind of thing
+
+This set is the worked example of the naming rule: a file is named after
+the Type it dresses. Call a folder `book`, a chapter `chapter`, a scene
+`scene`, and each one finds its page here by itself. Nothing is required —
+delete a file and the built-in page for that shape answers instead.
+
+## What is in here
+
+| File | What it dresses | The Type it answers to |
+|---|---|---|
+| book.html | the book itself, before anything else | `book` |
+| chapter.html | a chapter: its title, set down the page | `chapter` |
+| scene.html | a scene: its epigraph, who and where, then the prose | `scene` |
+| title-page.html | a title page, picked by hand | any scene or chapter — choose it in the Document template row |
+| style.css | the look for all four | — |
+| print-config.txt | the annotated manual every set starts with, all comments | — |
+
+## How the naming works
+
+The Type row and the Document template row sit next to each other in the
+sidebar. Type a chapter `chapter` and the Document template row fills
+itself with chapter.html. You can also pick a page by hand there, which is
+how title-page.html is meant to be used: on a document you want to look
+like the front of a book. That document has to be a scene or a chapter —
+those are the kinds an export prints; a note is research and stays out of
+the book.
+
+## What the scene page does
+
+A scene prints no heading unless it has something to say. Give it three
+fields in its Metadata and an epigraph appears above the prose:
+
+    Quote    the quotation
+    Source   who said it
+    Date     when
+
+Give it `PoV` and `Location` and a line names who and where the scene
+happens; with those empty, that line disappears too. This is a
+conditional, `$if(...)`: whatever the writer did not fill simply does not
+print, so no scene is forced to carry a heading.
+
+## What the title page asks for
+
+`${Title}` is the document's own title and `${Author}` is a project field
+(the whole-project Metadata in the sidebar). `${BookTagline}` is a project
+field as well: add one called `BookTagline` and the line prints; without
+it, the page is just the title and the author.
+
+## The fields above are yours, not Lekhak's
+
+None of `Quote`, `Source`, `Date`, `PoV`, `Location` or `BookTagline` is
+a Lekhak feature. A field exists because you wrote it, and what it is
+called is your business: rename `PoV` to `Narrator`, `Viewpoint` or
+`Season` in this set's fragments and in your documents, and it works the
+same. The names above are this template's worked example of what is
+possible; delete a `$if(...)` block and the field is simply ignored.
+
+Where a field lives: **in the document's own file**, in the metadata
+block at the top of its head — so the file carries everything about the
+document and travels on its own:
+
+    ---
+    title: Chapter Two
+    metadata:
+      PoV: Aaxyl
+      Location: The Null Dorms
+    ---
+
+The sidebar's Advanced / Custom table is where you write them and the
+app's database is what it reads while you work, so the two are kept in
+step on every save; edit them in the sidebar and the head follows.
+Inside a fragment, `${PoV}` prints a field, `$if(PoV)` prints a block
+only when the field is not empty, and `${Metadata.PoV}` spells the same
+name the long way.
+
+## The fonts
+
+The pages ask for Cinzel, Cormorant, Mixolydian Titling, Larabiefont and
+Lato Black by name, with an ordinary serif underneath. With those fonts
+installed the book looks exactly as designed; without them it falls back
+and still reads. Replace a name in the file's styling to use whatever you
+have.
+
+## Pages, margins, running heads
+
+Page setup in the sidebar is where trim and margins live, so this set
+states no paper of its own; print-config.txt is all comments. Uncomment a
+line to try it: the config overrides page setup, and page setup overrides
+the built-in A4.

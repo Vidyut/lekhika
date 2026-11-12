@@ -11,6 +11,7 @@ rewrite the manuscript behind the writer's back.
 from __future__ import annotations
 
 import json
+import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -73,6 +74,156 @@ def load_settings() -> AISettings:
         key=str(settings.value("ai/key", "")),
         prompt=str(settings.value("ai/prompt", "")),
     )
+
+
+def load_servers() -> list[tuple[str, str]]:
+    """Servers the writer configured (and the seeded local one).
+
+    Stored as JSON `[{"name": ..., "endpoint": ...}, ...]` under
+    ``ai/servers``; new machines inherit the local Ollama entry."""
+    stored = json.loads(str(QSettings().value("ai/servers", "[]")))
+    servers: list[tuple[str, str]] = []
+    if isinstance(stored, list):
+        for entry in stored:
+            if (isinstance(entry, dict)
+                    and isinstance(entry.get("name"), str)
+                    and isinstance(entry.get("endpoint"), str)):
+                servers.append((entry["name"], entry["endpoint"]))
+    if not any(name == "Ollama (local)" for name, _ in servers):
+        servers.insert(0, ("Ollama (local)", DEFAULT_ENDPOINT))
+    return servers
+
+
+def save_servers(servers: list[tuple[str, str]]) -> None:
+    """Replace the stored server list (the seeded local stays)."""
+    kept = [[name, endpoint] for name, endpoint in servers
+            if name != "Ollama (local)"]
+    QSettings().setValue("ai/servers", json.dumps(kept))
+
+
+def detect_local_servers() -> list[tuple[str, str]]:
+    """(name, endpoint) for local AI servers found here, best effort.
+
+    The usual suspects: Ollama first — an installed client (``ollama
+    list`` asks it what it has) or anything answering on the usual
+    port. Detection happens where the app runs, never from a menu
+    somebody else prepared."""
+    import shutil
+    import subprocess
+    servers: list[tuple[str, str]] = []
+    ollama = shutil.which("ollama")
+    if ollama:
+        try:
+            result = subprocess.run(
+                [ollama, "list"], capture_output=True, text=True,
+                timeout=15)
+            if result.returncode == 0:
+                servers.append(("Ollama (local)", DEFAULT_ENDPOINT))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if not servers:
+        try:
+            probe = urllib.request.Request(DEFAULT_ENDPOINT + "/models",
+                                           method="GET")
+            with urllib.request.urlopen(probe, timeout=3):
+                servers.append(("Ollama (local)", DEFAULT_ENDPOINT))
+        except (urllib.error.URLError, OSError):
+            pass
+    return servers
+
+
+def detect_local_models() -> list[str]:
+    """Model names a local Ollama offers (``ollama list``), so the
+    models dropdown can list exactly what is there to choose from."""
+    import shutil
+    import subprocess
+    ollama = shutil.which("ollama")
+    if not ollama:
+        return []
+    try:
+        result = subprocess.run(
+            [ollama, "list"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    names: list[str] = []
+    for line in result.stdout.splitlines()[1:]:  # skip the header
+        if line.strip():
+            names.append(line.split()[0])
+    return names
+
+
+def install_ollama(silent: bool = False) -> bool:
+    """Install Ollama and pull the small reference model.
+
+    Per operating system: the official installer script on Unix-like
+    systems; a download page opened elsewhere. The model is pulled
+    after the install path works — everything is installed where the
+    user already keeps their tools, nothing in the project."""
+    import subprocess
+    import sys
+    import webbrowser
+    if sys.platform == "win32":
+        webbrowser.open("https://ollama.com/download")
+        return False
+    if sys.platform == "darwin":
+        if shutil.which("brew"):
+            subprocess.run(["brew", "install", "ollama"], check=False,
+                           capture_output=True, timeout=1800)
+        elif shutil.which("ollama"):
+            pass
+        else:
+            webbrowser.open("https://ollama.com/download")
+            return False
+    else:
+        try:
+            subprocess.run(
+                ["sh", "-c",
+                 "curl -fsSL https://ollama.com/install.sh | sh"],
+                check=True, capture_output=True, text=True, timeout=1800)
+        except (OSError, subprocess.SubprocessError):
+            return False
+    try:
+        subprocess.run(["ollama", "pull", "phi4-mini"], check=False,
+                       capture_output=True, timeout=1800)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return True
+
+
+def detect_remote_models(endpoint: str) -> list[str]:
+    """Model names an API endpoint offers (OpenAI-shaped ``/models`` —
+    tried with and without a ``/v1`` tail). A dead endpoint answers
+    with silence, not an error — anyone saving APIs tried at this
+    moment keeps the typed model either way."""
+    if not endpoint.strip():
+        return []
+    base = endpoint.rstrip("/")
+    candidates = [base + "/models"] if base.endswith("/v1") else [
+        base + "/models", base + "/v1/models"]
+    body = None
+    for url in candidates:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            break
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            continue
+    if body is None:
+        return []
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        return []
+    names: list[str] = []
+    for entry in data:
+        if isinstance(entry, dict):
+            name = entry.get("id") or entry.get("name")
+            if isinstance(name, str):
+                names.append(name)
+        elif isinstance(entry, str):
+            names.append(entry)
+    return names
 
 
 def save_settings(settings: AISettings) -> None:

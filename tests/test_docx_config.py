@@ -113,8 +113,8 @@ class ConfigParsingTests(unittest.TestCase):
         self.assertEqual(config_headings(",{Title},{Date}"), ["", "{Title}", "{Date}"])
         # An author's name carries a comma of its own; it stays in the
         # piece it belongs to rather than becoming a fourth column.
-        self.assertEqual(config_headings("{Author}, ,{Book}"),
-                         ["{Author}", "", "{Book}"])
+        self.assertEqual(config_headings("{Author}, ,{BookTitle}"),
+                         ["{Author}", "", "{BookTitle}"])
 
 
 class DocxPrintTests(unittest.TestCase):
@@ -281,8 +281,8 @@ class DocxPrintTests(unittest.TestCase):
         import zipfile
 
         self.write_config([
-            "Header: ,{Book},{Date}",
-            "Header left: {Book}, , {Chapter}",
+            "Header: ,{BookTitle},{Date}",
+            "Header left: {BookTitle}, , {Chapter}",
         ])
         # {Chapter} is not a project value; unknown keys render empty,
         # exactly as in a fragment.
@@ -381,7 +381,7 @@ class PerPagePrintTests(unittest.TestCase):
                                sections[0].page_width.inches)
 
     def test_a_page_can_say_it_carries_no_running_head(self):
-        self.write_config(["Header: ,{Book},", "Footer: {Book} folio"])
+        self.write_config(["Header: ,{BookTitle},", "Footer: {BookTitle} folio"])
         self.design_a_page(["Header: none"])
 
         document = self.export()

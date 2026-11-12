@@ -33,7 +33,7 @@ class ValidateSlotTests(unittest.TestCase):
     def test_known_placeholders_are_clean(self):
         text = ("${Title}\n${Content}\n${ChapterNumber} ${SceneNumber} "
                 "${WordsTotal} ${WordCount} ${Kind} ${Synopsis} "
-                "${ToC} ${Children}")
+                "${ToC} ${children}")
         self.assertEqual(validate_slot(text), [])
 
     def test_unknown_placeholder_is_flagged(self):

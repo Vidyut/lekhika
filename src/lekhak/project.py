@@ -33,7 +33,6 @@ them can be reversed.
 from __future__ import annotations
 
 import os
-import hashlib
 import json
 import re
 import shutil
@@ -52,14 +51,14 @@ from .layout import (Node, load_tree as _load_tree, write_tree as _write_tree,
                      slug as _slug, dump_frontmatter)
 from .disk_doc import split_document
 from .templates import (
-    FORMATS, TemplateSet, discover_template_sets, named_template_sets,
-    parse_docx_config, project_template_root, split_head,
+    CHILDREN_NAME, PLACEHOLDER_RE, TemplateSet, discover_template_sets,
+    is_children_name, named_template_sets, parse_docx_config,
+    project_template_root, split_head,
 )
 
 
-# Export formats by slug, for a binder folder whose children are named after
-# them (2.1b): ``frontmatter/epub`` and ``frontmatter/docx`` are variants.
-FORMAT_NAMES = frozenset(FORMATS)
+IF_CONDITION_RE = re.compile(r"\$if\(\s*([^)]*)\)")
+
 
 TAG_RE = re.compile(r"<[^>]+>")
 # Qt's toHtml() prepends a CSS head; without dropping it, every stored
@@ -81,21 +80,39 @@ LOCK_FILE = ".locked"
 
 # The project's own furniture: the things that live in the project folder
 # but are not part of the manuscript. The writer's tree is everything
-# else.
+# else. Backups live *outside* the project (backup_directory()), so an
+# inside ``backups/`` is never furniture — it is a legacy mistake to
+# flag, not to hide. Templates and trash are normal folders on disk,
+# visible in the binder like everything else.
 PROJECT_FURNITURE = frozenset({
-    "project.sqlite3", "manifest.json", "backups", "documents", ".lekhak",
+    "project.sqlite3", "manifest.json", "documents", ".lekhak",
 })
 # The templates area: the folder of template sets at the project's root.
 # It is not manuscript — the sets are listed by the template code, and
-# they are reached from the Outliner.
+# they are reached from the Outliner. It is legitimate, editable content
+# (export designs), so it is preserved and backed up, never flagged as a
+# ghost and never deleted by reconciliation.
 TEMPLATES_FOLDER = "templates"
+# Deleted items land here, mirroring their original paths, so a restore
+# returns them to place. It is a normal binder folder: visible, read
+# from disk like everything else, with ``.order.json`` in every folder.
+TRASH_FOLDER = "trash"
+
+# validate_alignment() reports this advisory when a legacy inside
+# ``backups/`` exists. Backups live outside the project (backup_directory()),
+# so this is worth knowing — but it is not a structure disagreement, and
+# none of the "which is right" resolutions can fix it, so it never triggers
+# the drift prompt on its own. Callers compare against this exact string.
+INSIDE_BACKUPS_PROBLEM = (
+    "Backups folder inside project — backups should live outside "
+    "(see backup_directory()), not inside the project")
 
 # Kinds are labels, not structure: any item may contain any other, at any
 # depth, and several items may share the top level. Folder is a neutral
-# container; chapter/scene/note are the writer's shorthand for intended use.
+# container; chapter and scene are the writer's shorthand for intended use.
 # The physical structure is folders and files; the semantic role lives in
 # the protected Type metadata (docs/MODEL.md) and type_of() derives it.
-DOCUMENT_KINDS = {"folder", "chapter", "scene", "note"}
+DOCUMENT_KINDS = {"folder", "chapter", "scene"}
 # What a filesystem refuses, and the names Windows reserves.
 _ILLEGAL_NAME_CHARS = set('<>:"/\\|?*') | {chr(code) for code in range(32)}
 _RESERVED_NAME_STEMS = {
@@ -103,6 +120,10 @@ _RESERVED_NAME_STEMS = {
     *(f"com{n}" for n in range(1, 10)),
     *(f"lpt{n}" for n in range(1, 10)),
 }
+# Lekhak's own reserved name: a container's own prose is index.html, so a
+# document may not take that file name — the two would be one file, and the
+# document would be swallowed by the container's page.
+LEKHAK_RESERVED_NAMES = {"index"}
 # The roles a document may have (1.17): two base ones, as close to the
 # truth on disk as a role can be — a folder is a Folder, anything else a
 # Document — and every other role the writer adds, which the database
@@ -121,6 +142,20 @@ TEMPLATE_CONFIG_KEY = "Template config"
 # prefixes, so the three can never be mistaken for one another.
 TEMPLATE_FILE_PREFIX = "file:"
 TEMPLATE_DOC_PREFIX = "doc:"
+
+# What an imported metadata value looks like, for the field type it gets
+# (File → Import Markdown): an ISO date is a Date field, true/false a
+# Checkbox, anything else Text. The writer can change the type afterwards.
+_DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T].*)?$")
+
+
+def _metadata_type(value: str) -> str:
+    text = value.strip()
+    if text.casefold() in ("true", "false"):
+        return "checkbox"
+    if _DATE_VALUE.match(text):
+        return "date"
+    return "text"
 # The frontmatter keys Lekhak owns (1.17): anything else in a document's
 # head is the document's own — a template's design.
 OWN_HEAD_KEYS = {"title", "synopsis", "word_target", "kind", "page_break",
@@ -134,8 +169,11 @@ OWN_HEAD_KEYS = {"title", "synopsis", "word_target", "kind", "page_break",
 PAGE_BREAK_VALUES = ("auto", "flow", "page", "left", "right", "next-odd",
                      "next-even")
 # Kinds that contribute prose to a compile by default. Book-level compile
-# settings will override this per document later; folders and notes stay out.
-EXPORT_KINDS = {"chapter", "scene"}
+# settings will override this per document later. A folder carries its own
+# content (index.html) and may hold children, so when it is in scope it
+# contributes to the export like any other document; templates and trash are
+# excluded by path.
+EXPORT_KINDS = {"chapter", "scene", "folder"}
 
 # Auto-detected cover filenames under images/<folder_id>/ (2.1).
 COVER_SUFFIXES = ("jpg", "jpeg", "png", "webp", "gif")
@@ -210,6 +248,157 @@ def trim_id_for(width: float, height: float) -> str:
         if abs(trim_width - width) < 0.005 and abs(trim_height - height) < 0.005:
             return trim_id
     return "custom"
+
+
+# The contents placeholder's stand-in while the export is being
+# rendered: the entries are the headings the export produces, so the
+# value cannot exist until the units do. Chosen to be a string no
+# fragment can contain and no writer can type.
+TOC_SENTINEL = "\x00lekhak-toc\x00"
+
+_HEADING_RE = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.I | re.S)
+
+
+def _toc_entries(units, skip=(), *, max_depth: int = 4) -> list[tuple[int, str, int]]:
+    """``(level, text, unit)`` for every heading a compiled export made.
+
+    The contents page is the one document that must not list itself, so
+    its unit is skipped, headings and all: once built, its body is
+    recognised by ``skip`` (the indexes ``compile_units`` recorded); while
+    it is still being built, by the sentinel it carries. ``max_depth``
+    caps the heading levels included (Word/Writer-style depth).
+    """
+    max_depth = max(1, min(int(max_depth or 4), 6))
+    entries: list[tuple[int, str, int]] = []
+    for index, (_title, body) in enumerate(units, start=1):
+        if index in skip or TOC_SENTINEL in (body or ""):
+            continue
+        for match in _HEADING_RE.finditer(body or ""):
+            level = int(match.group(1))
+            if level > max_depth:
+                continue
+            words = re.sub(r"<[^>]+>", "", match.group(2))
+            text = re.sub(r"\s+", " ", unescape(words)).strip()
+            if text:
+                entries.append((level, text, index))
+    return entries
+
+
+def _roman_lower(number: int) -> str:
+    values = ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+              (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+              (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"))
+    result = ""
+    for value, symbol in values:
+        while number >= value:
+            result += symbol
+            number -= value
+    return result or "0"
+
+
+def _alpha_lower(number: int) -> str:
+    result = ""
+    while number > 0:
+        number, remainder = divmod(number - 1, 26)
+        result = chr(97 + remainder) + result
+    return result or "a"
+
+
+def _toc_marker(style: str, number: int) -> str:
+    style = (style or "decimal").strip().lower().replace(" ", "-")
+    if style in ("none", "no", "hidden", ""):
+        return ""
+    if style in ("bullet", "bullets", "disc", "•"):
+        return "•"
+    if style in ("decimal", "number", "numbers", "1", "1.2.3"):
+        return str(number)
+    if style in ("lower-alpha", "alpha", "a", "a.b.c", "lower-alpha."):
+        return _alpha_lower(number)
+    if style in ("upper-alpha", "A", "A.B.C"):
+        return _alpha_lower(number).upper()
+    if style in ("lower-roman", "roman", "i", "i.ii.iii"):
+        return _roman_lower(number)
+    if style in ("upper-roman", "I", "I.II.III"):
+        return _roman_lower(number).upper()
+    return str(number)
+
+
+def _toc_label(text: str, unit: int, *, links: bool) -> str:
+    return (f"<a href='section-{unit}.xhtml'>{text}</a>"
+            if links else text)
+
+
+def _toc_markup(entries, *, links: bool, markers=None) -> str:
+    """The entries as ``<li>``s, nested by heading level (§3.2).
+
+    A fragment's own ``<ol>``/``<ul>`` holds the first level — a block
+    placeholder keeps a container that can hold blocks — so this opens
+    only the lists *below* it. ``markers`` is a list of per-depth marker
+    styles (index 0 = first included level): decimal/alpha/roman, bullet,
+    or none.
+    """
+    markers = list(markers or [])
+
+    def style_for(depth: int) -> str:
+        index = depth - 1
+        if 0 <= index < len(markers):
+            return str(markers[index])
+        return "none"
+
+    def items(start: int, level: int, depth: int) -> tuple[str, int]:
+        out: list[str] = []
+        index = start
+        counter = 0
+        tag = "ul" if style_for(depth) == "bullet" else "ol"
+        while index < len(entries) and entries[index][0] >= level:
+            item_level, text, unit = entries[index]
+            index += 1
+            counter += 1
+            marker = _toc_marker(style_for(depth), counter)
+            prefix = f"{marker}. " if marker and marker != "•" else ""
+            label = prefix + _toc_label(text, unit, links=links)
+            if index < len(entries) and entries[index][0] > item_level:
+                inner, index = items(index, entries[index][0], depth + 1)
+                out.append(f"<li>{label}<{tag}>{inner}</{tag}></li>")
+            else:
+                out.append(f"<li>{label}</li>")
+        return "".join(out), index
+
+    if not entries:
+        return ""
+    return items(0, entries[0][0], 1)[0]
+
+
+def _toc_text(entries, *, markers=None) -> str:
+    """The same entries as plain text: one line each, stepped in by level."""
+    markers = list(markers or [])
+    if not entries:
+        return ""
+    base = entries[0][0]
+    counters: dict[int, int] = {}
+
+    def style_for(depth: int) -> str:
+        index = depth - 1
+        if 0 <= index < len(markers):
+            return str(markers[index])
+        return "none"
+
+    lines: list[str] = []
+    for level, text, _unit in entries:
+        depth = max(1, level - base + 1)
+        counters[level] = counters.get(level, 0) + 1
+        for key in [k for k in counters if k > level]:
+            counters.pop(key, None)
+        marker = _toc_marker(style_for(depth), counters[level])
+        if marker == "•":
+            prefix = "- "
+        elif marker:
+            prefix = f"{marker}. "
+        else:
+            prefix = ""
+        indent = "  " * (depth - 1)
+        lines.append(f"{indent}{prefix}{text}")
+    return "\n".join(lines)
 
 
 def clean_page_setup(row) -> dict | None:
@@ -314,7 +503,8 @@ DOCX_CONFIG_KEYS = (
 # The running-head half of the vocabulary: the lines a single page's own
 # design may say for its own section (1.18).
 RUNNING_HEAD_KEYS = ("header", "header left", "header right",
-                     "footer", "footer left", "footer right")
+                     "header first page", "footer", "footer left",
+                     "footer right", "footer first page")
 
 # A running-head line that asks for nothing (`Header: none`): unlike an
 # empty line — which means "inherit the sample" — it says the page
@@ -322,11 +512,16 @@ RUNNING_HEAD_KEYS = ("header", "header left", "header right",
 NO_RUNNING_HEAD = {"none", "no", "off"}
 
 # The running-head/folio vocabulary's one non-string value (§3.1): a
-# Header or Footer line whose middle piece is exactly `${Page}` asks for
-# the page's own number, which a header cannot spell — it survives the
-# value fill as this marker and becomes Word's PAGE field in the part.
-# Private-use codepoints, so no writer's prose can collide with it.
+# Header or Footer line whose middle piece is exactly `${PageNo}` asks
+# for the page's own number, which a header cannot spell — it survives
+# the value fill as this marker and becomes Word's PAGE field in the
+# part. Private-use codepoints, so no writer's prose can collide with it.
 PAGE_MARKER = "\ue000page\ue000"
+
+# The spellings that ask for the folio. `PageNo` is the name the panel
+# inserts and the reference page lists; `Page` is what the first
+# templates wrote, kept working rather than broken (§3.2).
+PAGE_NAMES = ("${PageNo}", "${Page}")
 
 # How a printer may spell a page start (1.6's vocabulary — "recto" is
 # what a printer says for "right"), normalized to hyphens first.
@@ -346,29 +541,6 @@ def page_break_value(text: str) -> str | None:
     if word in PAGE_BREAK_ALIASES:
         return PAGE_BREAK_ALIASES[word]
     return word if word in PAGE_BREAK_VALUES else None
-
-
-def piece_slug(name: str) -> str:
-    """The name a piece and a binder item are compared by (2.1b).
-
-    A piece names binder content, and the author's rule is that the name must
-    *match* the folder — no nearest-name guessing, because silently including
-    the wrong front matter is worse than including none. Matching is by slug,
-    so ``Front Matter``, ``front-matter`` and ``front matter`` are one target
-    (the line is typed by hand), while ``frontmatter`` stays its own name.
-    """
-    text = str(name or "").casefold().strip()
-    return re.sub(r"[\W_]+", "-", text).strip("-")
-
-
-def piece_name(name: str, fmt: str | None) -> str:
-    """A piece name with the export's format filled in (2.1b).
-
-    ``frontmatter-${type}`` becomes ``frontmatter-docx`` for a DOCX export and
-    ``frontmatter-epub`` for an EPUB, so one piece line serves a binder that
-    holds one folder per format. Anything else in the name is left alone.
-    """
-    return str(name or "").replace("${type}", str(fmt or "").strip().lower())
 
 
 def config_length(text) -> float | None:
@@ -509,11 +681,79 @@ def config_headings(text) -> list[str]:
     return pieces
 
 
+def _names_children(text: str) -> bool:
+    """Whether a fragment asks for the children itself — ``${children}``,
+    a ``children-<type>`` group, or a ``$if(children...)`` guard. A
+    fragment that never names the family has the children appended after
+    it, so a container's prose cannot be lost by silence (§3)."""
+    names = list(PLACEHOLDER_RE.findall(text or ""))
+    names += [condition.split("=")[0].strip()
+              for condition in IF_CONDITION_RE.findall(text or "")]
+    return any(is_children_name(name) for name in names)
+
+
 def _brace_aliases(text: str) -> str:
     """``{Series}`` — the spelling the author's own config example uses
     — read as ``${Series}``: one namespace, written however the writer
     already writes it (§3.1)."""
     return re.sub(r"(?<!\$)\{([A-Za-z][A-Za-z0-9 ._-]*)\}", r"${\1}", text)
+
+
+def _head_part(section, noun: str, which: str):
+    """One running part of a section: the header or footer of the page
+    set asked for — ``odd`` (recto), ``even`` (verso) or ``first`` (the
+    section's opening page, Word's own third slot)."""
+    if noun == "header":
+        return (section.first_page_header if which == "first"
+                else section.header if which == "odd"
+                else section.even_page_header)
+    return (section.first_page_footer if which == "first"
+            else section.footer if which == "odd"
+            else section.even_page_footer)
+
+
+def _first_page_flag(section) -> None:
+    """Turn on a section's *different first page* (§3.1). Until the flag
+    is set, the part written into is real but unused, so the line that
+    speaks for the opening page has to set it — and only that line does:
+    a plain `Header:` must not change what the first page carries."""
+    try:
+        section.different_first_page_header_footer = True
+    except (AttributeError, ValueError):
+        # No flag in this document's section properties: the sample's own
+        # paper won the argument, and a head is not worth an exception.
+        pass
+
+
+def _head_font(config: dict) -> tuple[str | None, float | None] | None:
+    """The `Head font:` line read out — family and points, either of
+    which may be missing — or None when the file says nothing about the
+    type of its running heads, in which case the sample's own stands.
+    Same one-line grammar as `Font:` (§3.1), read one piece at a time."""
+    raw = str(config.get("head font", "")).strip()
+    if not raw:
+        return None
+    pieces = [piece.strip() for piece in raw.split(",")]
+    name = pieces[0] or None
+    size = config_points(pieces[1]) if len(pieces) > 1 else None
+    if name is None and size is None:
+        return None
+    return (name, size)
+
+
+def _style_head_run(run, font) -> None:
+    """A running head's own type: the `Head font:` answer, on the run —
+    the piece, its tab and the folio alike, so the folio is not set in
+    the body's size while the head beside it is not."""
+    if not font or run is None:
+        return
+    from docx.shared import Pt
+
+    name, size = font
+    if name:
+        run.font.name = name
+    if size is not None:
+        run.font.size = Pt(size)
 
 
 def open_docx_sample(path: Path | None):
@@ -762,6 +1002,11 @@ def clean_name(name: str) -> str:
     hyphen; the ends are trimmed of dots and spaces (Windows dislikes
     them); a reserved device name is prefixed; an empty name becomes
     "Untitled".
+
+    ``index`` is reserved by Lekhak rather than by the filesystem: a
+    container's own prose is its ``index.html``, so a document of that
+    name is written as ``_index.html`` — the title still reads "index"
+    in the binder, and the container's page keeps its own file.
     """
     text = (name or "").strip()
     kept = ["-" if (character in _ILLEGAL_NAME_CHARS) else character
@@ -769,18 +1014,47 @@ def clean_name(name: str) -> str:
     cleaned = "".join(kept).strip().rstrip(". ")
     if not cleaned:
         cleaned = "Untitled"
-    if cleaned.split(".")[0].casefold() in _RESERVED_NAME_STEMS:
+    stem = cleaned.split(".")[0].casefold()
+    if stem in _RESERVED_NAME_STEMS or stem in LEKHAK_RESERVED_NAMES:
         cleaned = f"_{cleaned}"
     if len(cleaned) > 120:
         cleaned = cleaned[:120].rstrip(". ")
     return cleaned or "Untitled"
 
 
+# Reading time: the average speed of an adult reading prose. It is an
+# estimate, and the app says so by showing it beside the count it comes
+# from — a writer can disagree with the number and still read the words.
+WORDS_PER_MINUTE = 250
+
+
+def reading_time(words: int) -> str:
+    """How long a piece of prose takes to read, as a short phrase.
+
+    Two hundred and fifty words a minute is the usual figure for adult
+    prose. Under a minute reads better as "under a minute" than as
+    "0 min", and an empty document has no reading time at all.
+    """
+    if words <= 0:
+        return ""
+    minutes = max(1, round(words / WORDS_PER_MINUTE))
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} hr {rest} min" if rest else f"{hours} hr"
+
+
 class Project:
     """Transparent project storage with atomic document writes."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, read_only: bool = False):
         self.root = Path(root)
+        # A read-only project is one Lekhak may look at but never write
+        # to: the guide that ships with the software, opened from the
+        # install folder. Nothing here assumes the rights we were not
+        # given — the files are read, the index is opened immutable, and
+        # every write is skipped rather than attempted.
+        self.read_only = read_only
         # Where a project's prose used to live, before the folder tree
         # (docs/STORAGE.md). Kept as a name because old projects still
         # have those files, and a row without a path still reads from
@@ -813,6 +1087,34 @@ class Project:
         project.write_order_files()
         return project
 
+    def copy_to(self, destination: Path) -> Path:
+        """Save this project under a new name: a copy of the folder.
+
+        Everything a project is — its tree, its index, its images, its
+        templates — is copied as it stands, so the copy opens as a
+        project of its own and is yours to change. The trash is left
+        behind: a new book does not inherit what was thrown away.
+
+        Read-only projects are copied too (the guide is): the copy is an
+        ordinary project, writable, because being read-only is a fact
+        about how a project was opened and not about its files.
+        """
+        destination = Path(destination)
+        if destination.suffix != ".lekhak":
+            destination = destination.with_suffix(".lekhak")
+        if destination.exists() and any(destination.iterdir()):
+            raise FileExistsError(
+                f"Project directory is not empty: {destination}")
+        destination.mkdir(parents=True, exist_ok=True)
+        for path in self.root.iterdir():
+            if path.name == "trash":
+                continue
+            if path.is_dir():
+                shutil.copytree(path, destination / path.name)
+            else:
+                shutil.copy2(path, destination / path.name)
+        return destination
+
     def open(self, create: bool = False) -> None:
         """Open the database, creating the schema and applying migrations.
 
@@ -821,9 +1123,19 @@ class Project:
         exactly once per project. Any future schema change follows the
         same pattern — add the column, guard the backfill, never rewrite
         user content.
+
+        A read-only project is opened as it is: no journal to write, no
+        schema to create, no migration to run. The index is opened
+        immutable, so a write fails loudly instead of happening quietly.
         """
         if not create and not self.db_path.exists():
             raise FileNotFoundError(f"Not a Lekhak project: {self.root}")
+        if self.read_only:
+            self.connection = sqlite3.connect(
+                f"file:{self.db_path}?immutable=1", uri=True)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys = ON")
+            return
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
@@ -991,7 +1303,14 @@ class Project:
         return self.connection
 
     def set_setting(self, key: str, value: str) -> None:
-        """Store a project-level key (title, backup folder, view prefs)."""
+        """Store a project-level key (title, backup folder, view prefs).
+
+        A read-only project keeps nothing: the guide must not be changed
+        by being looked at, and its install folder must not be written to
+        just because it was opened.
+        """
+        if self.read_only:
+            return
         self.db.execute(
             "INSERT INTO settings(key, value) VALUES(?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1096,6 +1415,8 @@ class Project:
         # later heal (book settings promoting a folder) is never shadowed
         # by a stale seed. The Type row shows type_of() either way, and
         # an explicit choice is stored by the inspector (docs/MODEL.md).
+        # The new item is last, and the folder's order file says so.
+        self._write_order_for(parent_id)
         return Document(document_id, parent_id, title, "", position, 0, kind, 0,
                         path=relative)
 
@@ -1194,66 +1515,6 @@ class Project:
             return candidate
         return str(parent_path / candidate)
 
-    def find_child_folder(self, title: str, parent_id: str | None = None) -> Document | None:
-        """The child folder of ``parent_id`` with this title, or None.
-
-        Case-insensitive and stripped, because a folder name is a name, not a
-        key — but only a *lookup*: callers decide what a collision means
-        (imports ask; see ``place_imported_folder``).
-        """
-        needle = title.strip().casefold()
-        if not needle:
-            return None
-        for document in self.documents():
-            if (document.parent_id == parent_id and document.kind == "folder"
-                    and document.title.strip().casefold() == needle):
-                return document
-        return None
-
-    def unique_title(self, title: str, parent_id: str | None = None) -> str:
-        """"Book", then "Book (2)", "Book (3)" — the file-manager convention.
-
-        Only the importers use this, and only for containers (folders and
-        chapters): an import must never land on top of an existing same-named
-        container, and when the writer chooses "keep separate" this is what
-        keeps both. Documents keep their titles — repeating a scene title is
-        ordinary, and imports have no business renaming prose.
-        """
-        taken = {document.title.strip().casefold() for document in self.documents()
-                 if document.parent_id == parent_id}
-        base = title.strip() or "Untitled"
-        if base.casefold() not in taken:
-            return base
-        number = 2
-        while f"{base} ({number})".casefold() in taken:
-            number += 1
-        return f"{base} ({number})"
-
-    def subtree_fingerprint(self, document_id: str) -> str:
-        """A crude content fingerprint: every descendant's depth, title and
-        plain text, in binder order.
-
-        Crude is the point (author's rule): imports compare folders by name
-        and, when the names line up, by what is inside — enough to tell "the
-        same file again" from "a different draft with the same folder names".
-        """
-        by_parent: dict[str | None, list[Document]] = {}
-        for document in self.documents():
-            by_parent.setdefault(document.parent_id, []).append(document)
-        digest = hashlib.sha256()
-
-        def walk(parent_id: str | None, depth: int) -> None:
-            for document in sorted(by_parent.get(parent_id, []),
-                                   key=lambda d: d.position):
-                digest.update(f"{depth}\x1f{document.title}\x1f".encode("utf-8"))
-                digest.update(
-                    self.plain_text(self.read_content(document.id)).encode("utf-8"))
-                digest.update(b"\x1e")
-                walk(document.id, depth + 1)
-
-        walk(document_id, 0)
-        return digest.hexdigest()
-
     def documents(self) -> list[Document]:
         """Every document in binder order: parents before children, siblings by position.
 
@@ -1292,7 +1553,12 @@ class Project:
         Title, synopsis, word target, page start and the document-level
         template only — prose is never touched here, it goes through
         write_content().
+
+        A read-only project keeps what it has: the guide is the software's
+        manual, and looking at it must not change a word of it.
         """
+        if self.read_only:
+            return
         fields: list[str] = []
         values: list[str] = []
         if title is not None:
@@ -1350,6 +1616,121 @@ class Project:
         except OSError:
             pass
 
+    def identity_drift(self) -> list[tuple[str, str, str]]:
+        """Title/identity divergence between file head, project and path.
+
+        Returns ``(document_id, file_title, project_title)`` when the
+        file's head states a title different from the project's record.
+        Filename/path mismatches are handled by sync/reconcile; this
+        reports identity disagreements the writer must resolve, never
+        silently fixed.
+        """
+        from .disk_doc import read_document
+
+        drift: list[tuple[str, str, str]] = []
+        for document in self.documents():
+            path = self.content_path(document.id)
+            if not path.is_file():
+                continue
+            try:
+                head, _prose = read_document(path)
+            except OSError:
+                continue
+            file_title = head.get("title")
+            if not isinstance(file_title, str):
+                continue
+            file_title = file_title.strip()
+            proj_title = (document.title or "").strip()
+            if file_title and file_title != proj_title:
+                drift.append((document.id, file_title, proj_title))
+        return drift
+
+    def metadata_drift(self) -> list[tuple[str, str, str, str, str]]:
+        """Fields a file names differently from the project's own record.
+
+        The same contract as the manifest and the .order.json files
+        (docs/STORAGE.md): the writer's fields are kept in the database
+        *and* written into each document's head, so a file edited outside
+        Lekhak can disagree with the project. A disagreement is reported
+        and the writer says which side is right — never silently fixed.
+
+        Only a *value* the file states counts. A key the head does not
+        mention at all is not a disagreement: it is a head written before
+        the field existed, and the next save writes it. Entries are
+        ``(document_id, title, key, file_value, project_value)``.
+        """
+        from .disk_doc import read_document
+
+        drift: list[tuple[str, str, str, str, str]] = []
+        for document in self.documents():
+            path = self.content_path(document.id)
+            if not path.is_file():
+                continue
+            try:
+                head, _prose = read_document(path)
+            except OSError:
+                continue
+            stated = head.get("metadata")
+            if not isinstance(stated, dict):
+                continue
+            held = self.metadata(document.id)
+            for key, value in stated.items():
+                if key not in held or str(held[key]) == str(value):
+                    continue
+                drift.append((document.id, document.title, str(key),
+                              str(value), str(held[key])))
+        return drift
+
+    def replace_wiki_link_title(self, old_title: str, new_title: str) -> int:
+        """Project-wide opt-in find/replace for hardcoded wiki links.
+
+        Rewrites ``[[Old Title]]`` (and ``[[Old Title|...]]`` if present)
+        text in every document's content. Returns number of documents
+        changed. Automated/id-based links are not affected.
+        """
+        if not old_title or not new_title or old_title == new_title:
+            return 0
+        import re as _re
+        changed = 0
+        pattern = _re.compile(
+            r"\[\[" + _re.escape(old_title) + r"(\|[^\]]*)?\]\]")
+        for document in self.documents():
+            content = self.read_content(document.id)
+            if not content:
+                continue
+            new_content, count = pattern.subn(
+                lambda m: f"[[{new_title}{m.group(1) or ''}]]", content)
+            if count:
+                self.write_content(document.id, new_content)
+                changed += 1
+        return changed
+
+    def apply_file_metadata(self, document_id: str, key: str) -> bool:
+        """Take the file's word for one field: the head's value wins.
+
+        The other answer — the project is right — is the ordinary save:
+        ``set_metadata`` writes the head from the database. Field types
+        and option lists are the project's, so the value changes and
+        nothing else does.
+        """
+        from .disk_doc import read_document
+
+        path = self.content_path(document_id)
+        if not path.is_file():
+            return False
+        head, _prose = read_document(path)
+        stated = head.get("metadata")
+        if not isinstance(stated, dict) or key not in stated:
+            return False
+        entries = self.metadata_entries(document_id)
+        self.set_metadata(
+            document_id,
+            {name: value for name, (value, _t, _o) in entries.items()}
+            | {key: str(stated[key])},
+            {name: value_type for name, (_v, value_type, _o) in entries.items()},
+            {name: options for name, (_v, _t, options) in entries.items()})
+        return True
+
     def _rename_on_disk(self, document_id: str, title: str) -> None:
         """Rename a document's file (and folder) to match its new title.
 
@@ -1387,21 +1768,147 @@ class Project:
                 marker.rename(wanted.with_name("." + wanted.name + LOCK_FILE))
             except OSError:
                 pass
-        self.db.execute(
-            "UPDATE documents SET path=? WHERE id=?",
-            (str(wanted.relative_to(self.root)), document_id),
-        )
-        self.db.commit()
+        new_relative = str(wanted.relative_to(self.root))
+        # The rename carries the whole subtree, so every row beneath it is
+        # repointed; then the folder that held it re-writes its order file
+        # (the name it lists has changed), and the file's head is brought
+        # up to the new title, because the file is the truth.
+        self._repoint_paths(relative, new_relative)
+        parent_id = self.parent_of(document_id)
+        self._write_order_for(parent_id)
+        self._refresh_metadata_on_disk(document_id)
+
+    def _repoint_paths(self, old_relative: str, new_relative: str) -> None:
+        """Move every row under a renamed or moved path to its new one.
+
+        A directory rename or move carries its whole subtree, so the rows
+        beneath it would otherwise keep pointing at files that are no
+        longer there — each one a vanished document, and the binder grows
+        a ghost beside the real file that replaced it.
+        """
+        prefix = old_relative + "/"
+        updates: list[tuple[str, str]] = []
+        for item in self.db.execute("SELECT id, path FROM documents").fetchall():
+            if not item[1]:
+                continue
+            if item[1] == old_relative:
+                updates.append((new_relative, item[0]))
+            elif item[1].startswith(prefix):
+                updates.append((new_relative + "/" + item[1][len(prefix):],
+                                item[0]))
+        with self.db:
+            self.db.executemany(
+                "UPDATE documents SET path=? WHERE id=?", updates)
+
+    def index_conflicts(self) -> list[str]:
+        """Folders whose ``index.html`` says it belongs to another document.
+
+        The rule: a folder's ``index.html`` is the container's own words
+        (docs/STORAGE.md). When the file carries a head naming a
+        *different* document — a writer made a document called "index"
+        before the name was reserved — the two meanings collide.
+
+        Nothing is changed here, and nothing is changed anywhere else:
+        the file is read as the container's page, the writer is told, and
+        the file is left exactly as it is. Rewriting it would be the
+        app's guess at the writer's intent, and a guess that is wrong
+        loses their words.
+        """
+        problems: list[str] = []
+        for document in self.documents():
+            if not document.path:
+                continue
+            folder = self.root / document.path
+            if not folder.is_dir():
+                continue
+            page = folder / "index.html"
+            if not page.is_file():
+                continue
+            try:
+                metadata, _prose = split_document(
+                    page.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            title = str(metadata.get("title") or "").strip()
+            if not title:
+                continue        # a page with no name of its own: no conflict
+            if title.casefold() == document.title.strip().casefold():
+                continue        # the container's own page, as it should be
+            problems.append(
+                f"{document.path}/index.html — the file calls itself "
+                f"“{title}”, but a folder's index.html is the folder's own "
+                f"words (“{document.title}”).")
+        return problems
+
+    def _write_order_for(self, parent_id: str | None) -> None:
+        """Rewrite one folder's order file — the manifest, for the root.
+
+        The order file is the sequence of a folder's children by name
+        (docs/STORAGE.md), so every structural change rewrites the one
+        folder it touched rather than the whole project. Doing this here,
+        where the rows change, is what keeps the three records — the
+        database, the folder's ``.order.json``, the root's
+        ``manifest.json`` — in step even when a caller forgets.
+        """
+        if parent_id is None:
+            folder = self.root
+        else:
+            row = self.db.execute(
+                "SELECT path FROM documents WHERE id=?", (parent_id,)
+            ).fetchone()
+            if row is None or not row[0]:
+                return
+            folder = self.root / str(row[0])
+            if not folder.is_dir():
+                return
+        names = [
+            Path(row[0]).name
+            for row in self.db.execute(
+                "SELECT path FROM documents WHERE parent_id IS ? "
+                "ORDER BY position", (parent_id,))
+            if row[0]
+        ]
+        if parent_id is not None:
+            if (folder / "index.html").is_file():
+                # A folder's own prose leads its order: it is the parent's
+                # page, not one of the children, so it takes no position
+                # of its own (docs/STORAGE.md).
+                names.insert(0, "index.html")
+            (folder / ".order.json").write_text(
+                json.dumps({"children": names}, ensure_ascii=False, indent=2)
+                + "\n", encoding="utf-8")
+            return
+        # The root's own order lives in the project manifest, beside the
+        # title and format version it must not lose.
+        manifest = self.root / "manifest.json"
+        existing: dict = {}
+        if manifest.is_file():
+            try:
+                loaded = json.loads(manifest.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except (OSError, ValueError):
+                existing = {}
+        existing.setdefault("title", self.get_setting("title") or self.root.stem)
+        existing.pop("tree", None)     # an older shape; "children" is the one
+        existing["children"] = names
+        manifest.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
 
     def reorder(self, document_id: str, parent_id: str | None, position: int) -> bool:
         """Place a document at a position under a parent, file and row together.
 
         Returns False and writes nothing if the file cannot go there —
-        a name already taken in the destination folder, most often.
+        a name already taken in the destination folder, most often, and
+        always for a read-only project: the guide is not rearranged by
+        being looked at.
         The folder tree is the truth (docs/STORAGE.md), so a parent
         change means the file moves first and the index follows; the
         two are never left disagreeing.
         """
+        if self.read_only:
+            return False
         if parent_id == document_id or self._is_descendant(parent_id, document_id):
             raise ValueError("A document cannot contain itself")
         row = self.db.execute(
@@ -1409,6 +1916,13 @@ class Project:
         ).fetchone()
         if row is None:
             return True
+        old_parent = row[0]
+        old_rel = None
+        if row[0] != parent_id:
+            path_row = self.db.execute(
+                "SELECT path FROM documents WHERE id=?", (document_id,)
+            ).fetchone()
+            old_rel = str(path_row[0]) if path_row and path_row[0] else None
         if row[0] != parent_id and not self._move_file(document_id, parent_id):
             return False
         # The order of these three UPDATEs is load-bearing. First close the
@@ -1432,6 +1946,19 @@ class Project:
                 "UPDATE documents SET parent_id=?,position=?,updated_at=? WHERE id=?",
                 (parent_id, position, datetime.now(timezone.utc).isoformat(), document_id),
             )
+        # Both folders the move touched write their sequence, so a drag or
+        # a move is on disk before the next open (docs/STORAGE.md).
+        self._write_order_for(old_parent)
+        if parent_id != old_parent:
+            self._write_order_for(parent_id)
+        # A move out of trash (a drag-restore) leaves the vacated mirror
+        # parents behind. Prune them up to the trash root — but only
+        # now, after the parent update, so the prune never cascades into
+        # the just-moved row. The order files follow the rows.
+        if old_rel and (old_rel == TRASH_FOLDER
+                        or old_rel.startswith(TRASH_FOLDER + "/")):
+            self._prune_empty_trash_parents(Path(old_rel).parent)
+            self.write_order_files()
         return True
 
     def _move_file(self, document_id: str, new_parent_id: str | None) -> bool:
@@ -1481,18 +2008,7 @@ class Project:
             except OSError:
                 pass
         new_relative = str(wanted.relative_to(self.root))
-        prefix = old_relative + "/"
-        updates: list[tuple[str, str]] = []
-        for item in self.db.execute("SELECT id, path FROM documents").fetchall():
-            if not item[1]:
-                continue
-            if item[1] == old_relative:
-                updates.append((new_relative, item[0]))
-            elif item[1].startswith(prefix):
-                updates.append((new_relative + "/" + item[1][len(prefix):], item[0]))
-        with self.db:
-            self.db.executemany(
-                "UPDATE documents SET path=? WHERE id=?", updates)
+        self._repoint_paths(old_relative, new_relative)
         return True
 
     def parent_of(self, document_id: str) -> str | None:
@@ -1516,20 +2032,31 @@ class Project:
     def delete_document(self, document_id: str) -> None:
         """Delete a document, its rows and its files, together.
 
-        The two go together or not at all. The rows are removed first —
-        a crash between the two leaves orphaned files on disk (harmless,
-        and the backup still has them) rather than a live row pointing at
-        a file that no longer exists. But if a file turns out to be
-        undeletable (a permission, a read-only mount, a lock), the rows
-        are put back and :class:`DeleteError` says so: the document stays
-        in the binder, and the writer is told why.
+        First delete trashes it: ``trash/<path>`` mirrors its original
+        path, rows stay so the trash folder itself is a normal binder
+        folder you can open, drag to restore, or delete again. Second
+        delete from trash erases it and its row — and prunes empty
+        parent folders up to the trash root, so no empty clutter stays.
+
+        If a file turns out to be undeletable (a permission, a
+        read-only mount, a lock), nothing changes: the rows and the
+        files stay where they were and :class:`DeleteError` says so.
         """
+        row0 = self.db.execute(
+            "SELECT path FROM documents WHERE id=?", (document_id,)
+        ).fetchone()
+        path0 = str(row0[0]) if row0 and row0[0] else ""
+        # Legacy fallback: a row without a path lives at documents/<id>.html.
+        if not path0:
+            fallback = self.content_path(document_id)
+            if fallback.exists():
+                path0 = str(fallback.relative_to(self.root))
+        if path0 and (path0 == TRASH_FOLDER or
+                      path0.startswith(TRASH_FOLDER + "/")):
+            return self._permanent_delete(document_id)
+
         descendants = self._descendant_ids(document_id)
-        # The rows are remembered so they can be put back if a file
-        # refuses to go, and the places to clear are gathered before the
-        # rows go: once they are gone, the paths are gone with them.
         rows: list[tuple] = []
-        places: list[Path] = []
         for item_id in descendants:
             row = self.db.execute(
                 "SELECT id,parent_id,title,synopsis,position,word_target,"
@@ -1537,15 +2064,182 @@ class Project:
                 "created_at,updated_at FROM documents WHERE id = ?",
                 (item_id,),
             ).fetchone()
-            if row is None:
+            if row is not None:
+                rows.append(tuple(row))
+        if not rows:
+            return
+
+        top = next((r for r in rows if r[0] == document_id), None)
+        top_rel = str(top[11]) if top and top[11] else None
+        top_path = self.root / top_rel if top_rel else None
+        if top_rel is None:
+            # No tree path: restore the flat-pool fallback file.
+            fallback = self.content_path(document_id)
+            if fallback.exists():
+                top_rel = str(fallback.relative_to(self.root))
+                top_path = fallback
+
+        old_parent_id = top[1] if top else None  # parent_id column
+
+        # Move the top-level item on disk first, keeping every row.
+        failures: list[tuple[Path, str]] = []
+        moved: list[tuple[Path, Path]] = []
+        if top_path and top_path.exists():
+            try:
+                relative = top_path.relative_to(self.root)
+                destination = self.root / TRASH_FOLDER / relative
+                if destination.exists():
+                    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                    destination = destination.with_name(
+                        f"{destination.name}.{stamp}")
+                    # Re-derive the final relative path (stamp changes it).
+                    top_rel = str(destination.relative_to(self.root))
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if top_path.is_dir():
+                    shutil.move(str(top_path), str(destination))
+                else:
+                    shutil.move(str(top_path), str(destination))
+                moved.append((top_path, destination))
+            except OSError as error:
+                failures.append((top_path, str(error)))
+        if failures:
+            for original, trashed in moved:
+                try:
+                    shutil.move(str(trashed), str(original))
+                except OSError:
+                    pass
+            raise DeleteError(failures)
+
+        trash_top_rel = str(top_rel) if top_rel else ""
+        trash_ids = {document_id}
+        if top_rel:
+            trash_path = f"{TRASH_FOLDER}/{top_rel}"
+            # Ensure trash parents mirror the original parent chain.
+            parent_rel = str(Path(top_rel).parent)
+            mirror_parent_id = None
+            if parent_rel not in (".", ""):
+                mirror_parent_id = self._ensure_folder_under_trash(
+                    *Path(parent_rel).parts)
+            else:
+                mirror_parent_id = self._ensure_trash_folder()
+            if moved:
+                trash_path = str(moved[0][1].relative_to(self.root))
+            with self.db:
+                # Re-point the whole subtree, preserving sibling order
+                # inside it; only the top item changes parent.
+                for row in rows:
+                    old_path = row[11]
+                    if old_path:
+                        if old_path == top_rel:
+                            new_path = trash_path
+                        elif old_path.startswith(top_rel + "/"):
+                            new_path = (
+                                trash_path + old_path[len(top_rel):])
+                        else:
+                            new_path = old_path
+                        self.db.execute(
+                            "UPDATE documents SET path=? WHERE id=?",
+                            (new_path, row[0]))
+                self.db.execute(
+                    "UPDATE documents SET parent_id=? WHERE id=?",
+                    (mirror_parent_id, document_id))
+        # Records of the source folder and trash mirrors stay in step.
+        self._write_order_for(old_parent_id)
+        if top_rel:
+            self._write_order_for(mirror_parent_id)
+        self.write_order_files()
+
+    def _ensure_trash_folder(self) -> str | None:
+        """The id of the trash root folder, created on first use."""
+        row = self.db.execute(
+            "SELECT id FROM documents WHERE path=?", (TRASH_FOLDER,)
+        ).fetchone()
+        if row is not None:
+            return str(row[0])
+        folder_path = self.root / TRASH_FOLDER
+        folder_path.mkdir(parents=True, exist_ok=True)
+        (folder_path / ".order.json").write_text(
+            json.dumps({"children": []}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        document_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        row = self.db.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM documents "
+        ).fetchone()
+        with self.db:
+            self.db.execute(
+                "INSERT INTO documents(id,parent_id,title,position,kind,"
+                "created_at,updated_at,path) VALUES(?,?,?,?,?,?,?,?)",
+                (document_id, None, TRASH_FOLDER,
+                 int(row[0]), "folder", now, now, TRASH_FOLDER),
+            )
+        self._write_order_for(None)
+        return document_id
+
+    def _ensure_folder_under_trash(self, *parts: str) -> str | None:
+        """Folder id mirroring ``parts`` under trash/ (created as needed)."""
+        parent_id = self._ensure_trash_folder()
+        relative = TRASH_FOLDER
+        for part in parts:
+            relative = f"{relative}/{part}"
+            row = self.db.execute(
+                "SELECT id FROM documents WHERE path=?", (relative,)
+            ).fetchone()
+            if row is not None:
+                parent_id = str(row[0])
                 continue
-            rows.append(tuple(row))
-            if not row[11]:
+            folder_path = self.root / relative
+            folder_path.mkdir(parents=True, exist_ok=True)
+            if not (folder_path / ".order.json").exists():
+                (folder_path / ".order.json").write_text(
+                    json.dumps({"children": []}, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+            position_row = self.db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM documents "
+                "WHERE parent_id IS ?", (parent_id,)
+            ).fetchone()
+            document_id = uuid.uuid4().hex
+            now = datetime.now(timezone.utc).isoformat()
+            with self.db:
+                self.db.execute(
+                    "INSERT INTO documents(id,parent_id,title,position,kind,"
+                    "created_at,updated_at,path) VALUES(?,?,?,?,?,?,?,?)",
+                    (document_id, parent_id, part,
+                     int(position_row[0]), "folder", now, now, relative),
+                )
+            parent_id = document_id
+        return parent_id
+
+    def _permanent_delete(self, document_id: str) -> None:
+        """Second delete from trash: erase files and rows, prune empties."""
+        descendants = self._descendant_ids(document_id)
+        top_row = self.db.execute(
+            "SELECT path FROM documents WHERE id=?", (document_id,)
+        ).fetchone()
+        top_rel = str(top_row[0]) if top_row and top_row[0] else ""
+        saved_rows: list[tuple] = []
+        descendant_rows: list[tuple] = []
+        places: list[Path] = []
+        for item_id in descendants:
+            rows = self.db.execute(
+                "SELECT id,parent_id,title,synopsis,position,word_target,"
+                "kind,word_count,page_break,scene_divider,doc_template,path,"
+                "created_at,updated_at FROM documents WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if rows is None:
                 continue
-            path = self.root / str(row[11])
-            # A container is a directory: the folder goes, and with it
-            # whatever it held (docs/STORAGE.md).
-            places.append(path)
+            saved_rows.append(tuple(rows))
+            descendant_rows.append((item_id, str(rows[0]) if False else str(rows[11] or "")))
+        # Top-level only: erasing a folder takes its contents with it.
+        for item_id, rel in descendant_rows:
+            if rel:
+                path = self.root / rel
+                if path.exists() and not any(
+                    path != other and other in path.parents
+                    for other in places
+                ):
+                    places.append(path)
         with self.db:
             self.db.execute("DELETE FROM documents WHERE id=?", (document_id,))
         failures: list[tuple[Path, str]] = []
@@ -1558,11 +2252,114 @@ class Project:
             except OSError as error:
                 failures.append((path, str(error)))
         if failures:
-            # Nothing is deleted after all: the rows go back, so the
-            # document is still there for the writer to deal with.
-            self._restore_rows(rows)
+            self._restore_rows(saved_rows)
             raise DeleteError(failures)
+        self._prune_empty_trash_parents(
+            (Path(top_rel).parent if top_rel else Path("")))
         self.write_order_files()
+
+    def _prune_empty_trash_parents(self, parent_rel: Path) -> None:
+        """Delete empty folders up the trash tree to the trash root."""
+        trash_root = self.root / TRASH_FOLDER
+        current = self.root / parent_rel if str(parent_rel) else trash_root
+        if trash_root not in current.parents and current != trash_root:
+            return
+        while current != trash_root and trash_root in current.parents:
+            try:
+                names = [entry.name for entry in current.iterdir()
+                         if not entry.name.startswith(".")]
+            except OSError:
+                return
+            if names:
+                return  # Not empty: real content still lives here.
+            relative = str(current.relative_to(self.root))
+            # Its .order.json is binder metadata, not content.
+            order_file = current / ".order.json"
+            try:
+                order_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            row = self.db.execute(
+                "SELECT id FROM documents WHERE path=?", (relative,)
+            ).fetchone()
+            with self.db:
+                if row is not None:
+                    self.db.execute(
+                        "DELETE FROM documents WHERE id=?", (row[0],))
+            try:
+                current.rmdir()
+            except OSError:
+                return
+            current = current.parent
+
+    def trash_dir(self) -> Path:
+        """Where deleted files rest, mirroring their original paths."""
+        return self.root / TRASH_FOLDER
+
+    def list_trash(self) -> list[Path]:
+        """Relative paths in trash, restored or not."""
+        root = self.trash_dir()
+        if not root.is_dir():
+            return []
+        # Bookkeeping files are not trash: an emptied trash still holds
+        # its own .order.json, which is nothing a writer could restore.
+        return sorted(path.relative_to(root) for path in root.rglob("*")
+                      if path.is_file()
+                      and not path.name.endswith(".deleted.json")
+                      and path.name != ".order.json")
+
+    def restore_from_trash(self, relative: str | Path) -> bool:
+        """Move a trashed file/folder back to its original path.
+
+        Returns True when something was restored. Rows remembered
+        beside the trashed files are re-inserted along with it.
+        """
+        relative = Path(relative)
+        trashed = self.trash_dir() / relative
+        if not trashed.exists():
+            return False
+        original = self.root / relative
+        original.parent.mkdir(parents=True, exist_ok=True)
+        if original.exists():
+            stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            original = original.with_name(f"{original.name}.{stamp}")
+        shutil.move(str(trashed), str(original))
+        # Re-insert the rows beside the restored files.
+        meta_path = self.trash_dir() / (str(relative) + ".deleted.json")
+        if meta_path.is_file():
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                rows = [tuple(row) for row in data.get("rows", [])]
+                if rows:
+                    self._restore_rows(rows)  # type: ignore[arg-type]
+                meta_path.unlink()
+            except (OSError, ValueError):
+                pass
+        self.write_order_files()
+        return True
+
+    def empty_trash(self) -> None:
+        """Permanently delete everything in trash.
+
+        The files go, and so do their rows: an emptied trash must not
+        leave ghosts in the binder, pointing at files that are no
+        longer there. The trash folder itself stays — it is a normal
+        folder in the tree, and it is empty now.
+        """
+        root = self.trash_dir()
+        rows = self.db.execute(
+            "SELECT id FROM documents WHERE path LIKE ?",
+            (TRASH_FOLDER + "/%",),
+        ).fetchall()
+        with self.db:
+            for row in rows:
+                self.db.execute("DELETE FROM documents WHERE id=?", (row[0],))
+        if root.is_dir():
+            shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".order.json").write_text(
+            json.dumps({"children": []}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
 
     def _restore_rows(self, rows: list[tuple]) -> None:
         """Put deleted rows back exactly as they were."""
@@ -1579,50 +2376,20 @@ class Project:
     def write_order_files(self) -> None:
         """Write every folder's ``.order.json`` from the binder order.
 
+        A read-only project is left exactly as it is: its order files are
+        already right, and the install folder is not ours to write to.
+
         The order file is the sequence of a folder's children, by name
         (docs/STORAGE.md). It travels with the folder, so a copy of the
         folder keeps its order — and if the database is ever lost, the
         tree can still be read back exactly as it was.
         """
-        documents = self.documents()
-        children: dict[str | None, list[Document]] = {}
-        for document in documents:
-            children.setdefault(document.parent_id, []).append(document)
-        for document in documents:
-            if not document.path:
-                continue
-            folder = self.root / document.path
-            if not folder.is_dir():
-                continue
-            names = []
-            for child in sorted(children.get(document.id, []),
-                                key=lambda d: d.position):
-                if not child.path:
-                    continue
-                names.append(Path(child.path).name)
-            (folder / ".order.json").write_text(
-                json.dumps({"children": names}, ensure_ascii=False, indent=2)
-                + "\n", encoding="utf-8")
-        # The root's own order lives in the project manifest.
-        names = []
-        for child in sorted(children.get(None, []), key=lambda d: d.position):
-            if child.path:
-                names.append(Path(child.path).name)
-        manifest = self.root / "manifest.json"
-        existing: dict = {}
-        if manifest.is_file():
-            try:
-                loaded = json.loads(manifest.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    existing = loaded
-            except (OSError, ValueError):
-                existing = {}
-        existing.setdefault("title", self.get_setting("title") or self.root.stem)
-        existing.pop("tree", None)     # an older shape; "children" is the one
-        existing["children"] = names
-        manifest.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
+        if self.read_only:
+            return
+        for document in self.documents():
+            if document.path and (self.root / document.path).is_dir():
+                self._write_order_for(document.id)
+        self._write_order_for(None)
 
     def next_sibling(self, document_id: str) -> Document | None:
         """The document following this one under the same parent, if any."""
@@ -1838,6 +2605,8 @@ class Project:
         # disk before the rename — without it the rename can land on an
         # empty file after a power loss. Both steps are load-bearing; if
         # this is ever "simplified", the atomicity guarantee goes with it.
+        if self.read_only:
+            return          # the guide is read; it is not changed
         path = self.content_path(document_id, relative=relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         text = self._with_metadata(document_id, html)
@@ -1857,6 +2626,10 @@ class Project:
             (datetime.now(timezone.utc).isoformat(), count, document_id),
         )
         self.db.commit()
+        if path.name.casefold() == "index.html":
+            # A container's own prose leads its folder's order, so the
+            # order file has to say so (docs/STORAGE.md).
+            self._write_order_for(document_id)
 
     def _with_metadata(self, document_id: str, html: str) -> str:
         """The document's HTML with its metadata in the head.
@@ -1893,6 +2666,19 @@ class Project:
             ).items():
                 if key not in OWN_HEAD_KEYS:
                     metadata[key] = value
+        # The writer's own fields travel with the file too (docs/STORAGE.md):
+        # a `Type`, a `PoV`, a `Series` is in the head, not only in the
+        # database, so the file is the whole document it claims to be. They
+        # sit under `metadata:` rather than beside the head's own keys, which
+        # is the shape the format promises and the one that cannot collide
+        # with a key Lekhak owns. Value types and option lists stay behind:
+        # they are editing affordances, not content.
+        own = {key: value for key, value in self.metadata(document_id).items()
+               if key not in OWN_HEAD_KEYS
+               and key not in {TEMPLATE_KEY, TEMPLATE_CONFIG_KEY}
+               and str(value).strip()}
+        if own:
+            metadata["metadata"] = own
         if not metadata:
             return html
         head = dump_frontmatter(metadata)
@@ -2034,6 +2820,11 @@ class Project:
         target = next((d for d in documents if d.id == document_id), None)
         if target is None:
             return [], []
+        # Templates are furniture, not manuscript: a side file named
+        # chapter.html must not claim to mention every Chapter, and a
+        # template selected in the binder has no "mentioned by" to show.
+        if target.path and (target.path == "templates" or target.path.startswith("templates/")):
+            return [], []
         texts = self._plain_texts()
         own_text = texts.get(document_id, "")
         own_title = target.title.strip()
@@ -2043,6 +2834,8 @@ class Project:
         mentioned_by: list[Document] = []
         for document in documents:
             if document.id == document_id:
+                continue
+            if document.path and (document.path == "templates" or document.path.startswith("templates/")):
                 continue
             title = document.title.strip()
             if title and title.casefold() == own_key:
@@ -2243,6 +3036,57 @@ class Project:
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def metadata_inherited(self, document_id: str) -> dict[str, str]:
+        """The values a document answers with: its own, and what it
+        inherits from the folders above it.
+
+        Nearest first, and the first non-empty value wins: the
+        document's own, then the nearest folder that has one, then the
+        next one up. An empty field means *inherit*, not *blank it* —
+        which is what makes a folder the place to set a field once for
+        everything inside it.
+        """
+        values: dict[str, str] = {}
+        by_id = {document.id: document for document in self.documents()}
+        current = by_id.get(document_id)
+        while current is not None:
+            for key, value in self.metadata(current.id).items():
+                if value.strip() and not values.get(key, "").strip():
+                    values[key] = value
+            current = by_id.get(current.parent_id) if current.parent_id else None
+        return values
+
+    def metadata_inherited_all(self) -> dict[str, dict[str, str]]:
+        """Every document's effective metadata, in one pass.
+
+        The same rule as :meth:`metadata_inherited` — its own value, then
+        the nearest folder that has one, then the next one up — for the
+        places that need the whole project at once (the outliner).
+        """
+        entries = self.metadata_entries_all()
+        by_id = {document.id: document for document in self.documents()}
+        resolved: dict[str, dict[str, str]] = {}
+
+        def resolve(document_id: str) -> dict[str, str]:
+            if document_id in resolved:
+                return resolved[document_id]
+            values: dict[str, str] = {}
+            document = by_id.get(document_id)
+            if document is not None:
+                for key, entry in entries.get(document_id, {}).items():
+                    if entry[0].strip():
+                        values[key] = entry[0]
+                if document.parent_id:
+                    for key, value in resolve(document.parent_id).items():
+                        if not values.get(key, "").strip():
+                            values[key] = value
+            resolved[document_id] = values
+            return values
+
+        for document in self.documents():
+            resolve(document.id)
+        return resolved
+
     def default_type(self, document: Document) -> str:
         """The role a document shows with nothing stored (1.17).
 
@@ -2294,6 +3138,7 @@ class Project:
             if row[0]
         }
         added = 0
+        touched: set[str | None] = set()
         for folder, relative in self._disk_tree():
             if relative in known:
                 continue
@@ -2310,7 +3155,13 @@ class Project:
                 kind = self._kind_from_file(folder) or kind
             document_id = self._insert_row(title, parent_id, kind, relative)
             known[relative] = document_id
+            touched.add(parent_id)
             added += 1
+        # A file added by hand is a row now, so its folder's order file
+        # lists it too: the tree, the order and the index agree before
+        # anything is reordered.
+        for parent_id in touched:
+            self._write_order_for(parent_id)
         # A row that points at a container's own index is a leftover of
         # an older index: the container's row stands for that file, so
         # the second row is dropped — otherwise the binder shows the
@@ -2452,18 +3303,24 @@ class Project:
             entries = [entry for entry in folder.iterdir()
                        if not entry.name.startswith(".")
                        and not (not relative
-                                and (entry.name in PROJECT_FURNITURE
-                                     or entry.name == TEMPLATES_FOLDER))]
+                                and entry.name in PROJECT_FURNITURE)]
         except OSError:
             return []
         order = self._order_names(folder, relative)
         rank = {name: index for index, name in enumerate(order)}
+        in_templates = relative == "templates" or relative.startswith("templates/")
+        template_rank = {"title-page.html": 0, "title.html": 0,
+                         "book.html": 1, "frontmatter.html": 2,
+                         "folder.html": 3, "contents.html": 3,
+                         "chapter.html": 4, "scene.html": 5,
+                         "document.html": 6}
 
         def key(entry: Path) -> tuple[int, int, str]:
             name = entry.name
             if name in rank:
                 return (0, rank[name], name.casefold())
-            return (1, 0, name.casefold())
+            prio = template_rank.get(name.casefold(), 10) if in_templates else 10
+            return (1, prio, name.casefold())
 
         return sorted(entries, key=key)
 
@@ -2534,6 +3391,11 @@ class Project:
         if name not in names:
             return end
         index = names.index(name)
+        # index.html leads the folder's order but is the parent's own
+        # page, not a child: it takes no position, so the children count
+        # from zero as they always did.
+        index -= sum(1 for entry in names[:index]
+                     if entry.casefold() == "index.html")
         # Everything at or after this name shifts down one.
         for sibling in self.db.execute(
             "SELECT id,position FROM documents WHERE parent_id IS ? "
@@ -2556,17 +3418,35 @@ class Project:
     def _disk_tree(self):
         """Every folder and document file in the project, on disk.
 
-        The project's own furniture — the database, the manifest, the
-        backups — is not part of the manuscript, so it is not walked,
-        and neither is the templates area: the sets are listed by the
-        template code, not as manuscript. The furniture is skipped at
-        the root only: a writer's own book called "documents" is theirs.
+        The project's own furniture — the database, the manifest — is
+        not part of the manuscript, so it is not walked. Templates and
+        trash are normal folders read from disk like any other: they
+        show in the binder and are editable in the editor; only the
+        metadata box and the export differ. The furniture is skipped
+        at the root only: a writer's own book called "documents" is
+        theirs. An inside ``backups/`` is never walked either, but
+        unlike furniture it is flagged by validate_alignment(): it
+        should not exist inside the project at all.
         """
-        skip = {"backups", "documents", ".lekhak"}
+        skip = {"documents", ".lekhak", "backups"}
+
+        template_rank = {"title-page.html": 0, "title.html": 0,
+                         "book.html": 1, "frontmatter.html": 2,
+                         "folder.html": 3, "contents.html": 3,
+                         "chapter.html": 4, "scene.html": 5,
+                         "document.html": 6}
 
         def walk(folder: Path):
             try:
-                entries = sorted(folder.iterdir(), key=lambda p: p.name.casefold())
+                try:
+                    rel = str(folder.relative_to(self.root))
+                except Exception:
+                    rel = ""
+                in_templates = rel == "templates" or rel.startswith("templates/")
+                entries = sorted(
+                    folder.iterdir(),
+                    key=lambda x: ((template_rank.get(x.name.casefold(), 10) if in_templates else 10),
+                                   x.name.casefold()))
             except OSError:
                 return
             for entry in entries:
@@ -2575,8 +3455,6 @@ class Project:
                 if folder == self.root and entry.name in skip:
                     continue
                 if entry.is_dir():
-                    if entry.name == TEMPLATES_FOLDER and folder == self.root:
-                        continue
                     yield entry, str(entry.relative_to(self.root))
                     yield from walk(entry)
                 elif entry.name.endswith(".html"):
@@ -2611,8 +3489,8 @@ class Project:
         point of a lock on a book that is already published.
         """
         marker = self.lock_marker(document_id)
-        if marker is None:
-            return
+        if marker is None or self.read_only:
+            return          # a read-only project keeps no markers
         if locked:
             try:
                 marker.parent.mkdir(parents=True, exist_ok=True)
@@ -2717,6 +3595,150 @@ class Project:
         for name, keys in sorted(grouped.items()):
             ordered[name] = dict(sorted(keys.items()))
         return ordered
+
+    def required_metadata_fields(self) -> dict[str, list[str]]:
+        """Mandatory field names, by Type.
+
+        Marking a field required in one document makes it required for
+        every document and folder of that Type — stored per Type so the
+        rule follows the writer's vocabulary, not a global guess. Value:
+        ``{type_name: [field, ...]}``. A list-shaped legacy value is read
+        as applying to every type (never written that way).
+        """
+        raw = self.get_setting("required_metadata")
+        try:
+            stored = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            stored = {}
+        if isinstance(stored, list):
+            # legacy/global shape: treat as no per-type rules rather than
+            # mis-apply; UI will re-save in the typed shape.
+            return {}
+        if not isinstance(stored, dict):
+            return {}
+        result: dict[str, list[str]] = {}
+        for type_name, names in stored.items():
+            if not isinstance(type_name, str) or not isinstance(names, list):
+                continue
+            cleaned: list[str] = []
+            seen: set[str] = set()
+            for name in names:
+                if isinstance(name, str) and name.strip():
+                    key = name.strip()
+                    if key.casefold() not in seen:
+                        seen.add(key.casefold())
+                        cleaned.append(key)
+            if cleaned:
+                result[type_name] = cleaned
+        return result
+
+    def required_fields_for_type(self, type_name: str) -> list[str]:
+        """Field names mandatory for this Type (case-insensitive match)."""
+        wanted = (type_name or "").casefold()
+        for name, fields in self.required_metadata_fields().items():
+            if name.casefold() == wanted:
+                return list(fields)
+        return []
+
+    def set_type_required(self, type_name: str, field: str,
+                          required: bool) -> None:
+        """Mark a field required or not for every document of this Type."""
+        field = (field or "").strip()
+        type_name = (type_name or "").strip()
+        if not field or not type_name:
+            return
+        stored = self.required_metadata_fields()
+        # keep the original-cased key if present
+        key = next((name for name in stored if name.casefold() == type_name.casefold()),
+                   type_name)
+        fields = stored.get(key, [])
+        lower = field.casefold()
+        fields = [name for name in fields if name.casefold() != lower]
+        if required:
+            fields.append(field)
+        if fields:
+            stored[key] = fields
+        else:
+            stored.pop(key, None)
+        self.set_setting("required_metadata",
+                         json.dumps(stored, ensure_ascii=False))
+
+    def missing_required_metadata(self, selected_ids: set[str] | None = None
+                                 ) -> list[tuple[str, str, str]]:
+        """(document title, Type, field) for every mandatory field left empty.
+
+        Only documents in the export scope are checked. A value set on the
+        document, on a folder above it, or as a project-wide field counts
+        as filled.
+        """
+        by_type = self.required_metadata_fields()
+        if not by_type:
+            return []
+        exported = self._export_documents(selected_ids)
+        missing: list[tuple[str, str, str]] = []
+        for document in exported:
+            doc_type = self.type_of(document)
+            required = self.required_fields_for_type(doc_type)
+            if not required:
+                continue
+            values = self.metadata_inherited(document.id)
+            for name in required:
+                if str(values.get(name, "")).strip():
+                    continue
+                project_value = self.project_metadata().get(name)
+                if project_value is not None:
+                    held = (project_value[0]
+                            if isinstance(project_value, tuple)
+                            else str(project_value))
+                    if str(held).strip():
+                        continue
+                missing.append((document.title, doc_type, name))
+        return missing
+
+    def _require_metadata_for_export(self, selected_ids: set[str] | None) -> None:
+        missing = self.missing_required_metadata(selected_ids)
+        if not missing:
+            return
+        lines = "\n".join(
+            f"- {title} ({dtype}): {field}"
+            for title, dtype, field in missing[:20])
+        more = "" if len(missing) <= 20 else f"\n… and {len(missing) - 20} more"
+        raise ValueError(
+            "Some fields marked as required are empty:\n"
+            f"{lines}{more}\n\n"
+            "Fill them, or mark the fields as not required, then export again.")
+
+    def _toc_config(self, document_id: str) -> dict:
+        """Contents settings for the document that holds ${ToC}.
+
+        Stored on that document (its own metadata/head) so each contents
+        page can be configured independently. Depth is capped at 4; each
+        included level has a marker style (decimal, alpha, roman, bullet,
+        none). Defaults keep the previous behaviour: depth 4, decimal.
+        """
+        meta = self.metadata(document_id)
+        try:
+            depth = int(str(meta.get("ToC depth", "4")).strip() or "4")
+        except (TypeError, ValueError):
+            depth = 4
+        depth = max(1, min(depth, 4))
+        markers: list[str] = []
+        for level in range(1, depth + 1):
+            style = str(meta.get(f"ToC level {level}", "none")).strip()
+            markers.append(style or "none")
+        return {"depth": depth, "markers": markers}
+
+    def _require_metadata_for_export(self, selected_ids: set[str] | None) -> None:
+        missing = self.missing_required_metadata(selected_ids)
+        if not missing:
+            return
+        lines = "\n".join(
+            f"- {title}: {field}" for title, field in missing[:20])
+        more = "" if len(missing) <= 20 else f"\n… and {len(missing) - 20} more"
+        raise ValueError(
+            "Some fields marked as required are empty:\n"
+            f"{lines}{more}\n\n"
+            "Fill them, or mark the fields as not required, then export again.")
 
     def type_values(self) -> list[str]:
         """Every distinct Type value used in the project, sorted.
@@ -3208,15 +4230,83 @@ class Project:
         value = self.metadata(document_id).get(TEMPLATE_KEY, "")
         return value.strip().lower() in ("yes", "true", "1")
 
-    def set_template(self, document_id: str, on: bool) -> None:
+    def set_template(self, document_id: str, on: bool, *, _force: bool = False, confirmed: bool = False) -> None:
         """Mark a document as a template, or take the mark away.
 
         The mark is the document's own metadata (and the file's head
         beside it) and nothing else: it says what the document *is*, and
         every export asks. The row is written on its own, so replacing
         the document's metadata elsewhere never unmakes the template.
+
+        Turning the mark ON is allowed only when the document is empty
+        of content and of other metadata: the FIRST metadata of a new
+        folder/document must be Template: yes. A document that already
+        holds prose or any other field is refused (ValueError) — it
+        cannot be converted. The normal way to make templates once per
+        project is to create the templates folder first, with Template:
+        yes as its first field, and put the templates inside it. A
+        folder with children that already hold content is refused for
+        the same reason: a template folder starts empty and its
+        children are templates from birth.
         """
         if on:
+            if self.is_template(document_id):
+                return
+            if _force or confirmed:
+                # Internal trusted copy (default template set shipped
+                # with Lekhak), or a user-confirmed conversion after the
+                # warning popup — not an accidental click.
+                self.db.execute(
+                    "INSERT INTO document_metadata"
+                    "(document_id,key,value,value_type,options_json) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(document_id,key) DO UPDATE SET value=excluded.value",
+                    (document_id, TEMPLATE_KEY, "yes", "text", "[]"),
+                )
+                self.db.commit()
+                return
+            # Refuse to convert content to template.
+            try:
+                body = self.read_content(document_id).strip()
+            except Exception:
+                body = ""
+            if body:
+                raise ValueError(
+                    "Cannot convert to template: the document already "
+                    "contains content. Templates start empty — the first "
+                    "metadata of a new folder/document must be "
+                    "Template: yes, before any prose is written.")
+            other = {k: v for k, v in self.metadata(document_id).items()
+                     if k not in (TEMPLATE_KEY, TEMPLATE_CONFIG_KEY, "Type")}
+            # Only allow if no other meaningful values.
+            if any(str(v).strip() not in ("", "0") for v in other.values()):
+                raise ValueError(
+                    "Cannot convert to template: the document already "
+                    "holds metadata. Templates start empty — the first "
+                    "metadata must be Template: yes; remove the existing "
+                    "fields or start a new empty folder/document.")
+            # Folder: refuse if any descendant holds content already.
+            children = [d for d in self.documents()
+                        if d.parent_id == document_id]
+            if children:
+                for child in children:
+                    try:
+                        child_body = self.read_content(child.id).strip()
+                    except Exception:
+                        child_body = ""
+                    if child_body:
+                        raise ValueError(
+                            "Cannot convert to template: the folder already "
+                            "contains content. Templates start empty — "
+                            "create the templates folder first with "
+                            "Template: yes, before adding content.")
+                    child_meta = self.metadata(child.id)
+                    if any(str(v).strip() not in ("", "0")
+                           for k, v in child_meta.items()
+                           if k not in (TEMPLATE_KEY, "Type")):
+                        raise ValueError(
+                            "Cannot convert to template: the folder's "
+                            "children already hold metadata. Templates "
+                            "start empty.")
             self.db.execute(
                 "INSERT INTO document_metadata"
                 "(document_id,key,value,value_type,options_json) VALUES(?,?,?,?,?) "
@@ -3456,6 +4546,14 @@ class Project:
                     for key, value in cleaned.items()
                 ],
             )
+        # Keep the file's head in step (docs/STORAGE.md): a metadata
+        # edit that only touches the DB would leave the file carrying
+        # yesterday's title/synopsis/etc. until the next prose save.
+        # _with_metadata rebuilds the head from the DB, so rewriting
+        # the prose unchanged is enough. Custom metadata that lives
+        # only in the DB (POV, Loc…) intentionally stays out of the
+        # head — the file carries the subset it can read back.
+        self._refresh_metadata_on_disk(document_id)
 
     def create_snapshot(self, document_id: str, name: str) -> Snapshot:
         """Copy a document's current content and synopsis into the snapshot store.
@@ -3612,38 +4710,35 @@ class Project:
         # documents() already walks the tree in binder order
         return self.documents()
 
-    def _export_documents(self, selected_ids: set[str] | None = None,
-                          exclude_ids: set[str] | None = None
+    def _export_documents(self, selected_ids: set[str] | None = None
                           ) -> list[Document]:
         """The chapters and scenes to compile, in binder order.
 
         Folder ids in ``selected_ids`` expand to their contents — picking
         a book folder exports the book. None selects the whole
-        manuscript. ``exclude_ids`` removes a subtree even from that
-        whole-manuscript case, which a selection cannot express when the
-        root itself is selected: 2.1b uses it so a piece the template
-        places elsewhere is not printed inside the content as well.
+        manuscript. Templates are format, not content, so the
+        ``templates/`` subtree is never manuscript even though it is a
+        normal binder folder.
         """
         documents = self.ordered_documents()
         parent_map = {d.id: d.parent_id for d in documents}
-        excluded = exclude_ids or set()
         export_docs: list[Document] = []
         for document in documents:
             if document.kind not in EXPORT_KINDS:
                 continue
             if self.is_template(document.id):
                 continue        # a template is markup, not manuscript
+            if document.path and document.path.split("/")[0].casefold() == TEMPLATES_FOLDER:
+                continue        # templates handle the format, not the content
+            if document.path and document.path.split("/")[0].casefold() == TRASH_FOLDER:
+                continue        # trashed content is not manuscript either
             current: str | None = document.id
             covered = selected_ids is None
-            drop = False
             while current is not None:
-                if current in excluded:
-                    drop = True
-                    break
                 if selected_ids is not None and current in selected_ids:
                     covered = True
                 current = parent_map.get(current)
-            if covered and not drop:
+            if covered:
                 export_docs.append(document)
         return export_docs
 
@@ -3703,7 +4798,8 @@ class Project:
         return path
 
     def _template_values(self, document: Document, content: str | None = None,
-                         extra: dict[str, str] | None = None) -> dict[str, str]:
+                         extra: dict[str, str] | None = None,
+                         fmt: str = "", pages_total: int | None = None) -> dict[str, str]:
         if content is None:
             content = self.read_content(document.id)
         path = self._position_path(document)
@@ -3715,7 +4811,28 @@ class Project:
             "Synopsis": document.synopsis,
             "WordCount": str(document.word_count),
             "Content": content,
+            # The project's own name, which is not the document's title:
+            # a project may hold several books, and ${Title} is whatever
+            # document is being dressed.
+            "Project": self.get_setting("title", self.root.stem),
         }
+        # ${Parent}: the immediate container's title. Empty at the root.
+        parent = None
+        if document.parent_id:
+            parent = next((d for d in self.documents()
+                           if d.id == document.parent_id), None)
+        values["Parent"] = parent.title if parent is not None else ""
+        # ${Format}: the format being written, empty outside an export.
+        values["Format"] = fmt
+        values["EstimatedPages"] = str(pages_total) if pages_total else ""
+        # ${PageNo}: the page's own number, positioned where the writer
+        # puts it — a Header/Footer line, or a paragraph of the
+        # manuscript. We never count pages here; the marker survives the
+        # text and becomes Word's PAGE field in the DOCX printer (3.1).
+        # Formats without fixed pages (HTML, EPUB, text) print nothing.
+        # ${Page} is the spelling the first templates used, and stays.
+        values["PageNo"] = values["Page"] = (
+            PAGE_MARKER if fmt in ("docx", "pdf") else "")
         # ${Position-depth:N} is the path cut to its N most specific
         # numbers, so one name answers for a chapter (1) and a scene
         # (1.1). Depths past the path's own length print the whole path.
@@ -3728,7 +4845,10 @@ class Project:
         # "inherit", not "blank it" — and a built-in name wins over both.
         metadata = {key: entry[0] for key, entry in self.project_metadata().items()
                     if entry and entry[0].strip()}
-        for key, value in self.metadata(document.id).items():
+        # The document's own value, then the nearest folder that has one,
+        # then the next one up: a field set on a folder is the value for
+        # everything inside it.
+        for key, value in self.metadata_inherited(document.id).items():
             if value.strip():
                 metadata[key] = value
         for key, value in metadata.items():
@@ -3739,11 +4859,13 @@ class Project:
         return values
 
     def render_template(self, document: Document, template: str,
-                        *, html: bool = False) -> str:
+                        *, html: bool = False, fmt: str = "",
+                        pages_total: int | None = None) -> str:
         """Fill a one-off template string with ``${...}`` placeholders."""
         from .templates import PLACEHOLDER_RE
 
-        values = self._template_values(document)
+        values = self._template_values(document, fmt=fmt,
+                                      pages_total=pages_total)
         if not html:
             values["Content"] = self.plain_text(values["Content"])
 
@@ -3758,7 +4880,9 @@ class Project:
 
     def expand_shortcodes(self, document: Document, text: str, *,
                           html: bool,
-                          extra: dict[str, str] | None = None) -> str:
+                          extra: dict[str, str] | None = None,
+                          fmt: str = "",
+                          pages_total: int | None = None) -> str:
         """Expand ``${...}`` shortcodes inside a document's own prose.
 
         Compile-time only: the stored file keeps the literal markers and
@@ -3775,7 +4899,8 @@ class Project:
 
         if "${" not in text:
             return text
-        values = self._template_values(document, content="", extra=extra)
+        values = self._template_values(document, content="", extra=extra,
+                                      fmt=fmt, pages_total=pages_total)
         values.pop("Content", None)
 
         def substitute(match: re.Match) -> str:
@@ -3783,7 +4908,14 @@ class Project:
             value = values.get(key, "")
             return escape(value) if html else value
 
-        return PLACEHOLDER_RE.sub(substitute, text)
+        # `$$` is a literal `$`: the escape that lets a document talk
+        # about a placeholder instead of being one. Each part between the
+        # escapes is expanded on its own, so `$${Name}` prints `${Name}`
+        # and never reaches the expander.
+        parts = text.split("$$")
+        for index, part in enumerate(parts):
+            parts[index] = PLACEHOLDER_RE.sub(substitute, part)
+        return "$".join(parts)
 
     def _nearest_chapter_ancestor(self, document_id: str,
                                   parent_map: dict[str, str | None],
@@ -3795,12 +4927,31 @@ class Project:
             current = parent_map.get(current)
         return None
 
+    def _nearest_container_ancestor(self, document_id: str,
+                                   parent_map: dict[str, str | None],
+                                   kinds: dict[str, str],
+                                   export_ids: set[str]) -> str | None:
+        """The nearest exported container above this document.
+
+        A container unit (chapter or folder) renders its children inside
+        itself; a child whose nearest exported container is in scope
+        belongs to that container's unit rather than standing alone.
+        """
+        current = parent_map.get(document_id)
+        while current is not None:
+            if current in export_ids and kinds.get(current) in ("chapter", "folder"):
+                return current
+            current = parent_map.get(current)
+        return None
+
     def _render_document(self, document: Document, templates: TemplateSet,
                          html: bool, *, slot: str | None = None,
                          content: str | None = None,
                          extra: dict[str, str] | None = None,
                          scope: dict | None = None,
-                         fmt: str = "html") -> str:
+                         fmt: str = "html",
+                         pages_total: int | None = None,
+                         children: dict[str, list[str]] | None = None) -> str:
         if content is None:
             # The document's own stored prose: links rewritten for this
             # export, markup stripped in text mode, shortcodes expanded.
@@ -3816,19 +4967,48 @@ class Project:
             if not html:
                 body = self.plain_text(body)
             body = self.expand_shortcodes(document, body, html=html,
-                                          extra=extra)
+                                          extra=extra, fmt=fmt,
+                                          pages_total=pages_total)
         else:
             body = content
-        values = self._template_values(document, content=body, extra=extra)
-        # Contents page / chapter scenes: filled when the template asks.
+        values = self._template_values(document, content=body, extra=extra,
+                                      fmt=fmt, pages_total=pages_total)
+        # Contents page / the children a container holds: filled when the
+        # template asks. The name is `Documents` because that is what they
+        # are — English plurals of a Type would be guesswork, and the
+        # children of a folder need not be scenes. `Scenes` and
+        # `Children` are the older names for the same value, kept so a
+        # template written before the rename keeps working.
         values["ToC"] = getattr(self, "_toc_str", "")
-        values.setdefault("Scenes", (extra or {}).get("Scenes", ""))
+        children_value = (extra or {}).get("children", "")
+        # The children family: `children` is all of them, `children-<type>`
+        # is the ones of one kind — the word the writer gave it. Only the
+        # word itself is kept: a qualifier is matched against the types
+        # that are here, so there is no table of plurals to maintain.
+        # One word, one name: nothing else is reserved, so a field of the
+        # writer's own called "Scenes" is theirs again.
+        values["children"] = children_value
+        for name, rendered in (children or {}).items():
+            values[CHILDREN_NAME + "-" + name.casefold()] = "\n".join(rendered)
+        silent = templates.prints_nothing
+
+        def placed(text: str, raw: str) -> str:
+            """A container's children are never lost (§3): `${children}`
+            says *where* they go, and a fragment that never names the
+            family has them appended after itself. The placeholder
+            positions the children; it does not gate them, so a chapter
+            cannot swallow its scenes by saying nothing."""
+            if silent or not children_value.strip() or _names_children(raw):
+                return text
+            return text + children_value
+
         if document.doc_template:
             override = self.template_override(document.doc_template, html=html)
             if override is None:
                 override = templates.document_slot(document.doc_template, html=html)
             if override is not None:
-                return templates.fill(override, values, html=html)
+                return placed(templates.fill(override, values, html=html),
+                              override)
         # Nothing stored: this document's set may carry a face named after
         # the document's own Type (1.18) — the naming convention, read at
         # export as well as in the sidebar, so a project typed by hand
@@ -3840,14 +5020,15 @@ class Project:
         if derived:
             override = templates.document_slot(derived, html=html)
             if override is not None:
-                return templates.fill(override, values, html=html)
+                return placed(templates.fill(override, values, html=html),
+                              override)
         if slot is None:
             slot = "folder" if document.kind == "chapter" else "document"
-        return templates.render(slot, values, html=html)
+        return placed(templates.render(slot, values, html=html),
+                      templates.slot(slot, html=html))
 
     def _compile_scope(self, selected_ids: set[str] | None,
-                       fmt: str,
-                       exclude_ids: set[str] | None = None) -> dict:
+                       fmt: str) -> dict:
         """Everything one compile's links need to know (2.2): the exported
         document ids, each document's unit index (shared by a chapter and
         its scenes, 0-based), the ancestor chain used to look up per-book
@@ -3857,7 +5038,7 @@ class Project:
         Split out of compile_units so header/footer strings — compiled
         outside the unit list — run through the same machinery.
         """
-        export_docs = self._export_documents(selected_ids, exclude_ids)
+        export_docs = self._export_documents(selected_ids)
         export_ids = {d.id for d in export_docs}
         all_docs = self.documents()
         parent_map = {d.id: d.parent_id for d in all_docs}
@@ -4051,8 +5232,7 @@ class Project:
 
     def compile_units(self, selected_ids: set[str] | None = None,
                       templates: TemplateSet | None = None,
-                      *, html: bool = True, fmt: str = "html",
-                      exclude_ids: set[str] | None = None
+                      *, html: bool = True, fmt: str = "html", _toc: bool = True
                       ) -> list[tuple[str, str]]:
         """Compile the manuscript into ordered ``(title, body)`` units.
 
@@ -4076,36 +5256,36 @@ class Project:
         """
         templates = (templates or TemplateSet.builtin()).for_format(fmt)
         set_for = self._template_resolver(templates, fmt)
-        scope = self._compile_scope(selected_ids, fmt, exclude_ids)
+        scope = self._compile_scope(selected_ids, fmt)
         export_docs = scope["export_docs"]
         ordered = scope["ordered"]
         chapter_scenes = scope["chapter_scenes"]
+
+        # ${EstimatedPages}: an estimate from the text, since a printed page
+        # count needs the rendered document (LibreOffice for PDF). The
+        # same figure cover.py uses for the spine, so the two agree.
+        total_words = sum(d.word_count for d in export_docs)
+        pages_total = max(1, -(-total_words // 250)) if total_words else 0
 
         # Contents page support: a document whose template contains ${ToC}
         # is filled with the book's table of contents. Build the list
         # up front so it is available even when the contents page sits
         # in front matter, before the units are rendered.
-        _child_scenes = set()
-        for _scenes in chapter_scenes.values():
-            for _s in _scenes:
-                _child_scenes.add(_s.id)
-        _unit_docs = [d for d in ordered
-                      if d.kind == "chapter" or d.id not in _child_scenes]
-        _toc_titles = [d.title for d in _unit_docs]
-        if fmt == "epub":
-            _toc_str = "<ol>" + "".join(
-                f"<li><a href='section-{i}.xhtml'>{escape(t)}</a></li>"
-                for i, t in enumerate(_toc_titles, 1)) + "</ol>"
-        elif fmt == "html":
-            _toc_str = "<ol>" + "".join(
-                f"<li>{escape(t)}</li>" for t in _toc_titles) + "</ol>"
-        elif fmt == "text":
-            _toc_str = "\\n".join(_toc_titles)
-        else:
-            _toc_str = ""
-        self._toc_str = _toc_str
+        # Contents: a document whose fragment carries ${ToC} is filled
+        # with the contents of this export. The entries are the *headings
+        # the export itself produces*, nested by their level — the rule
+        # Word's own table follows — so a folder or document appears
+        # because its fragment renders a heading, and the heading's own
+        # words are the entry (docs/TEMPLATES.md §3.2). Nothing of that
+        # can be known before the units are rendered, so the placeholder
+        # starts as a sentinel and is replaced below; the contents page
+        # itself carries the same sentinel, which is how it is kept out of
+        # its own list.
+        self._toc_str = TOC_SENTINEL
 
-        units: list[tuple[str, str]] = []
+        # (title, body, owning document id) — the id lets a contents page
+        # read its own ToC settings (depth, markers) from its head/metadata.
+        unit_rows: list[tuple[str, str, str]] = []
         chapter_number = 0
         scene_number = 0
         words_total = 0
@@ -4129,6 +5309,7 @@ class Project:
                     extra=_template_numbers(chapter_number, 0, words_total))
                 divider = (document.scene_divider or "").strip()
                 scene_rendered: list[str] = []
+                by_name: dict[str, list[str]] = {}
                 for index, scene in enumerate(
                         chapter_scenes.get(document.id, [])):
                     scene_number += 1
@@ -4143,29 +5324,260 @@ class Project:
                     extra = _template_numbers(
                         chapter_number, scene_number,
                         words_total + scene.word_count)
-                    scene_rendered.append(self._render_document(
+                    rendered = self._render_document(
                         scene, scene_set, html, slot="document", extra=extra,
-                        scope=scope, fmt=fmt))
+                        scope=scope, fmt=fmt, pages_total=pages_total)
+                    scene_rendered.append(rendered)
+                    # The children, grouped by the word the writer gave
+                    # them: their Type, and their kind. A template can
+                    # ask for one group alone.
+                    for name in (self.type_of(scene), scene.kind):
+                        by_name.setdefault(name.casefold(), []).append(rendered)
                     words_total += scene.word_count
                 extra = _template_numbers(chapter_number, 0, words_total)
-                extra["Scenes"] = "\n".join(scene_rendered)
+                extra["children"] = "\n".join(scene_rendered)
                 body = self._render_document(
                     document, book, html, slot="folder",
                     content=own if own.strip() else "",
-                    extra=extra, scope=scope, fmt=fmt)
+                    extra=extra, scope=scope, fmt=fmt, children=by_name,
+                    pages_total=pages_total)
                 words_total += document.word_count
-                units.append((document.title, body))
+                unit_rows.append((document.title, body, document.id))
             else:
+                # A folder, a scene that stands alone, or any other exported
+                # document: one unit, in order. A folder keeps its container
+                # face so its own heading/content can reach the contents.
                 scene_number += 1
                 scene_set = set_for(document.id)
                 extra = _template_numbers(chapter_number, scene_number,
                                           words_total)
+                slot = "folder" if document.kind == "folder" else None
                 body = self._render_document(
-                    document, scene_set, html, extra=extra,
-                    scope=scope, fmt=fmt)
+                    document, scene_set, html, slot=slot, extra=extra,
+                    scope=scope, fmt=fmt, pages_total=pages_total)
                 words_total += document.word_count
-                units.append((document.title, body))
-        return units
+                unit_rows.append((document.title, body, document.id))
+        units = [(title, body) for title, body, _did in unit_rows]
+        self._toc_units = {index for index, (_title, body)
+                           in enumerate(units, start=1)
+                           if TOC_SENTINEL in body}
+        if not _toc or not self._toc_units:
+            return units            # no contents page in this export
+
+        # Per-ToC configuration: each contents page reads its depth cap and
+        # marker styles from the document that holds ${ToC} (stored in that
+        # document's head/metadata), so different contents pages can differ.
+        def _render_toc_for(doc_id: str, source_units: list[tuple[str, str]]):
+            config = self._toc_config(doc_id)
+            entries = _toc_entries(source_units, max_depth=config["depth"])
+            if html:
+                return _toc_markup(entries, links=fmt == "epub",
+                                   markers=config["markers"])
+            return _toc_text(entries, markers=config["markers"])
+
+        if html:
+            structure = None
+        else:
+            # A text render carries no headings: the same set's html side
+            # is where the structure lives.
+            structure = self.compile_units(selected_ids, templates,
+                                           html=True, fmt=fmt, _toc=False)
+
+        result: list[tuple[str, str]] = []
+        first_toc = ""
+        for (title, body, doc_id) in unit_rows:
+            if TOC_SENTINEL in body:
+                source = units if html else (structure or units)
+                toc = _render_toc_for(doc_id, source)
+                if not first_toc:
+                    first_toc = toc
+                body = body.replace(TOC_SENTINEL, toc)
+            result.append((title, body))
+        self._toc_str = first_toc or ""
+        return result
+
+
+
+    def import_from_project(self, source: Path | str, selected_ids: set[str] | None = None,
+                            parent_id: str | None = None) -> int:
+        """Import documents/folders from another Lekhak project.
+
+        Copies the selected items (and their descendants) into this project
+        under ``parent_id`` (or the root), preserving structure, order,
+        content, metadata, type, template status and template configuration.
+        Referenced media/cover assets stored under the source project are
+        copied and rewritten to the new document IDs where possible.
+        Returns the number of documents/folders imported.
+        """
+        source = Path(source)
+        src = Project(source, read_only=True)
+        src.open()
+        try:
+            all_docs = {d.id: d for d in src.documents()}
+            if selected_ids is None:
+                selected_ids = {d.id for d in src.documents()}
+            # include descendants of selected items
+            children = {}
+            for d in src.documents():
+                children.setdefault(d.parent_id, []).append(d)
+            wanted: set[str] = set()
+
+            def add_tree(doc_id: str):
+                if doc_id in wanted or doc_id not in all_docs:
+                    return
+                wanted.add(doc_id)
+                for ch in sorted(children.get(doc_id, []), key=lambda x: x.position):
+                    add_tree(ch.id)
+
+            for sid in list(selected_ids):
+                add_tree(sid)
+            ordered = [d for d in src.documents() if d.id in wanted]
+            id_map: dict[str, str] = {}
+            count = 0
+
+            def rewrite_asset_refs(content: str, old_id: str, new_id: str) -> str:
+                if not content:
+                    return content
+                # common forms: images/<old_id>/..., src='images/<old_id>/...'
+                content = content.replace(f"images/{old_id}/", f"images/{new_id}/")
+                content = content.replace(f"images\\{old_id}\\", f"images/{new_id}/")
+                return content
+
+            for doc in ordered:
+                old_parent = doc.parent_id
+                new_parent = parent_id
+                if old_parent and old_parent in id_map:
+                    new_parent = id_map[old_parent]
+                elif old_parent is None:
+                    new_parent = parent_id
+                new = self.add_document(doc.title, new_parent, doc.kind)
+                id_map[doc.id] = new.id
+
+                # copy per-document/folder media folder (images/<id>/...)
+                src_media = source / "images" / doc.id
+                if src_media.is_dir():
+                    dst_media = self.root / "images" / new.id
+                    try:
+                        if dst_media.exists():
+                            shutil.rmtree(dst_media)
+                        shutil.copytree(src_media, dst_media)
+                    except Exception:
+                        pass
+
+                content = src.read_content(doc.id)
+                if content:
+                    content = rewrite_asset_refs(content, doc.id, new.id)
+                    # also rewrite refs to any other imported item's assets
+                    for oid, nid in list(id_map.items()):
+                        if oid != doc.id:
+                            content = rewrite_asset_refs(content, oid, nid)
+                    self.write_content(new.id, content)
+
+                self.update_document(
+                    new.id,
+                    synopsis=doc.synopsis or "",
+                    word_target=getattr(doc, "word_target", 0) or 0,
+                    page_break=getattr(doc, "page_break", "auto") or "auto",
+                    scene_divider=getattr(doc, "scene_divider", "") or "",
+                    doc_template=getattr(doc, "doc_template", "") or "",
+                )
+                try:
+                    entries = src.metadata_entries(doc.id)
+                    if entries:
+                        values = {k: v for k, (v, _t, _o) in entries.items()}
+                        types = {k: t for k, (_v, t, _o) in entries.items()}
+                        options = {k: o for k, (_v, _t, o) in entries.items()}
+                        self.set_metadata(new.id, values, types, options)
+                except Exception:
+                    pass
+                try:
+                    if src.is_template(doc.id):
+                        self.set_template(new.id, True, _force=True)
+                except Exception:
+                    pass
+                try:
+                    tval = src.type_of(doc) if hasattr(src, "type_of") else ""
+                    if tval:
+                        self.set_type(new.id, tval)
+                except Exception:
+                    pass
+                count += 1
+
+            # second pass: rewrite content refs for ids mapped after earlier docs were written
+            for doc in ordered:
+                new_id = id_map.get(doc.id)
+                if not new_id:
+                    continue
+                content = self.read_content(new_id)
+                if not content:
+                    continue
+                rewritten = content
+                for oid, nid in id_map.items():
+                    rewritten = rewrite_asset_refs(rewritten, oid, nid)
+                if rewritten != content:
+                    self.write_content(new_id, rewritten)
+
+            # copy covers/book settings for imported folders
+            try:
+                raw = self.get_setting("book_settings")
+                stored = json.loads(raw) if raw else {}
+                if not isinstance(stored, dict):
+                    stored = {}
+            except Exception:
+                stored = {}
+            for old_id, new_id in id_map.items():
+                old_doc = all_docs.get(old_id)
+                if old_doc is None or old_doc.kind != "folder":
+                    continue
+                bs = src.book_settings(old_id)
+                if not bs:
+                    # still ensure auto cover folder copied if exists (done above)
+                    continue
+                bs = dict(bs)
+                cover = bs.get("cover", "")
+                if cover:
+                    cpath = Path(cover)
+                    if not cpath.is_absolute():
+                        cpath = source / cpath
+                    if cpath.is_file():
+                        try:
+                            # keep under images/<new_id>/cover.<ext>
+                            ext = cpath.suffix.lower().lstrip('.') or 'jpg'
+                            dst_dir = self.root / "images" / new_id
+                            dst_dir.mkdir(parents=True, exist_ok=True)
+                            dst = dst_dir / f"cover.{ext}"
+                            shutil.copy2(cpath, dst)
+                            # prefer auto-detect path form
+                            bs["cover"] = ""
+                        except Exception:
+                            pass
+                # remap template name? name is portable, keep as-is
+                cleaned = {k: v for k, v in bs.items() if v}
+                if cleaned:
+                    stored[new_id] = cleaned
+            self.set_setting("book_settings", json.dumps(stored, ensure_ascii=False, indent=1))
+
+            # preserve relative order
+            by_new_parent = {}
+            for doc in ordered:
+                new_id = id_map.get(doc.id)
+                if not new_id:
+                    continue
+                old_parent = doc.parent_id
+                new_parent = parent_id
+                if old_parent and old_parent in id_map:
+                    new_parent = id_map[old_parent]
+                by_new_parent.setdefault(new_parent, []).append(new_id)
+            for p, ids in by_new_parent.items():
+                for pos, did in enumerate(ids):
+                    self.db.execute("UPDATE documents SET position=? WHERE id=?", (pos, did))
+            self.db.commit()
+            self.sync_with_disk()
+            return count
+        finally:
+            src.close()
+
+
 
     def export_text(self, destination: Path, selected_ids: set[str] | None = None,
                     templates: TemplateSet | None = None) -> None:
@@ -4181,9 +5593,10 @@ class Project:
         feeds would make the file neither a good reading copy nor a
         printable one.
         """
+        self._require_metadata_for_export(selected_ids)
         templates = (templates or TemplateSet.builtin()).for_format("text")
         if templates.prints_nothing:
-            # `no export` (§3): no fragment carries content, so neither
+            # `no-export` (§3): no fragment carries content, so neither
             # does the file — an empty one, written properly.
             self._atomic_write(Path(destination), "")
             return
@@ -4208,19 +5621,24 @@ class Project:
                         selected_ids: set[str] | None = None) -> None:
         """Write the manuscript as clean markdown (2.3).
 
-        The round-trip counterpart of importer.markdown_from_html's
-        sibling import: no template chrome and no book-settings pages —
+        No template chrome and no book-settings pages —
         chapters as '# Title', scenes as '## Title', prose converted
-        back from the stored HTML with inline bold and italic kept — so
-        a file this writes imports back as the same structure. Wiki
+        back from the stored HTML with inline bold and italic kept. Wiki
         links become plain words (the text-fallthrough of the 2.2 link
         pass); resolved targets inside the export do not become real
         markdown links, which have no notion of a sibling document.
         Form feeds likewise stay out (BUILD-NOW 9): markdown is
         structural too.
+
+        Each document's metadata rides above its heading as a YAML
+        fence, in the format the document files already use. Metadata is
+        work the writer did, so the export carries it and
+        ``import_markdown`` reads it back — export then import is a real
+        round trip, not a flatten.
         """
-        # Local import: importer imports Project at module level.
-        from .importer import markdown_from_html
+        self._require_metadata_for_export(selected_ids)
+        from .layout import dump_frontmatter
+        from .markdown import markdown_from_html
 
         scope = self._compile_scope(selected_ids, "markdown")
         ordered = scope["ordered"]
@@ -4240,19 +5658,120 @@ class Project:
             if text:
                 blocks.append(text)
 
+        def metadata_head(document: Document) -> str:
+            values = {
+                key: value
+                for key, value in sorted(self.metadata(document.id).items())
+                if key not in (TEMPLATE_KEY, TEMPLATE_CONFIG_KEY)
+                and value.strip()
+            }
+            if document.synopsis.strip():
+                values = {"Synopsis": document.synopsis, **values}
+            return dump_frontmatter(values) if values else ""
+
         for document in ordered:
             heading = "# " if document.kind == "chapter" else "## "
-            add(heading + document.title)
+            add(metadata_head(document) + heading + document.title)
             add(body_of(document))
             for scene in scenes_of.get(document.id, []):
-                add("## " + scene.title)
+                add(metadata_head(scene) + "## " + scene.title)
                 add(body_of(scene))
         content = "\n\n".join(blocks)
         self._atomic_write(Path(destination), content.rstrip() + "\n")
 
+    def import_markdown(self, paths: list[Path],
+                        parent_id: str | None = None) -> dict:
+        """Create documents from markdown files (File → Import Markdown).
+
+        Reads Lekhak's own export and Scrivener's, so "export the project,
+        import it here" is a real round trip. Every metadata key the file
+        carries lands in the metadata table: a field the project does not
+        know yet is created, an existing one is filled. Structural keys
+        build the tree (``Parent`` names the document above, when that
+        document came in the same import).
+
+        Returns a summary for the caller to show: how many documents were
+        created, which fields were created, how many values were filled,
+        and which project-level keys were kept as they were because the
+        project already had a value for them.
+        """
+        from .markdown import markdown_to_html
+        from .markdown_import import parse_markdown
+
+        target = parent_id or next(
+            (d.id for d in self.documents() if d.parent_id is None), None)
+        documents_created = 0
+        fields_created: list[str] = []
+        values_filled = 0
+        project_kept: list[str] = []
+        by_title: dict[str, str] = {}
+        for path in paths:
+            parsed = parse_markdown(
+                Path(path).read_text(encoding="utf-8"))
+            if parsed.project_metadata:
+                entries = self.project_metadata()
+                for key, value in parsed.project_metadata.items():
+                    held = entries.get(key)
+                    if held is not None and held[0].strip():
+                        project_kept.append(key)
+                        continue
+                    entries[key] = (value, _metadata_type(value), [])
+                self.set_project_metadata(entries)
+            # The flat markdown carries no tree beyond chapter/scene, so a
+            # scene with no Parent lands under the chapter before it —
+            # the order the export wrote.
+            last_chapter: str | None = None
+            for item in parsed.documents:
+                parent = by_title.get(item.parent.casefold(), target)
+                if (item.kind == "scene" and not item.parent
+                        and last_chapter is not None):
+                    parent = last_chapter
+                document = self.add_document(
+                    item.title or "Imported", parent, item.kind)
+                self.write_content(
+                    document.id, markdown_to_html(item.body))
+                if item.synopsis.strip():
+                    self.update_document(
+                        document.id, synopsis=item.synopsis)
+                if item.metadata:
+                    entries = self.metadata(document.id)
+                    rows = self.metadata_entries(document.id)
+                    types: dict[str, str] = {}
+                    group = self.type_group(document)
+                    known = {name.casefold()
+                             for name in self.known_fields(group)}
+                    for key, value in item.metadata.items():
+                        folded = key.casefold()
+                        if folded in (TEMPLATE_KEY.casefold(),
+                                      TEMPLATE_CONFIG_KEY.casefold()):
+                            continue    # a mark, not metadata to import
+                        # Type is the protected role the panel already
+                        # knows; every other key may need a new field.
+                        name = (key if folded == "type"
+                                else self.add_field(group, key))
+                        if (folded != "type" and name not in rows
+                                and name.casefold() not in known):
+                            fields_created.append(name)
+                        types[name] = (rows[name][1] if name in rows
+                                       else _metadata_type(value))
+                        entries[name] = value
+                        values_filled += 1
+                    self.set_metadata(document.id, entries, types)
+                by_title[item.title.casefold()] = document.id
+                if item.kind == "chapter":
+                    last_chapter = document.id
+                documents_created += 1
+        return {
+            "documents": documents_created,
+            "fields": sorted(set(fields_created)),
+            "values": values_filled,
+            "kept": sorted(set(project_kept)),
+        }
+
     def export_html(self, destination: Path, selected_ids: set[str] | None = None,
                     templates: TemplateSet | None = None) -> None:
         """Write the compiled manuscript as a single HTML file."""
+        self._require_metadata_for_export(selected_ids)
         templates = (templates or TemplateSet.builtin()).for_format("html")
         units = self.compile_units(selected_ids, templates, html=True,
                                    fmt="html")
@@ -4290,11 +5809,18 @@ class Project:
         self._atomic_write(Path(destination), content)
 
     def export_root_titles(self, selected_ids: set[str] | None) -> list[str]:
-        """What heads an export (Phase 1): the selected containers' names, the
-        document's own name when one document is all that was chosen, or the
-        project's title for a whole-project export."""
+        """The *book* an export dresses (Phase 1), for `${BookTitle}`: the
+        selected containers' names, or the project's own title for a
+        whole-project export.
+
+        Only a folder is a book. A lone chapter or document answers
+        nothing rather than wearing its own name as one: an empty
+        `${BookTitle}` prints a blank (or lets the sample's head stand),
+        which is honest, where a document's title masquerading as the
+        book's would not be.
+        """
         if not selected_ids:
-            return [self.get_setting("title", "Lekhak")]
+            return [self.get_setting("title", "")]
         ordered = self.documents()
         parents = {document.id: document.parent_id for document in ordered}
 
@@ -4310,22 +5836,41 @@ class Project:
                  if document.id in selected_ids and not inside_the_selection(document.id)]
         if not roots:
             roots = [document for document in ordered if document.id in selected_ids]
-        return [document.title for document in roots]
+        return [document.title for document in roots
+                if document.kind == "folder"]
+
+    def _document_template_is_toc(self, document, templates) -> bool:
+        """True when this unit is the contents page (carries ${ToC})."""
+        try:
+            doc_template = (getattr(document, "doc_template", "") or "").strip().lower()
+            if doc_template in {"contents", "toc"}:
+                return True
+            slot = templates.document_slot(document.doc_template, html=True) if document.doc_template else templates.slot("folder" if getattr(document, "kind", "") == "folder" else "document", html=True)
+            return "${ToC}" in (slot or "") or "${toc}" in (slot or "").lower()
+        except Exception:
+            return False
 
     @staticmethod
-    def _add_toc_field(output) -> None:
-        """The Word TOC field, placed after the title page (Phase 1) so the
-        contents do not stand in front of the book's own opening pages."""
+    def _add_toc_field(output, depth: int = 3) -> None:
+        """The Word TOC field, placed where a contents unit wants it.
+
+        Depth follows the contents/ToC configuration (capped at 4).
+        """
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
 
+        try:
+            depth = int(depth)
+        except Exception:
+            depth = 3
+        depth = max(1, min(depth, 4))
         paragraph = output.add_paragraph()
         run = paragraph.add_run()
         begin = OxmlElement("w:fldChar")
         begin.set(qn("w:fldCharType"), "begin")
         instruction = OxmlElement("w:instrText")
         instruction.set(qn("xml:space"), "preserve")
-        instruction.text = 'TOC \\o "1-3" \\z \\u'
+        instruction.text = f'TOC \\o "1-{depth}" \\z \\u'
         separate = OxmlElement("w:fldChar")
         separate.set(qn("w:fldCharType"), "separate")
         placeholder = OxmlElement("w:t")
@@ -4339,10 +5884,11 @@ class Project:
     @staticmethod
     def _add_page_field(paragraph, prefix: str = "") -> None:
         """Word's PAGE field into a running part's paragraph (3.1's
-        `${Page}`): the same field shape the toc writer uses, so a folio
+        `${PageNo}`): the same field shape the toc writer uses, so a folio
         numbers itself instead of spelling "Page" down the margin. An
         optional prefix carries the tab that centres the piece — fields
-        are runs, and the run before them holds the tab."""
+        are runs, and the run before them holds the tab. The run is
+        handed back, so the caller can set the head's own type on it."""
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
 
@@ -4360,6 +5906,7 @@ class Project:
         end.set(qn("w:fldCharType"), "end")
         for element in (begin, instruction, separate, placeholder, end):
             run._r.append(element)
+        return run
 
     def docx_config_values(self, selected_ids: set[str] | None, *,
                            fmt: str = "docx") -> dict[str, str]:
@@ -4376,8 +5923,8 @@ class Project:
             values[key] = text
             values[f"Metadata.{key}"] = text
         titles = self.export_root_titles(selected_ids)
-        book = titles[0] if titles else str(self.get_setting("title", "Lekhak"))
-        values["Book"] = book
+        book = titles[0] if titles else ""
+        values["BookTitle"] = book
         values["Title"] = book
         values["Date"] = date.today().isoformat()
         values["Format"] = fmt
@@ -4435,7 +5982,8 @@ class Project:
 
     @staticmethod
     def _apply_print_headings(output, config: dict, values: dict,
-                              geometry: dict, sections=None) -> None:
+                              geometry: dict, sections=None,
+                              head_font=None) -> None:
         """``Header``/``Footer`` lines as running heads and folios
         (§3.1): one line, three pieces — left, middle, right — set on
         tab stops at the middle and the end of the text width, filled
@@ -4445,13 +5993,21 @@ class Project:
         means in practice; ``right`` is the recto one. An all-empty line
         says nothing, so the sample's own head stands (§3.1: the config
         overrides only the lines it names). A piece that is exactly
-        ``${Page}`` becomes a PAGE field, so the folio numbers the
+        ``${PageNo}`` becomes a PAGE field, so the folio numbers the
         pages rather than spelling "Page" on every one of them.
 
         ``sections`` limits the pass to one page's own section (1.18);
         the default is every section of the file. ``Header: none`` is
         the one line that means *nothing there* rather than *inherit*:
-        a title page or a dedication carries no running head.
+        a title page or a dedication carries no running head. The
+        ``first page`` pair say the same about each section's *opening*
+        page — the head a chapter opener should not wear — which Word
+        keeps apart from its other pages by a flag on the section.
+
+        ``head_font`` is the ``Head font:`` line already read out
+        (``_head_font``): the per-page pass inherits the file's answer,
+        so a page with a head of its own wears the same type as the
+        rest.
         """
         from docx.enum.text import WD_TAB_ALIGNMENT
         from docx.shared import Inches
@@ -4461,11 +6017,13 @@ class Project:
         else:
             sections = list(sections)
         width = (geometry["width"] - geometry["inside"] - geometry["outside"])
+        if head_font is None:
+            head_font = _head_font(config)
 
         def line(part, pieces):
             """One line in one running part: everything already in it is
             sample prose (or an older answer), and the writer's three
-            pieces take its place. A ``${Page}`` piece arrives still a
+            pieces take its place. A ``${PageNo}`` piece arrives still a
             marker, because the folio it stands for cannot be a string:
             it is swapped for Word's own PAGE field here."""
             paragraphs = list(part.paragraphs) or [part.add_paragraph()]
@@ -4481,9 +6039,10 @@ class Project:
             for index, piece in enumerate(pieces):
                 prefix = "\t" if index else ""
                 if piece == PAGE_MARKER:
-                    Project._add_page_field(keep, prefix)
-                    continue
-                keep.add_run(prefix + piece)
+                    run = Project._add_page_field(keep, prefix)
+                else:
+                    run = keep.add_run(prefix + piece)
+                _style_head_run(run, head_font)
 
         # Odd/even alternation on before the first part is written: until
         # Word's evenAndOddHeaders setting exists, a section's recto and
@@ -4498,8 +6057,11 @@ class Project:
             # two halves are *for*, so the pair only means something
             # when both are said. `right` is accepted as the plain key's
             # spelling and writes the same part, never a third one.
+            # `first page` is the section's opening page, which Word
+            # keeps apart from all of them.
             for suffix, which in (("", "odd"), (" left", "even"),
-                                   (" right", "odd")):
+                                   (" right", "odd"),
+                                   (" first page", "first")):
                 key = noun + suffix
                 if key not in config:
                     continue
@@ -4508,26 +6070,28 @@ class Project:
                     continue            # an empty line says nothing
                 if said.lower() in NO_RUNNING_HEAD:
                     # `Header: none` — this page carries no head. The
-                    # plain key stands for the pair, so both parts go.
+                    # plain key stands for the pair, so both parts go;
+                    # `first page` speaks for the opening page alone.
                     for section in sections:
-                        if noun == "header":
-                            pair = (section.header,
-                                    section.even_page_header)
-                        else:
-                            pair = (section.footer,
-                                    section.even_page_footer)
-                        for part in pair:
+                        if which == "first":
+                            _first_page_flag(section)
+                            part = _head_part(section, noun, which)
+                            part.is_linked_to_previous = False
+                            line(part, [])
+                            continue
+                        for part in (_head_part(section, noun, "odd"),
+                                     _head_part(section, noun, "even")):
                             part.is_linked_to_previous = False
                             line(part, [])
                     continue
                 pieces = []
                 for piece in config_headings(config[key]):
                     # The page request is recognised on the *raw* piece:
-                    # filling first would collapse `${Page}` to nothing
+                    # filling first would collapse `${PageNo}` to nothing
                     # (an unknown key renders empty), and a folio would
                     # silently become a blank middle tab.
                     spelled = _brace_aliases(piece).strip()
-                    if spelled == "${Page}":
+                    if spelled in PAGE_NAMES:
                         pieces.append(PAGE_MARKER)
                         continue
                     pieces.append(TemplateSet.fill(
@@ -4535,12 +6099,10 @@ class Project:
                 if not any(pieces):
                     continue            # an empty line says nothing
                 even_odd = even_odd or which == "even"
-                parts = (which == "odd")
                 for section in sections:
-                    if noun == "header":
-                        part = section.header if parts else section.even_page_header
-                    else:
-                        part = section.footer if parts else section.even_page_footer
+                    if which == "first":
+                        _first_page_flag(section)
+                    part = _head_part(section, noun, which)
                     part.is_linked_to_previous = False
                     line(part, pieces)
         if even_odd:
@@ -4551,9 +6113,9 @@ class Project:
         """``Font: Georgia, 11pt, 1, 1cm`` — the shorthand §3.1 gives
         (font, size, line spacing, indent) — set on the body style the
         manuscript is actually written in, overriding the sample's own
-        line by line: one config line, one override. Pieces are read one
-        at a time, so a shorter line (`Font: Georgia`) still says what
-        it says and the rest keeps the sample's answer."""
+        line by line: one config line, one override. The line's pieces
+        are read one at a time, so a shorter line (`Font: Georgia`) still
+        says what it says and the rest keeps the sample's answer."""
         from docx.shared import Inches, Pt
 
         raw = str(config.get("font", "")).strip()
@@ -4583,30 +6145,190 @@ class Project:
             if indent is not None and indent > 0.0:
                 style.paragraph_format.first_line_indent = Inches(indent)
 
+
+    def _docx_write_html(self, output, html: str, *, body_style=None,
+                         styles: dict | None = None, doc_id: str | None = None,
+                         bookmark_id: list[int] | None = None) -> None:
+        """Render a unit's HTML (from its template fragment) into DOCX.
+
+        Headings h1-h6 become Heading 1-6 so the TOC field sees them.
+        Paragraphs, lists, breaks and basic inline formatting are emitted.
+        A bookmark for the unit is placed on its first block so internal
+        links (d<doc_id>) still resolve.
+        """
+        from html.parser import HTMLParser
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        styles = styles or {}
+        bookmark_id = bookmark_id if bookmark_id is not None else [1]
+        first_block = [True]
+
+        def add_bookmark(paragraph):
+            if not doc_id or not first_block[0]:
+                return
+            bid = str(bookmark_id[0]); bookmark_id[0] += 1
+            bm = OxmlElement("w:bookmarkStart")
+            bm.set(qn("w:id"), bid); bm.set(qn("w:name"), f"d{doc_id}")
+            end = OxmlElement("w:bookmarkEnd"); end.set(qn("w:id"), bid)
+            p = paragraph._p
+            p.insert(1 if p.pPr is not None else 0, bm)
+            p.append(end)
+            first_block[0] = False
+
+        class DocxBuilder(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.inline = []
+                self.list_stack = []
+                self.href = None
+                self.current_para = None
+
+            def _ensure_para(self, style=None):
+                if self.current_para is None:
+                    self.current_para = output.add_paragraph(style=style)
+                    add_bookmark(self.current_para)
+                return self.current_para
+
+            def _close_para(self):
+                self.current_para = None
+
+            def _add_text_run(self, para, text):
+                if text == "":
+                    return
+                # split link tokens \x02id\x03text\x04 (2.2 internal links)
+                import re as _re
+                pos = 0
+                for m in _re.finditer(r"\x02([^\x03]+)\x03([^\x04]*)\x04", text):
+                    if m.start() > pos:
+                        self._add_plain_run(para, text[pos:m.start()])
+                    self._add_hyperlink_run(para, m.group(1), m.group(2))
+                    pos = m.end()
+                if pos < len(text):
+                    self._add_plain_run(para, text[pos:])
+
+            def _add_plain_run(self, para, text):
+                parts = text.split(PAGE_MARKER)
+                for i, part in enumerate(parts):
+                    if i:
+                        Project._add_page_field(para)
+                    if not part:
+                        continue
+                    run = para.add_run(part)
+                    if "b" in self.inline: run.bold = True
+                    if "i" in self.inline: run.italic = True
+                    if "u" in self.inline: run.underline = True
+
+            def _add_hyperlink_run(self, para, target_id, label):
+                hyperlink = OxmlElement("w:hyperlink")
+                hyperlink.set(qn("w:anchor"), f"d{target_id}")
+                run = OxmlElement("w:r")
+                rPr = OxmlElement("w:rPr")
+                rStyle = OxmlElement("w:rStyle"); rStyle.set(qn("w:val"), "Hyperlink")
+                rPr.append(rStyle)
+                run.append(rPr)
+                t = OxmlElement("w:t"); t.set(qn("xml:space"), "preserve")
+                t.text = label
+                run.append(t)
+                hyperlink.append(run)
+                para._p.append(hyperlink)
+
+            def _add_run(self, text):
+                if not text:
+                    return
+                para = self.current_para
+                if para is None:
+                    para = self._ensure_para(style=body_style)
+                self._add_text_run(para, text)
+
+            def handle_starttag(self, tag, attrs):
+                tag = tag.lower()
+                attrs_d = dict(attrs)
+                if tag in ("h1","h2","h3","h4","h5","h6"):
+                    self._close_para()
+                    style = styles.get(tag) or f"Heading {tag[1]}"
+                    self.current_para = output.add_paragraph(style=style)
+                    add_bookmark(self.current_para)
+                elif tag == "p":
+                    self._close_para()
+                    # page-break-before style hint
+                    style_attr = attrs_d.get("style", "")
+                    self.current_para = output.add_paragraph(style=body_style)
+                    add_bookmark(self.current_para)
+                    if "page-break-before" in style_attr:
+                        try:
+                            self.current_para.paragraph_format.page_break_before = True
+                        except Exception:
+                            pass
+                elif tag == "br":
+                    para = self.current_para or self._ensure_para(style=body_style)
+                    para.add_run().add_break()
+                elif tag in ("ul","ol"):
+                    self._close_para()
+                    self.list_stack.append(tag)
+                elif tag == "li":
+                    self._close_para()
+                    lstyle = "List Bullet" if (self.list_stack and self.list_stack[-1]=="ul") else "List Number"
+                    self.current_para = output.add_paragraph(style=lstyle)
+                    add_bookmark(self.current_para)
+                elif tag in ("strong","b"):
+                    self.inline.append("b")
+                elif tag in ("em","i"):
+                    self.inline.append("i")
+                elif tag == "u":
+                    self.inline.append("u")
+                elif tag == "a":
+                    self.inline.append("a")
+                    self.href = attrs_d.get("href")
+                elif tag == "blockquote":
+                    self._close_para()
+                    self.current_para = output.add_paragraph(style="Quote")
+                    add_bookmark(self.current_para)
+                elif tag in ("div","section","article","nav","header","footer","main","figure","figcaption"):
+                    self._close_para()
+                elif tag == "hr":
+                    self._close_para()
+                    output.add_paragraph("—")
+
+            def handle_endtag(self, tag):
+                tag = tag.lower()
+                if tag in ("h1","h2","h3","h4","h5","h6","p","li","blockquote"):
+                    self._close_para()
+                elif tag in ("ul","ol"):
+                    if self.list_stack: self.list_stack.pop()
+                    self._close_para()
+                elif tag in ("strong","b"):
+                    if "b" in self.inline: self.inline.remove("b")
+                elif tag in ("em","i"):
+                    if "i" in self.inline: self.inline.remove("i")
+                elif tag == "u":
+                    if "u" in self.inline: self.inline.remove("u")
+                elif tag == "a":
+                    if "a" in self.inline: self.inline.remove("a")
+                    self.href = None
+                elif tag in ("div","section","article","nav","header","footer","main","figure","figcaption"):
+                    self._close_para()
+
+            def handle_data(self, data):
+                if data is None:
+                    return
+                self._add_run(data)
+
+        # normalize: strip style/head wrappers not useful here
+        DocxBuilder().feed(html or "")
+
+
     def export_docx(self, destination: Path, selected_ids: set[str] | None = None,
                     templates: TemplateSet | None = None, *,
                     fmt: str = "docx") -> None:
-        """DOCX keeps structural headings (title as Heading 1/2) and plain
-        body text — the structure is not the fragments' here, but its
-        *typography* is the template's to say (§3.1). A title page comes
-        first, then a Word TOC field (page numbers only), which Word or
-        LibreOffice fills in on field update; every document then starts a
-        page of its own, where the print config does not say otherwise.
+        """Export as DOCX, rendering template fragments (structure/headings)
+        rather than role-stamped headings and plain-text body.
 
-        Print handling, the one rule (§3.1): the template's sample
-        ``.docx`` supplies everything — paper, styles, running heads —
-        each config line overrides it, and page setup (1.15), else the
-        A4 baseline, stands only where the template said nothing. The
-        set used is the export's own (the chooser's answer, §2.1): one
-        file carries one paper, so a subtree's other assignment dresses
-        its prose but not this file's trim.
-
-        ``fmt`` is the format this file is being written *for* (§1.3): a
-        DOCX export says "docx", and PDF — this same compile converted by
-        LibreOffice — says "pdf", so one set may hold a ``docx/`` folder
-        and a ``pdf/`` folder that differ in margins, blank pages or ToC
-        style while everything else about it stays shared.
+        Page/section layout, running heads and page setup still follow the
+        print config and template rules; a ${ToC} unit inserts a Word TOC
+        field whose depth follows that unit's contents configuration.
         """
+        self._require_metadata_for_export(selected_ids)
         from docx import Document as DocxDocument
         from docx.enum.section import WD_SECTION_START
         from docx.oxml import OxmlElement
@@ -4614,9 +6336,6 @@ class Project:
 
         templates = (templates or TemplateSet.builtin()).for_format(fmt)
         if templates.prints_nothing:
-            # `no export` (§3): the set defines no content anywhere, so
-            # neither does the file — no title page, no contents field,
-            # no headings, no prose. An empty document, saved properly.
             self._save_docx(DocxDocument(), destination)
             return
         config = dict(templates.docx_config or {})
@@ -4624,72 +6343,110 @@ class Project:
         sample = open_docx_sample(templates.docx_sample)
         output = sample if sample is not None else DocxDocument()
         geometry, stated = self._docx_geometry(config, sample, scope)
-        # The `Font` line is the config's one claim on the typography of
-        # the body (§3.1), and it lands before anything is written into
-        # the document so the sample's own answer is what it overrides.
         self._apply_print_font(output, config)
         output.core_properties.title = self.get_setting("title", "Lekhak")
-        # Title page (Phase 1 baseline): the writing's own name — the selected
-        # container, or the project's title for a whole-project export — with
-        # the author only if the project actually carries one (a collection of
-        # protest fliers has no author, and that is not our business). Every
-        # export gets one, including a single selected document. A sample
-        # may own different style names for it, and the config says which.
-        #
-        author = ""
+
         entries = self.project_metadata()
+        author = ""
         if "Author" in entries:
             author = (entries["Author"][0] or "").strip()
         assembled = scope["export_docs"]
-        toc_at = 0
-        # Recto chapter openers are a print-book behaviour: page setup already
-        # gave them to a book with a trim (1.15), and a template that states
-        # a trim other than the baseline's own A4 is stating the same thing.
-        # A4 is where an export starts, not a book's paper.
         trim_stated = stated and geometry["trim"] != DEFAULT_PAGE_SETUP["trim"]
-        bookmark_id = 1
         first = True
         body_style = paragraph_style(output, config.get("body style"))
-        # A sample may name its own styles for the headings (§3.1: a style
-        # mapping is the one thing that cannot be inferred, so the config
-        # says it); an unreadable mapping — or a sample missing the
-        # built-in — degrades to no style rather than to an exception.
-        chapter_style = (paragraph_style(output, config.get("chapter style"))
-                         or paragraph_style(output, "Heading 1"))
-        scene_style = (paragraph_style(output, config.get("scene style"))
-                       or paragraph_style(output, "Heading 2"))
         containers = {parent for parent in scope["parent_map"].values() if parent}
         explicit = scope.get("explicit_breaks", set())
-        # Pages that carry a section of their own (1.18): index into
-        # output.sections — recorded as an index, because every later
-        # add_section() appends and a Section object would follow the
-        # sentinel rather than the page it was taken for.
         layout: list[tuple[int, dict | None, dict]] = []
+        bookmark_id = [1]
+        set_for = self._template_resolver(templates, fmt)
+
+        # Render per-unit HTML like compile_units so DOCX follows template
+        # fragments/headings, while keeping document/section/page handling.
+        chapter_scenes = scope["chapter_scenes"]
+        ordered = scope["ordered"]
+        # Build a quick map from doc id to rendered content for assembled docs.
+        # Use compile_units to get final rendered HTML bodies in order? Easier:
+        # render each assembled document the same way compile_units would for
+        # standalone/folder units and for chapter units (including children).
+        rendered_by_id: dict[str, str] = {}
+        chapter_number = 0
+        scene_number = 0
+        words_total = 0
+        total_words = sum(d.word_count for d in assembled)
+        pages_total = max(1, -(-total_words // 250)) if total_words else 0
+        self._toc_str = TOC_SENTINEL
+        # pre-render assembled units in document order
+        # chapters: render folder slot with children (as compile_units)
+        # others: render as unit
+        # We need to follow compile_units logic for chapters inside selection.
+        # For simplicity and correctness, render via a subset approach:
+        # For each document in assembled, if it's a chapter in ordered context
+        # render as compile_units would when iterating ordered; otherwise unit.
+        # But assembled may be arbitrary selection. Fall back: if chapter has
+        # scenes in scope, render as chapter unit; else render as plain unit.
+        for document in ordered:
+            if document.kind == "chapter":
+                chapter_number += 1
+                scene_number = 0
+                book = set_for(document.id)
+                own = self._prepare_links(
+                    self.read_content(document.id), source_id=document.id,
+                    scope=scope, fmt=fmt, html=True)
+                own = self.expand_shortcodes(
+                    document, own, html=True,
+                    extra=_template_numbers(chapter_number, 0, words_total))
+                divider = (document.scene_divider or "").strip()
+                scene_rendered = []
+                by_name = {}
+                for index, scene in enumerate(chapter_scenes.get(document.id, [])):
+                    scene_number += 1
+                    if index > 0 and divider:
+                        from html import escape as _esc
+                        scene_rendered.append(
+                            '<p class="scene-divider">' + _esc(divider) + '</p>')
+                    scene_set = set_for(scene.id)
+                    extra = _template_numbers(
+                        chapter_number, scene_number, words_total + scene.word_count)
+                    rendered = self._render_document(
+                        scene, scene_set, True, slot="document", extra=extra,
+                        scope=scope, fmt=fmt, pages_total=pages_total)
+                    scene_rendered.append(rendered)
+                    for name in (self.type_of(scene), scene.kind):
+                        by_name.setdefault(name.casefold(), []).append(rendered)
+                    words_total += scene.word_count
+                extra = _template_numbers(chapter_number, 0, words_total)
+                extra["children"] = "\n".join(scene_rendered)
+                body = self._render_document(
+                    document, book, True, slot="folder",
+                    content=own if own.strip() else "",
+                    extra=extra, scope=scope, fmt=fmt, children=by_name,
+                    pages_total=pages_total)
+                words_total += document.word_count
+                rendered_by_id[document.id] = body
+            else:
+                scene_number += 1
+                scene_set = set_for(document.id)
+                extra = _template_numbers(chapter_number, scene_number, words_total)
+                slot = "folder" if document.kind == "folder" else None
+                body = self._render_document(
+                    document, scene_set, True, slot=slot, extra=extra,
+                    scope=scope, fmt=fmt, pages_total=pages_total)
+                words_total += document.word_count
+                rendered_by_id[document.id] = body
+
         for position, document in enumerate(assembled):
-            # Baseline (Phase 1): every exported document starts a fresh
-            # page — the first needs no break, there being nothing above it.
-            # The print config's `New Chapter`/`New Scene` default sits
-            # under a page start somebody actually chose, and over this
-            # baseline; a template that stated paper puts chapters recto
-            # the same way a book's own page setup does.
             start = scope.get("breaks", {}).get(document.id, "page")
-            # The design this page wears (1.17/1.18): its page start and
-            # its own margins and running heads, which speak for its own
-            # section while the book's paper stays the book's.
-            own = (self.template_config(document.doc_template)
-                   if document.doc_template else {})
-            page_margins = config_margins(own)
-            page_heads = {key: value for key, value in own.items()
+            own_cfg = (self.template_config(document.doc_template)
+                       if document.doc_template else {})
+            page_margins = config_margins(own_cfg)
+            page_heads = {key: value for key, value in own_cfg.items()
                           if key in RUNNING_HEAD_KEYS}
             key = ("new chapter" if document.kind == "chapter"
                    else "new scene" if document.kind == "scene" else None)
             if document.id not in explicit and key is not None:
                 demanded = page_break_value(config.get(key, ""))
                 if demanded is None:
-                    # The template this document wears may state a page
-                    # start of its own (1.17): the design's say, under
-                    # the print config's and over the baseline.
-                    demanded = page_break_value(own.get(key, ""))
+                    demanded = page_break_value(own_cfg.get(key, ""))
                 if demanded is not None:
                     start = demanded
                 elif (start == "page" and trim_stated
@@ -4698,19 +6455,11 @@ class Project:
                     start = "right"
             page_section = len(output.sections) - 1
             if not first:
-                # 1.6 page starts: a marked document opens a new section with
-                # the demanded parity; Word itself inserts the blank page when
-                # the flow lands on the wrong side. "right" and "next-odd" are
-                # the same demand (recto = odd in an LTR book) and emit the
-                # same section type, likewise left/next-even — the values are
-                # the writer's vocabulary, not seven behaviours.
                 if start in ("right", "next-odd"):
                     output.add_section(WD_SECTION_START.ODD_PAGE)
                 elif start in ("left", "next-even"):
                     output.add_section(WD_SECTION_START.EVEN_PAGE)
                 elif page_margins or page_heads:
-                    # A page whose design says something about its own
-                    # margins or heads needs a section to say it in.
                     output.add_section(
                         WD_SECTION_START.CONTINUOUS if start == "flow"
                         else WD_SECTION_START.NEW_PAGE)
@@ -4720,50 +6469,32 @@ class Project:
             if page_margins or page_heads:
                 layout.append((page_section, page_margins, page_heads))
             first = False
-            heading = output.add_paragraph(
-                document.title,
-                style=(chapter_style if document.kind == "chapter"
-                       else scene_style))
-            # 2.2: every heading carries a bookmark, so a published
-            # [[link]] becomes a real Word-internal hyperlink.
-            bookmark = OxmlElement("w:bookmarkStart")
-            bookmark.set(qn("w:id"), str(bookmark_id))
-            bookmark.set(qn("w:name"), f"d{document.id}")
-            finish = OxmlElement("w:bookmarkEnd")
-            finish.set(qn("w:id"), str(bookmark_id))
-            p_element = heading._p
-            p_element.insert(1 if p_element.pPr is not None else 0, bookmark)
-            p_element.append(finish)
-            bookmark_id += 1
-            # Contents page: a document whose template carries ${ToC} gets
-            # the Word table-of-contents field here instead of its prose.
-            _tmpl = (templates.document_slot(document.doc_template, html=True)
-                     if document.doc_template
-                     else templates.slot("folder" if document.kind == "chapter"
-                                         else "document", html=True))
-            if "${ToC}" in (_tmpl or ""):
-                self._add_toc_field(output)
+
+            html_body = rendered_by_id.get(document.id, "")
+            # Contents/ToC unit: insert Word TOC field (depth from this unit).
+            if "${ToC}" in html_body or self._document_template_is_toc(document, templates):
+                toc_depth = self._toc_config(document.id)["depth"]
+                self._add_toc_field(output, depth=toc_depth)
                 continue
-            content = self._prepare_links(
-                self.read_content(document.id), source_id=document.id,
-                scope=scope, fmt=fmt, html=True)
-            plain = self.expand_shortcodes(
-                document, self.plain_text(content), html=False)
-            for paragraph_text in plain.split("\n"):
-                if paragraph_text.strip():
-                    self._docx_paragraph(output, paragraph_text.strip(),
-                                         style=body_style)
-        # (contents page removed: no mandated content — the writer
-        #  designs it with a binder document and a template.)
-        # Paper and running heads: the sample's, corrected by the config,
-        # or page setup (1.15), or A4 — in that order, and one source
-        # rather than a cascade (§1 "The trim lives in the template").
+
+            if html_body.strip():
+                self._docx_write_html(output, html_body, body_style=body_style,
+                                      doc_id=document.id, bookmark_id=bookmark_id)
+            else:
+                # Keep a bookmarkable empty anchor so links don't break badly.
+                para = output.add_paragraph(style=body_style)
+                bid = str(bookmark_id[0]); bookmark_id[0] += 1
+                bm = OxmlElement("w:bookmarkStart")
+                bm.set(qn("w:id"), bid); bm.set(qn("w:name"), f"d{document.id}")
+                end = OxmlElement("w:bookmarkEnd"); end.set(qn("w:id"), bid)
+                p = para._p
+                p.insert(1 if p.pPr is not None else 0, bm)
+                p.append(end)
+
         _apply_page_geometry(output, geometry)
         values = self.docx_config_values(selected_ids, fmt=fmt)
         self._apply_print_headings(output, config, values, geometry)
-        # A page's own design, section by section (1.18): the book's
-        # paper with wider margins — a title page's, a dedication's —
-        # and its own running heads, `Header: none` included.
+        head_font = _head_font(config)
         sections = output.sections
         for index, margins, heads in layout:
             if index >= len(sections):
@@ -4776,15 +6507,15 @@ class Project:
                 _apply_section_margins(sections[index], cleaned)
             if heads:
                 self._apply_print_headings(output, heads, values, cleaned,
-                                           sections=[sections[index]])
+                                           sections=[sections[index]],
+                                           head_font=head_font)
         self._save_docx(output, destination)
+
+
 
     @staticmethod
     def _save_docx(output, destination) -> None:
-        """Write an open document to ``destination`` atomically: a temp
-        file in the same directory, then os.replace — the same contract
-        document prose uses, so an interrupted export never leaves half a
-        file where a real one was going."""
+        """Write an open document to ``destination`` atomically."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary_name = tempfile.mkstemp(
@@ -4798,40 +6529,51 @@ class Project:
             raise
 
     @staticmethod
+    def _docx_page_break_flags(html: str) -> list[bool]:
+        flags: list[bool] = []
+        for match in re.finditer(r"<p\b[^>]*>(.*?)</p>", html, flags=re.I | re.S):
+            inner = match.group(1)
+            text = re.sub(r"<[^>]+>", "", inner)
+            if not text.strip():
+                continue
+            opening = match.group(0).split(">", 1)[0]
+            flags.append("page-break-before" in opening)
+        return flags
+
+    @staticmethod
     def _docx_paragraph(output, text: str, style: str | None = None) -> None:
-        """One plain-text DOCX paragraph, with link tokens (2.2) split
-        out into w:hyperlink runs anchored at the target heading's
-        ``d<doc_id>`` bookmark. python-docx has no hyperlink API, so the
-        elements are built by hand. ``style`` is the print config's
-        ``Font``/``Body style`` answer when the template said one."""
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
 
         paragraph = output.add_paragraph(style=style)
-        position = 0
-        for match in LINK_TOKEN_RE.finditer(text):
-            if match.start() > position:
-                paragraph.add_run(text[position:match.start()])
-            hyperlink = OxmlElement("w:hyperlink")
-            hyperlink.set(qn("w:anchor"), f"d{match.group(1)}")
-            run = OxmlElement("w:r")
-            props = OxmlElement("w:rPr")
-            color = OxmlElement("w:color")
-            color.set(qn("w:val"), "0563C1")
-            underline = OxmlElement("w:u")
-            underline.set(qn("w:val"), "single")
-            props.append(color)
-            props.append(underline)
-            run.append(props)
-            node = OxmlElement("w:t")
-            node.set(qn("xml:space"), "preserve")
-            node.text = match.group(2)
-            run.append(node)
-            hyperlink.append(run)
-            paragraph._p.append(hyperlink)
-            position = match.end()
-        if position < len(text):
-            paragraph.add_run(text[position:])
+        for index, segment in enumerate(text.split(PAGE_MARKER)):
+            if index:
+                Project._add_page_field(paragraph)
+            position = 0
+            for match in LINK_TOKEN_RE.finditer(segment):
+                if match.start() > position:
+                    paragraph.add_run(segment[position:match.start()])
+                hyperlink = OxmlElement("w:hyperlink")
+                hyperlink.set(qn("w:anchor"), f"d{match.group(1)}")
+                run = OxmlElement("w:r")
+                props = OxmlElement("w:rPr")
+                color = OxmlElement("w:color")
+                color.set(qn("w:val"), "0563C1")
+                underline = OxmlElement("w:u")
+                underline.set(qn("w:val"), "single")
+                props.append(color)
+                props.append(underline)
+                run.append(props)
+                node = OxmlElement("w:t")
+                node.set(qn("xml:space"), "preserve")
+                node.text = match.group(2)
+                run.append(node)
+                hyperlink.append(run)
+                paragraph._p.append(hyperlink)
+                position = match.end()
+            if position < len(segment):
+                paragraph.add_run(segment[position:])
+
 
     def export_epub(self, destination: Path, selected_ids: set[str] | None = None,
                     templates: TemplateSet | None = None) -> None:
@@ -4847,6 +6589,7 @@ class Project:
         turns pages by unit, so the form-feed question that text export
         had to settle does not arise here.
         """
+        self._require_metadata_for_export(selected_ids)
         templates = (templates or TemplateSet.builtin()).for_format("epub")
         units = self.compile_units(selected_ids, templates, html=True,
                                    fmt="epub")
@@ -4881,6 +6624,21 @@ class Project:
                 cover_meta = "<meta name='cover' content='cover-image'/>"
                 cover_entry = (f"OEBPS/{href}", cover_path.read_bytes())
         manifest, spine, nav_items, pages = [], [], [], []
+        # EPUB needs a cover *page* in the spine, not just the metadata
+        # image — readers that ignore properties='cover-image' need the
+        # visible first page. Generated here, not by any template set,
+        # so the astray set (which has no cover slot) still ships a cover.
+        if cover_path is not None and cover_entry:
+            _href = cover_entry[0].removeprefix("OEBPS/")
+            cover_page = (
+                "<?xml version='1.0' encoding='utf-8'?>"
+                "<html xmlns='http://www.w3.org/1999/xhtml' "
+                "xmlns:epub='http://www.idpf.org/2007/ops'>"
+                "<head><title>Cover</title></head><body epub:type='cover'>"
+                f"<img src='{_href}' alt='Cover'/></body></html>")
+            pages.append(("cover.xhtml", cover_page))
+            manifest.append("<item id='cover-page' href='cover.xhtml' media-type='application/xhtml+xml'/>")
+            spine.insert(0, "<itemref idref='cover-page'/>")
         # The set's stylesheet (§3.2) ships as one file every page links
         # — the EPUB way — rather than repeated in each head.
         css = templates.css()
@@ -4895,7 +6653,11 @@ class Project:
                 f"{header}{body}{footer}</body></html>"))
             manifest.append(f"<item id='{item_id}' href='{filename}' media-type='application/xhtml+xml'/>")
             spine.append(f"<itemref idref='{item_id}'/>")
-            nav_items.append(f"<li><a href='{filename}'>{escape(title)}</a></li>")
+        # The nav follows the same rule as a contents page — the headings
+        # the export produced, nested by their level (§3.2) — so a
+        # reader's table and a printed one cannot disagree.
+        nav_items = [_toc_markup(_toc_entries(units, skip=self._toc_units),
+                                 links=True)]
         # (contents page removed: no mandated content — the writer
         #  designs it with a binder document and a template.)
         if css.strip():
@@ -4912,6 +6674,14 @@ class Project:
             author = (entries["Author"][0] or "").strip()
         creator = (f"<dc:creator>{escape(author)}</dc:creator>"
                    if author else "")
+        lang_value = (entries.get("Language", ("",))[0] or "").strip()
+        if not lang_value:
+            try:
+                from PySide6.QtCore import QLocale
+                lang_value = QLocale.system().name().split("_")[0]
+            except Exception:
+                lang_value = "en"
+        language = escape(lang_value)
         manifest.append(cover_item)
         nav = ("<?xml version='1.0' encoding='utf-8'?><html xmlns='http://www.w3.org/1999/xhtml' "
             "xmlns:epub='http://www.idpf.org/2007/ops'><head><title>Contents</title></head>"
@@ -4919,7 +6689,7 @@ class Project:
         opf = ("<?xml version='1.0' encoding='utf-8'?><package xmlns='http://www.idpf.org/2007/opf' "
             "version='3.0' unique-identifier='book-id'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>"
             f"<dc:identifier id='book-id'>{uuid.uuid4().urn}</dc:identifier><dc:title>{title}</dc:title>"
-            f"<dc:language>en</dc:language>{creator}{cover_meta}</metadata><manifest>"
+            f"<dc:language>{language}</dc:language>{creator}{cover_meta}</metadata><manifest>"
             "<item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/>"
             f"{''.join(manifest)}</manifest><spine>{''.join(spine)}</spine></package>")
         container = ("<?xml version='1.0' encoding='UTF-8'?><container version='1.0' "
@@ -4961,28 +6731,79 @@ class Project:
             Path(temporary_name).unlink(missing_ok=True)
             raise
 
-    def backup(self, keep: int = 10) -> Path:
+    def _project_changed_since(self, when: float) -> bool:
+        """Best-effort check: has anything in the project changed since `when`?
+
+        Used to avoid creating identical timestamped backups when nothing
+        changed. Checks the database and files in the project tree.
+        """
+        try:
+            paths = [self.db_path]
+            for entry in self.root.rglob("*"):
+                if not entry.is_file():
+                    continue
+                # skip sqlite side files except main db; also skip nothing else critical
+                if entry.name in {self.db_path.name + "-wal", self.db_path.name + "-shm"}:
+                    continue
+                paths.append(entry)
+            for p in paths:
+                try:
+                    if p.stat().st_mtime > when:
+                        return True
+                except OSError:
+                    return True
+            return False
+        except Exception:
+            return True
+
+    def backup(self, keep: int = 10, *, force: bool = False) -> Path | None:
         """Copy the project into a timestamped folder outside itself, then prune.
 
         Checkpoints the WAL first so the copied database is self-contained,
         and keeps only the newest ``keep`` backups. The copy is the folder
-        tree as it stands, so a backup opens like the project.
+        tree as it stands, so a backup opens like the project. Templates
+        and trash are included (normal binder folders, with rows pointing
+        into them); a legacy inside ``backups/`` is not.
+
+        A read-only project is not backed up: nothing in it changed, and
+        the copy would land beside the software's own files — in the
+        install folder, where it does not belong. None says so.
         """
+        if self.read_only:
+            return None
         self.db.execute("PRAGMA wal_checkpoint(FULL)")
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup_directory = self.backup_directory()
         backup_directory.mkdir(parents=True, exist_ok=True)
+        # Avoid creating a new backup when nothing changed since the last
+        # timestamped backup, unless explicitly forced.
+        if not force:
+            try:
+                existing = sorted(
+                    (p for p in backup_directory.iterdir()
+                     if p.is_dir() and BACKUP_STAMP_RE.fullmatch(p.name)),
+                    reverse=True,
+                )
+                if existing:
+                    latest = existing[0]
+                    # if nothing in project changed after latest backup was made
+                    if not self._project_changed_since(latest.stat().st_mtime):
+                        self.set_setting("last_backup", datetime.now(timezone.utc).isoformat())
+                        return latest
+            except Exception:
+                pass
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         destination = backup_directory / stamp
         destination.mkdir(parents=True)
         shutil.copy2(self.db_path, destination / self.db_path.name)
         # The manuscript is copied as the folder tree it is, so a backup
         # reads like the project (docs/STORAGE.md).
         for entry in self.root.iterdir():
-            if entry.name in (self.db_path.name, "backups"):
+            if entry.name in (self.db_path.name, "backups",
+                              self.db_path.name + "-wal",
+                              self.db_path.name + "-shm"):
                 continue
             if entry.is_dir():
-                shutil.copytree(entry, destination / entry.name,
-                                ignore=shutil.ignore_patterns(".*"))
+                shutil.copytree(entry, destination / entry.name)
             else:
                 shutil.copy2(entry, destination / entry.name)
         # Prune only our own backups. The backup folder is the writer's to
@@ -5169,3 +6990,373 @@ class Project:
             self.db.execute("DELETE FROM documents WHERE id=?", (document_id,))
         self.content_path(document_id).unlink(missing_ok=True)
         return len(moved)
+
+    def validate_alignment(self) -> list[str]:
+        """Check that manifest.json, .order.json files and DB are in sync.
+
+        Returns a list of problems found, or an empty list if everything is aligned.
+        This is a read-only check that never modifies the project.
+
+        A disagreement is a real prompt, not a silent fix-up: the caller
+        is expected to ask the writer which side is right (see
+        :meth:`apply_manifest` and :meth:`apply_order_files`).
+        """
+        problems: list[str] = []
+
+        # 1. Check DB integrity first
+        integrity = self.db.execute("PRAGMA integrity_check").fetchone()
+        if integrity[0] != "ok":
+            problems.append(f"Database integrity check failed: {integrity[0]}")
+
+        # 2. Check that folders with .order.json match DB folders.
+        #    A folder here is any document backed by a directory on disk
+        #    (folder, chapter, or a leaf promoted to a container) — the
+        #    same test write_order_files() uses. Templates and trash are
+        #    normal folders, so they are checked like any other. Only a
+        #    legacy inside ``backups/`` and ``.lekhak/`` are not
+        #    binder folders.
+        system_trees = {"backups", ".lekhak"}
+
+        def _is_system(path_str: str) -> bool:
+            return path_str.split("/")[0].casefold() in system_trees
+
+        # Backups should never exist inside the project at all — they
+        # live outside (backup_directory()), so an inside folder is an
+        # error to report, not something to silently skip.
+        if (self.root / "backups").exists():
+            problems.append(INSIDE_BACKUPS_PROBLEM)
+
+        folders_with_order = {
+            str(path.parent.relative_to(self.root))
+            for path in self.root.rglob(".order.json")
+            if path.parent != self.root
+            and not _is_system(str(path.parent.relative_to(self.root)))
+        }
+        folders_in_db = {
+            document.path
+            for document in self.documents()
+            if document.path and (self.root / document.path).is_dir()
+        }
+
+        missing_in_db = folders_with_order - folders_in_db
+        for folder_path in sorted(missing_in_db):
+            problems.append(f"Folder {folder_path} has .order.json but no DB row")
+
+        # A folder the DB knows must have its order file: the writer may
+        # have deleted it, or a folder was copied in from outside without
+        # one. (An unreadable or malformed one is flagged in check 4.)
+        for document in self.documents():
+            if (document.path and (self.root / document.path).is_dir()
+                    and not _is_system(document.path)):
+                order_file = self.root / document.path / ".order.json"
+                if not order_file.exists():
+                    problems.append(
+                        f"Folder {document.path} has a DB row but no .order.json")
+
+        # 3. Check manifest.json children match root-level DB items
+        manifest_children = set()
+        manifest_ordered: list[str] = []
+        manifest_path = self.root / "manifest.json"
+        if manifest_path.exists():
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("children"), list):
+                    manifest_ordered = [str(item) for item in data["children"]]
+                    manifest_children = set(manifest_ordered)
+            except (json.JSONDecodeError, OSError):
+                problems.append("manifest.json is unreadable")
+
+        root_items_in_db = {
+            d.path.split("/")[0] if "/" in d.path else d.path
+            for d in self.documents()
+            if not d.parent_id and d.path
+        }
+
+        # Filter out system folders (first component, case-insensitive)
+        user_root_items = {
+            item
+            for item in root_items_in_db
+            if item.casefold() not in system_trees
+        }
+
+        if manifest_children != user_root_items:
+            missing_in_manifest = user_root_items - manifest_children
+            extra_in_manifest = manifest_children - user_root_items
+            for item in sorted(missing_in_manifest):
+                problems.append(f"Root item {item} missing from manifest.json")
+            for item in sorted(extra_in_manifest):
+                problems.append(f"Item {item} in manifest.json but not in DB")
+        else:
+            # Same items, different sequence — a hand-rearranged manifest
+            # (or a DB reordered without writing). Either way it is a
+            # disagreement to ask about, not to smooth over.
+            db_root_ordered = [
+                d.path.split("/")[0] if "/" in d.path else d.path
+                for d in sorted(
+                    (d for d in self.documents()
+                     if not d.parent_id and d.path),
+                    key=lambda d: d.position)
+                if d.path.split("/")[0].casefold() not in system_trees
+            ]
+            if manifest_ordered != db_root_ordered:
+                problems.append(
+                    "Root order in manifest.json differs from the database")
+
+        # 4. Check that every folder's .order.json matches its DB children
+        for order_path in self.root.rglob(".order.json"):
+            if order_path.name == "manifest.json":
+                continue
+            if _is_system(str(order_path.parent.relative_to(self.root))):
+                continue  # trash/backups trees are not binder folders
+
+            parent_path = str(order_path.parent.relative_to(self.root))
+            try:
+                order_data = json.loads(order_path.read_text(encoding="utf-8"))
+                if not isinstance(order_data, dict) or not isinstance(order_data.get("children"), list):
+                    problems.append(f"{order_path.relative_to(self.root)}: invalid format")
+                    continue
+                order_ordered = [str(item) for item in order_data["children"]]
+                # index.html is the folder's own page, not a child: it
+                # leads the order but is no child of the binder.
+                order_children = {c for c in order_ordered if c != "index.html"}
+            except (json.JSONDecodeError, OSError):
+                problems.append(f"{order_path.relative_to(self.root)}: unreadable")
+                continue
+
+            # Find parent ID
+            parent_id = None
+            for doc in self.documents():
+                if doc.path == parent_path:
+                    parent_id = doc.id
+                    break
+
+            if parent_id:
+                siblings = sorted(
+                    (d for d in self.documents() if d.parent_id == parent_id),
+                    key=lambda d: d.position)
+                db_ordered = [
+                    d.path.split("/")[-1] if "/" in d.path else d.path
+                    for d in siblings
+                    if d.path and d.path.split("/")[-1] not in (".locked", "index.html")
+                ]
+                db_children = {
+                    d.path.split("/")[-1] if "/" in d.path else d.path
+                    for d in self.documents()
+                    if d.parent_id == parent_id
+                }
+                # Filter out system files and index.html
+                db_children = {c for c in db_children if c not in (".locked", "index.html")}
+
+                if order_children != db_children:
+                    for child in sorted(db_children - order_children):
+                        problems.append(
+                            f"{order_path.relative_to(self.root)}: {child} missing from order file")
+                    for child in sorted(order_children - db_children):
+                        if child != "index.html":  # index.html is special
+                            problems.append(
+                                f"{order_path.relative_to(self.root)}: {child} extra in order file")
+                elif [c for c in order_ordered if c != "index.html"] != db_ordered:
+                    problems.append(
+                        f"{order_path.relative_to(self.root)}: order differs from the database")
+
+        return problems
+
+    def reconcile(self, *, dry_run: bool = False) -> dict[str, int]:
+        """Bring all synchronization files into alignment with the database.
+
+        Rewrites .order.json files and manifest.json to match the DB state.
+        Returns a dict with counts of changes made (or what would be changed
+        in dry_run mode).
+
+        Use with caution: this rewrites synchronization files. It is the
+        responsibility of the caller to ensure a backup exists if needed.
+        """
+        changes = {"order_files": 0, "manifest": 0}
+
+        # Find all containers: any document backed by a directory on
+        # disk, the same test write_order_files() uses. This covers
+        # empty folders and empty chapters alike.
+        containers = [
+            d
+            for d in self.documents()
+            if d.path and (self.root / d.path).is_dir()
+        ]
+
+        for container in containers:
+            if not container.path:
+                continue
+            folder_path = self.root / container.path
+            if not folder_path.is_dir():
+                continue
+
+            order_path = folder_path / ".order.json"
+
+            # Get children from DB
+            children = [
+                d.path.split("/")[-1] if "/" in d.path else d.path
+                for d in self.documents()
+                if d.parent_id == container.id
+            ]
+
+            # Read existing order
+            try:
+                existing = json.loads(order_path.read_text(encoding="utf-8"))
+                old_children = set(existing.get("children", []))
+            except (json.JSONDecodeError, OSError):
+                old_children = set()
+
+            new_children = set(children)
+
+            if old_children != new_children and not dry_run:
+                order_path.write_text(
+                    json.dumps({"children": children}, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+                changes["order_files"] += 1
+            elif old_children != new_children:
+                changes["order_files"] += 1  # Would change
+
+        # Root children, excluding system trees (matched on the first
+        # path component). Templates and trash are normal folders and
+        # appear in the manifest like any other.
+        _system = {"backups", "images", ".lekhak"}
+        root_children = [
+            d.path.split("/")[-1] if "/" in d.path else d.path
+            for d in self.documents()
+            if not d.parent_id
+            and d.path
+            and d.path.split("/")[0].casefold() not in _system
+        ]
+
+        manifest_path = self.root / "manifest.json"
+        old_manifest = {}
+        try:
+            old_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+        old_children = set(old_manifest.get("children", []))
+        new_children = set(root_children)
+
+        if (old_children != new_children or
+                old_manifest.get("title") != self.get_setting("title")) and not dry_run:
+            manifest_path.write_text(
+                json.dumps({
+                    "title": self.get_setting("title") or self.root.stem,
+                    "version": 1,
+                    "children": root_children
+                }, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8")
+            changes["manifest"] = 1
+        elif old_children != new_children or old_manifest.get("title") != self.get_setting("title"):
+            changes["manifest"] = 1  # Would change
+
+        return changes
+
+    def _apply_order(self, parent_id: str | None,
+                     ordered_names: list[str]) -> None:
+        """Set one folder's sibling positions from a written sequence.
+
+        Names the DB does not know under this parent are ignored — an
+        order source never invents a document or drops one — and
+        children the sequence does not name keep their relative order
+        at the end. Only positions change, never parents.
+        """
+        siblings = sorted(
+            (d for d in self.documents() if d.parent_id == parent_id),
+            key=lambda d: d.position)
+        by_basename: dict[str, Document] = {}
+        for document in siblings:
+            if document.path:
+                by_basename.setdefault(Path(document.path).name, document)
+        placed: list[Document] = []
+        seen: set[str] = set()
+        for name in ordered_names:
+            document = by_basename.get(name)
+            if document is None or document.id in seen:
+                continue
+            seen.add(document.id)
+            placed.append(document)
+        for document in siblings:
+            if document.id not in seen:
+                placed.append(document)
+        with self.db:
+            for position, document in enumerate(placed):
+                self.db.execute(
+                    "UPDATE documents SET position=? WHERE id=?",
+                    (position, document.id))
+
+    def _read_order_children(self, path: Path) -> list[str] | None:
+        """A written sequence ("children"), or None when the file is
+        missing or unreadable — no sequence to follow means no change."""
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("children"), list):
+                return [str(item) for item in data["children"]]
+        except (json.JSONDecodeError, OSError):
+            pass
+        return None
+
+    def apply_manifest(self) -> None:
+        """Make the database follow manifest.json (the root order).
+
+        One of the three truths: the sequence the writer arranged in
+        the manifest — for example with a text editor — becomes the
+        binder's root order. Unknown names are ignored; root items the
+        manifest does not name keep their relative order at the end.
+        Nothing else is rewritten here; the caller reconciles after.
+        """
+        ordered = self._read_order_children(self.root / "manifest.json")
+        if ordered is not None:
+            self._apply_order(None, ordered)
+
+    def apply_order_files(self) -> None:
+        """Make the database follow the .order.json files.
+
+        The other order truth: every folder's own sequence — a writer
+        who rearranged inside a folder by editing its .order.json sees
+        that arrangement. A name moved into a different folder's list
+        matches nothing there and is left alone. Nothing else is
+        rewritten here; the caller reconciles after.
+        """
+        for document in self.documents():
+            if not document.path or not (self.root / document.path).is_dir():
+                continue
+            ordered = self._read_order_children(
+                self.root / document.path / ".order.json")
+            if ordered is not None:
+                self._apply_order(document.id, ordered)
+
+    def forget_missing_files(self) -> list[str]:
+        """Drop rows whose files are gone, then rewrite the order files.
+
+        The "OK" answer to the missing-files warning: the records agree,
+        the file does not exist — so the entry comes out of the project.
+        Legacy rows with no path are kept (they are not disk-managed).
+        Returns the paths whose entries were removed.
+        """
+        removed = []
+        for document in self.documents():
+            if document.path and not (self.root / document.path).exists():
+                self._forget_row(document.id)
+                removed.append(document.path)
+        if removed:
+            self.reconcile()
+        return removed
+
+    def missing_files(self) -> list[str]:
+        """Project-relative paths the database expects but the disk lacks.
+
+        Not a resolution and not a disagreement between records — the
+        records agree, the file is simply gone (deleted elsewhere, a
+        folder copied without it). Legacy rows with no path are not
+        disk-managed and are not reported. The trash root is not
+        reported either: an empty trash is a folder the app makes when
+        something is thrown away, and its absence is not lost writing.
+        The caller warns; it never silently heals this.
+        """
+        return sorted(
+            document.path for document in self.documents()
+            if document.path and document.path != TRASH_FOLDER
+            and not (self.root / document.path).exists())

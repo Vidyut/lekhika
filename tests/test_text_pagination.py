@@ -78,7 +78,8 @@ class TextPaginationTests(unittest.TestCase):
             sections = [name for name in archive.namelist()
                         if name.startswith("OEBPS/section-")]
 
-        self.assertEqual(len(sections), 2)   # one unit, one file
+        # Draft (root folder) + two chapter units = one file per unit.
+        self.assertEqual(len(sections), 3)
 
 
 if __name__ == "__main__":

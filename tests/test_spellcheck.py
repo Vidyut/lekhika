@@ -105,6 +105,60 @@ class MisspellingsTests(unittest.TestCase):
 
         self.assertEqual(ranges, [(3, 6)])
 
+    def test_the_word_list_teaches_the_pass_its_words(self):
+        # The writer's own list is consulted without the engine ever
+        # hearing about the words in it.
+        _, checker = self._fake_checker({"teh", "Virelia"})
+        with tempfile.TemporaryDirectory() as tmp:
+            list_file = Path(tmp) / "dictionary.txt"
+            list_file.write_text("Virelia\n", encoding="utf-8")
+            spellcheck.set_word_list(list_file)
+
+            ranges = spellcheck.misspellings("teh Virelia", self.cache)
+
+        self.assertEqual(
+            ["teh Virelia"[start:end] for start, end in ranges], ["teh"])
+        unseen = checker.call_args[0][1]
+        self.assertNotIn("Virelia", unseen)
+
+    def test_editing_the_word_list_teaches_the_next_pass(self):
+        _, checker = self._fake_checker({"teh"})
+        with tempfile.TemporaryDirectory() as tmp:
+            list_file = Path(tmp) / "dictionary.txt"
+            list_file.write_text("", encoding="utf-8")
+            spellcheck.set_word_list(list_file)
+            self.assertEqual(
+                len(spellcheck.misspellings("teh", self.cache)), 1)
+
+            list_file.write_text("teh\n", encoding="utf-8")
+            moment = list_file.stat().st_mtime + 2
+            os.utime(list_file, (moment, moment))
+            self.assertEqual(spellcheck.misspellings("teh", self.cache), [])
+
+    def test_entity_candidates_harvest_capitalised_unknowns(self):
+        # Virelia appears in title/synopsis/prose; Kael only in POV
+        # metadata. The system dictionary would flag both, so both
+        # are candidates — The/This sentence starters are not.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Project.create(Path(tmp) / "Novel.lekhak", "Novel")
+            draft = project.documents()[0]
+            chapter = project.add_document("Chapter One", draft.id, "chapter")
+            scene = project.add_document("First Light", chapter.id, "scene")
+            project.write_content(
+                scene.id, "<p>Virelia rose. Virelia stayed. The wind rose.</p>")
+            project.update_document(scene.id, synopsis="Virelia watch")
+            project.set_metadata(scene.id, {"POV": "Kael"},
+                                 {"POV": "text"}, {"POV": []})
+            try:
+                with patch.object(spellcheck, "_unknown",
+                                  return_value={"Virelia", "Kael"}):
+                    candidates = dict(spellcheck.entity_candidates(project))
+                self.assertEqual(candidates.get("Virelia"), 3)
+                self.assertEqual(candidates.get("Kael"), 1)
+                self.assertNotIn("The", candidates)
+            finally:
+                project.close()
+
     @unittest.skipUnless(shutil.which("aspell"), "aspell not installed")
     def test_the_real_dictionary_passes_ordinary_words(self):
         text = "teh hello foolow its"

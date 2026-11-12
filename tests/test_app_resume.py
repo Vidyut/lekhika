@@ -57,6 +57,10 @@ class SessionResumeTests(unittest.TestCase):
             self.chapter.id, "<p>Hello world, this is a test.</p>"
         )
         QSettings().remove("session/lastProject")
+        # The guide is copied into the data folder; keep that inside the
+        # test's own temporary directory.
+        self.previous_data = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = str(Path(self.temporary.name) / "data")
         self.window = MainWindow()
 
     def tearDown(self):
@@ -64,6 +68,10 @@ class SessionResumeTests(unittest.TestCase):
         # project raises into a modal QMessageBox and hangs offscreen.
         self.window.project = None
         self.project.close()
+        if self.previous_data is None:
+            os.environ.pop("XDG_DATA_HOME", None)
+        else:
+            os.environ["XDG_DATA_HOME"] = self.previous_data
         self.temporary.cleanup()
 
     def _select_chapter(self):
@@ -152,13 +160,16 @@ class SessionResumeTests(unittest.TestCase):
         window.project = None  # leave it open; the setUp project owns cleanup
 
     def test_reopen_ignores_missing_project(self):
+        # A project that has been deleted: the guide opens instead, so a
+        # fresh install shows the software rather than an empty window.
         QSettings().setValue(
             "session/lastProject", str(Path(self.temporary.name) / "gone.lekhak")
         )
 
         self.window.reopen_last_project()
 
-        self.assertIsNone(self.window.project)
+        self.assertIsNotNone(self.window.project)
+        self.assertEqual(self.window.project.root.name, "guide.lekhak")
 
     def test_reopen_falls_back_when_project_wont_open(self):
         # Path exists but isn't a Lekhak project (no database): startup
@@ -172,10 +183,15 @@ class SessionResumeTests(unittest.TestCase):
         self.assertIsNone(self.window.project)
         self.assertIsNone(self.window.current_id)
 
-    def test_reopen_without_recorded_project_is_a_noop(self):
+    def test_reopen_without_recorded_project_opens_the_guide(self):
+        # Nothing was open last time: the guide is what a fresh install
+        # shows, so the software can be looked at before it is used.
         self.window.reopen_last_project()
 
-        self.assertIsNone(self.window.project)
+        self.assertIsNotNone(self.window.project)
+        self.assertEqual(self.window.project.root.name, "guide.lekhak")
+        # Read-only: the manual is the software's, not the writer's.
+        self.assertTrue(self.window._project_is_read_only())
 
 
 if __name__ == "__main__":

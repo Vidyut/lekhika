@@ -73,8 +73,8 @@ class TemplateResolutionTests(unittest.TestCase):
         so an export says which template dressed it without any parsing.
         Both modes are written: these tests read the text export."""
         created = create_template_set(name, self.project.root)
-        for suffix, template in ((".html", f"<p>{marker}</p>${{Content}}${{Scenes}}"),
-                                 (".txt", f"{marker}\n${{Content}}\n${{Scenes}}")):
+        for suffix, template in ((".html", f"<p>{marker}</p>${{Content}}${{children}}"),
+                                 (".txt", f"{marker}\n${{Content}}\n${{children}}")):
             (created.directory / ("folder" + suffix)).write_text(
                 template, encoding="utf-8")
             (created.directory / ("document" + suffix)).write_text(
@@ -159,8 +159,8 @@ class TemplateResolutionTests(unittest.TestCase):
         # discovery's own order with the default on top and answering.
         self.assertEqual(preselected.name, "default")
         self.assertEqual([s.name for s in ordered],
-                         ["default", "short story", "Book", "nothing",
-                          "Editorial", "Other"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export", "Editorial", "Other"])
         self.assertEqual(warnings, [])
 
     def test_an_assignment_in_scope_comes_first_and_is_preselected(self):
@@ -176,8 +176,8 @@ class TemplateResolutionTests(unittest.TestCase):
         # Everything discovery found is still offered below it: the
         # ordering is the explanation, not a filter.
         self.assertEqual({s.name for s in ordered},
-                         {"default", "short story", "Book", "nothing",
-                          "Editorial", "Other"})
+                         {"default", "short story", "Book", "Guide",
+                          "no-export", "Editorial", "Other"})
 
     def test_nearest_first_between_two_assignments(self):
         self._set("Outer", "OUTER")

@@ -57,7 +57,7 @@ class PositionPlaceholderTests(unittest.TestCase):
     def test_front_matter_does_not_shift_the_chapter_count(self):
         # A title page at the top of the same folder is another Type, so
         # the chapters still count 1, 2, 3 rather than 2, 3, 4 (3.2).
-        title = self.project.add_document("Title Page", self.draft.id, "note")
+        title = self.project.add_document("Title Page", self.draft.id, "scene")
         self.project.set_metadata(title.id, {"Type": "Title"})
         self.project.reorder(title.id, self.draft.id, 0)
 

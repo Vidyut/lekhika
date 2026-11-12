@@ -29,7 +29,7 @@ PLACEHOLDER_RE = re.compile(r"\$\{([^{}]+)\}")
 # content should be presented. Filling therefore replaces the element
 # itself, never just the token, so the document's own blocks are never
 # nested inside a <p> (docs/TEMPLATES.md §3.2).
-BLOCK_PLACEHOLDERS = ("Content", "Children", "ToC", "Scenes")
+BLOCK_PLACEHOLDERS = ("Content", "ToC")
 
 # An element whose whole content is one block placeholder, whitespace aside.
 _BLOCK_WRAPPER_RE = re.compile(
@@ -251,15 +251,18 @@ CONDITIONAL_PIECE_RE = re.compile(
 CONDITIONAL_EXPR_RE = re.compile(r"^(.+?)\s*(!=|=)\s*(.*)$")
 
 BUILTIN_HTML: dict[str, str] = {
-    "folder": ('<section class="chapter">\n<h1>${Title}</h1>\n'
-                '<div class="content">${Content}</div>\n'
-                '<div class="scenes">${Scenes}</div>\n</section>'),
+    "folder": ('<section class="chapter">\n<h2>${Title}</h2>\n'
+                '$if(Content)<div class="content">${Content}</div>\n$endif'
+                '<div class="children">${children}</div>\n</section>'),
     "document": ('<section class="document">\n<h2>${Title}</h2>\n'
               '<div class="content">${Content}</div>\n</section>'),
 }
 
 BUILTIN_TEXT: dict[str, str] = {
-    "folder": "${Title}\n\n${Content}\n\n${Scenes}",
+    # A container's own words are its index.html — a chapter's title page
+    # — and they are optional: the block appears only when there are
+    # some, so a chapter without an opener is title, then its scenes.
+    "folder": "${Title}\n\n$if(Content)${Content}\n\n$endif${children}",
     "document": "${Title}\n\n${Content}",
 }
 
@@ -368,8 +371,12 @@ def document_template_stem(text: str) -> str:
 # renders empty and should be flagged, not silently accepted.
 TEMPLATE_KEYS = (
     "Title", "Position", "Position-spell", "Kind", "Synopsis", "WordCount",
-    "Content", "ChapterNumber", "SceneNumber", "WordsTotal", "ToC", "Scenes",
-    "Children",
+    "Content", "Project", "ChapterNumber", "SceneNumber", "WordsTotal",
+    "ToC", "children", "Parent", "Format", "EstimatedPages", "BookTitle",
+    "PageNo",
+    # Kept so an older file keeps working and stays silent: `Page` is the
+    # spelling the first templates wrote for the folio (§3.2).
+    "Page",
 )
 
 # What the reference page says each built-in means (docs/TEMPLATES.md 3.2),
@@ -377,6 +384,8 @@ TEMPLATE_KEYS = (
 # the documentation that can drift.
 BUILTIN_PLACEHOLDERS: tuple[tuple[str, str], ...] = (
     ("Title", "the document's title in the binder"),
+    ("Project", "the project's own name — not the document's title, and "
+                "the same for every document in it"),
     ("Position", "its place among the siblings that share its Type, "
                  "counting from 1 — the chapter number a chapter's face "
                  "usually wants. With no Type set, plain sibling order"),
@@ -390,11 +399,24 @@ BUILTIN_PLACEHOLDERS: tuple[tuple[str, str], ...] = (
     ("WordCount", "the words in this document"),
     ("Content", "its prose (a fragment only — inside prose it stays as "
                 "typed)"),
-    ("Scenes", "the child scenes, already dressed (a chapter's fragment)"),
+    ("children", "every child the container holds, each dressed in the "
+                 "template that applies to it, in binder order"),
     ("ToC", "the contents list (a contents fragment)"),
     ("ChapterNumber", "chapters met so far in this export, in binder order"),
     ("SceneNumber", "scenes met so far in this export, in binder order"),
     ("WordsTotal", "words met so far in this export, in binder order"),
+    ("Parent", "the immediate container's title — empty at the root"),
+    ("Format", "the format being written: docx, pdf, epub, html or text"),
+    ("EstimatedPages", "an estimate of the printed page count, words ÷ 250 "
+                       "rounded up — exact only where the layout counts "
+                       "pages itself"),
+    ("BookTitle", "the book this export dresses, for a Header or Footer "
+                  "line — a fragment prints nothing"),
+    ("PageNo", "the page's own number, positioned where you write it: a "
+               "Header or Footer line, or a line of its own in the text. "
+               "DOCX and PDF fill it in; HTML, EPUB and text have no pages "
+               "and print nothing. `${Page}` is the same thing, the "
+               "spelling the first templates used"),
     ("Author", "the Author field of the project's metadata"),
 )
 
@@ -427,6 +449,14 @@ def validate_slot(text: str, *, html: bool = True,
         name = key.strip()
         if name.startswith(("Metadata.", "Position-depth:")):
             continue
+        if is_children_name(name):
+            # The family is open: `children` is always a name, and
+            # `children-<type>` is one when the project has that type.
+            if name.casefold() == CHILDREN_NAME or name.casefold() in extra:
+                continue
+            issues.append(
+                f"unknown placeholder ${{{name}}} — no type of that name")
+            continue
         if name not in TEMPLATE_KEYS and name not in extra:
             issues.append(f"unknown placeholder ${{{name}}}")
     depth = 0
@@ -457,7 +487,7 @@ def _own_fragments_empty(slots: dict) -> bool:
 
     A set with no fragments of its own says nothing about silence — it is
     the baseline, and the built-ins answer. A set that *does* carry
-    fragments and leaves them all blank is the `no export` shape: one
+    fragments and leaves them all blank is the `no-export` shape: one
     empty body is enough, and the writer who deletes it gets every
     built-in fragment back rather than a vocabulary of empty files.
     """
@@ -535,13 +565,9 @@ class TemplateSet:
     # first and the root next rather than either replacing the other.
     formats: dict = field(default_factory=dict)
     under: TemplateSet | None = None
-    # 2.1b: what the book is made of, in order — ``content`` for the
-    # manuscript, any other name for binder content the template pulls in
-    # (front matter, a preview chapter, a dedication). Stated on one config
-    # line and read here once; the assembly step is the only reader.
     # §3: a set that carries fragments of its own and leaves every one of
     # them empty produces nothing — no content, no placeholders, no output.
-    # The shipped `no export` is one such file, not a vocabulary of emptied
+    # The shipped `no-export` is one such file, not a vocabulary of emptied
     # slots, so a writer who changes their mind deletes it and gets every
     # built-in fragment back.
     own_empty: bool = False
@@ -661,7 +687,7 @@ class TemplateSet:
         """True when every fragment this set carries is empty — nothing
         in, nothing out (§3: a template may legitimately produce something
         far sparser than the baseline, and silence is where that ends).
-        This is what the shipped `no export` set is: DOCX and text write
+        This is what the shipped `no-export` set is: DOCX and text write
         empty files, HTML and EPUB keep their wrappers with no content
         inside them."""
         if self.own_empty:
@@ -696,22 +722,38 @@ class TemplateSet:
         inside it would produce ``<p><p>``. Its attributes survive — the
         same tag when the tag can hold blocks, a ``<div>`` carrying the
         attributes when it cannot (§3.2).
+
+        The values are put in *after* the placeholders are matched, never
+        before: a value that happens to carry a ``${...}`` of its own is
+        the writer's text, not a second placeholder to be expanded.
         """
         template = TemplateSet.conditionals(template, values)
-        template = TemplateSet.replace_block_proxies(template, values)
         raw_keys = {"content", "children", "entries"}
+        stashed: dict[str, str] = {}
+
+        def stash(value: str) -> str:
+            """Keep a value aside until the template has been scanned."""
+            token = f"\ue000{len(stashed)}\ue000"
+            stashed[token] = value
+            return token
 
         def substitute(match: re.Match) -> str:
             key = match.group(1).strip()
-            value = values.get(key, "")
-            if html and key.lower() not in raw_keys:
-                return escape(value)
-            return value
+            value = lookup_value(values, key)
+            if html and key.lower() not in raw_keys and not is_children_name(key):
+                return stash(escape(value))
+            return stash(value)
 
-        return PLACEHOLDER_RE.sub(substitute, template)
+        filled = PLACEHOLDER_RE.sub(
+            substitute, TemplateSet.replace_block_proxies(template, values,
+                                                          stash=stash))
+        for token, value in stashed.items():
+            filled = filled.replace(token, value)
+        return filled
 
     @staticmethod
-    def replace_block_proxies(template: str, values: dict[str, str]) -> str:
+    def replace_block_proxies(template: str, values: dict[str, str],
+                              stash=None) -> str:
         """Replace an element that is nothing but a block placeholder.
 
         ``<p>${Content}</p>`` becomes the content's own blocks; a proxy
@@ -722,9 +764,11 @@ class TemplateSet:
         """
         def replace(match: re.Match) -> str:
             key = match.group("key").strip()
-            if key not in BLOCK_PLACEHOLDERS:
+            if key not in BLOCK_PLACEHOLDERS and not is_children_name(key):
                 return match.group(0)
-            value = values.get(key, "")
+            value = lookup_value(values, key)
+            if stash is not None:
+                value = stash(value)
             tag = match.group("tag").lower()
             attributes = match.group("attrs").strip()
             if tag in _BLOCK_ELEMENTS:
@@ -778,10 +822,10 @@ class TemplateSet:
     def _condition_holds(expr: str, values: dict[str, str]) -> bool:
         match = CONDITIONAL_EXPR_RE.match(expr.strip())
         if not match:
-            return bool(values.get(expr.strip(), "").strip())
+            return bool(lookup_value(values, expr.strip()).strip())
         key = match.group(1).strip()
         expected = match.group(3).strip()
-        actual = values.get(key, "").strip()
+        actual = lookup_value(values, key).strip()
         equal = actual.casefold() == expected.casefold()
         return equal if match.group(2) == "=" else not equal
 
@@ -821,7 +865,7 @@ class TemplateSet:
                     return fragment
         else:
             # A set that ships in code: its own map answers before the
-            # built-in does — `nothing` owns an empty `documents/no-title`,
+            # built-in does — `no-export` owns an empty `documents/no-title`,
             # and must be silent for it like for everything else.
             files = SHIPPED_FILES.get(self.name, {})
             for relative in (f"documents/{name}", name):
@@ -911,8 +955,8 @@ def discover_template_sets(project_root: Path) -> list[TemplateSet]:
     """Every set Lekhak offers: the ones that ship with it, plus each set
     directory under the user and project template roots, in that order.
 
-    The shipped three keep their slots for good (§1.1): a directory called
-    ``default`` — or ``short story``, or ``no export``, any case — is
+    The shipped sets keep their slots for good (§1.1): a directory called
+    ``default`` — or ``short story``, or ``no-export``, any case — is
     listed **after** them as a set of its own, under its folder name, so
     nothing on disk is ever hidden and the project's own copy has a home
     in the listing. What it never does is take the shipped set's place:
@@ -948,7 +992,7 @@ def named_template_sets(project_root: Path) -> dict[str, TemplateSet]:
 
     ``book_settings["template"]`` and the export dialog's warnings both
     speak in names, so the shipped sets keep theirs: a project folder that
-    has one of those names (``default``, ``short story``, ``no export``)
+    has one of those names (``default``, ``short story``, ``no-export``)
     is listed as itself but never answers to the name, because the name
     already means the set Lekhak ships — that is what makes the default
     slot always the shipped one. Any other name behaves as discovery
@@ -985,6 +1029,31 @@ def _shipped_paths(name: str) -> set[str]:
     return names
 
 
+# Logical reading order for template files (Title first, then book/part,
+# frontmatter, chapter, scene) — alphabetical order buries the title
+# page last and the binder misreads a template set as a parts list.
+TEMPLATE_FILE_PRIORITY = {
+    "title-page.html": 0,
+    "title.html": 0,
+    "book.html": 1,
+    "frontmatter.html": 2,
+    "folder.html": 3,
+    "contents.html": 3,
+    "chapter.html": 4,
+    "scene.html": 5,
+    "document.html": 6,
+}
+
+
+def _template_file_rank(relative: str) -> tuple:
+    """(priority, parent, name) — Title first within each folder."""
+    posix = str(relative).replace("\\", "/")
+    parent = posix.rsplit("/", 1)[0] if "/" in posix else ""
+    name = posix.rsplit("/", 1)[-1]
+    return (TEMPLATE_FILE_PRIORITY.get(name.casefold(), 10), parent.casefold(),
+            name.casefold())
+
+
 def file_paths(templates: TemplateSet) -> list[str]:
     """Every file of the set, as a path relative to its root (posix).
 
@@ -1007,6 +1076,8 @@ def file_paths(templates: TemplateSet) -> list[str]:
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
+            if path.name.startswith("."):
+                continue  # binder order/lock metadata, not template content
             if path.suffix.lower() in tuple(EXTENSIONS.values()):
                 try:
                     if not is_template_fragment(
@@ -1015,8 +1086,8 @@ def file_paths(templates: TemplateSet) -> list[str]:
                 except UnicodeDecodeError:
                     continue          # not text; cannot claim to be a template
             listed.append(path.relative_to(root).as_posix())
-        return sorted(listed)
-    return sorted(_shipped_paths(templates.name))
+        return sorted(listed, key=_template_file_rank)
+    return sorted(_shipped_paths(templates.name), key=_template_file_rank)
 
 
 def _set_directory(name: str, project_root: Path) -> Path:
@@ -1031,33 +1102,48 @@ def _set_directory(name: str, project_root: Path) -> Path:
     return directory
 
 
-def create_template_set(name: str, project_root: Path) -> TemplateSet:
-    """Copy the built-in defaults into a new editable set in the project."""
-    directory = _set_directory(name, project_root)
+def _populate_set_directory(name: str, directory: Path) -> None:
+    """Write full defaults + shipped overrides into ``directory``."""
     for slot in SLOTS:
         (directory / (slot + ".html")).write_text(BUILTIN_HTML[slot], encoding="utf-8")
         (directory / (slot + ".txt")).write_text(BUILTIN_TEXT[slot], encoding="utf-8")
-    # The document shelf comes too: a new set stands for a complete one,
-    # and `no-title` is the sidebar's "without the heading" choice — same
-    # bytes the unowned fallback answers with, so exports do not move.
     shelf = directory / "documents"
-    shelf.mkdir()
+    shelf.mkdir(parents=True, exist_ok=True)
     for document, variants in BUILTIN_DOCUMENT_TEMPLATES.items():
         (shelf / (document + EXTENSIONS[True])).write_text(
             variants[True], encoding="utf-8")
         (shelf / (document + EXTENSIONS[False])).write_text(
             variants[False], encoding="utf-8")
-    # And the print-config file, so a new set teaches its own keys (§3.1)
-    # the way the shipped default does. Every line in it is a comment,
-    # so it changes no export: it is the manual, in the place the sheet
-    # writes to.
     (directory / "print-config.txt").write_text(
         SHIPPED_FILES[SHIPPED_TEMPLATE_SETS[0]]["print-config.txt"],
         encoding="utf-8")
-    # And the stylesheet, so a new set has an emphasis anchor of its own
-    # to change rather than an empty box to fill from nothing.
     (directory / "style.css").write_text(DEFAULT_CSS, encoding="utf-8")
+
+
+def create_template_set(name: str, project_root: Path) -> TemplateSet:
+    """Copy the built-in defaults into a new editable set in the project."""
+    directory = _set_directory(name, project_root)
+    _populate_set_directory(name, directory)
     return TemplateSet.load(name, directory)
+
+
+def copy_default_set_to(destination: Path, *, name: str = "default") -> TemplateSet:
+    """Copy the shipped *default* set into ``destination`` as a new folder.
+
+    ``destination`` is the folder to create — the caller has already
+    chosen the parent (selected binder folder, or the parent of the
+    selected document). Files land on disk exactly as
+    ``copy_template_set(TemplateSet.builtin("default"), …)`` would put
+    them under ``templates/<name>/``, so the reader can see/edit them
+    where they live and copy the whole folder to another project.
+    """
+    destination = Path(destination)
+    if destination.exists():
+        raise FileExistsError(f"Template set already exists: {destination}")
+    destination.mkdir(parents=True)
+    _populate_set_directory(name, destination)
+    _write_shipped_files("default", destination)
+    return TemplateSet.load(name, destination)
 
 
 def copy_template_set(source: TemplateSet, name: str, project_root: Path) -> TemplateSet:
@@ -1216,6 +1302,14 @@ takes the header, footer and contents.
 Placeholders you can use inside a fragment — ${Title}, ${Content}, ${Author},
 ${Date}, ${Metadata.AnyKey} — are filled in when you export.
 
+The contents of your book is built from your headings, exactly as Word and
+Writer build a table of contents: every <h1>, <h2>, <h3>… a fragment renders
+is one entry, its level is its depth in the list (so a folder's page and the
+documents inside it nest), and the heading's own words are the entry text.
+No heading, no entry — which is how a dedication or a colophon stays out of
+the contents, and why a folder or document that should be listed needs a
+heading in its fragment. ${ToC} is where that list is printed.
+
 The .txt files are the same fragments for plain-text export. Edit either; they
 do not have to agree.
 
@@ -1231,7 +1325,8 @@ copy the folder) before changing anything you might want back.
 # One file map per set: what a duplicate is written out as is exactly what
 # the shipped entry already is, so a writer who duplicates and inspects sees
 # the variant's names rather than a surprise.
-SHIPPED_TEMPLATE_SETS = ("default", "short story", "Book", "nothing")
+SHIPPED_TEMPLATE_SETS = ("default", "short story", "Book", "Guide",
+                         "no-export")
 
 DEFAULT_CONFIG = """Docx
 # Sample configuration for DOCX and PDF. Every line below is a comment, so
@@ -1251,7 +1346,7 @@ DEFAULT_CONFIG = """Docx
 #
 # Running heads: left, middle, right -- one piece each.
 # Header: ,{Title},
-# Footer: ,,Page {Date}
+# Footer: , ${PageNo},
 #
 # Type: family, size, line spacing, first-line indent.
 # Font: Georgia, 11pt, 1.15, 1cm
@@ -1296,12 +1391,17 @@ DEFAULT_CONFIG = """Docx
 #   Header: none                    this page carries no running head —
 #   Footer: none                    a title page, a dedication — where an
 #                                   empty line would keep the sample's own
+#   Header first page: none         the opening page of each section — a
+#   Footer first page: left, mid, right   chapter opener — which Word keeps
+#                                   apart from everything on this page
+#   Head font: Georgia, 9           the running heads' own family and size
 #   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
 #   Title style: Book Title         Chapter style / Scene style / Body style
 #
 # Units: inches by default, with mm / cm / in / pt suffixes. Placeholders in
 # a value are the same as in a fragment (${Title}, ${Date}, ${Author}, any
-# metadata key); {Title} with single braces is accepted as its alias.
+# metadata key), with ${PageNo} for the page's own number; {Title} with
+# single braces is accepted as its alias.
 #
 # About the other files
 # ---------------------
@@ -1361,12 +1461,17 @@ Page size: A4
 #   Header: none                    this page carries no running head —
 #   Footer: none                    a title page, a dedication — where an
 #                                   empty line would keep the sample's own
+#   Header first page: none         the opening page of each section — a
+#   Footer first page: left, mid, right   chapter opener — which Word keeps
+#                                   apart from everything on this page
+#   Head font: Georgia, 9           the running heads' own family and size
 #   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
 #   Title style: Book Title         Chapter style / Scene style / Body style
 #
 # Units: inches by default, with mm / cm / in / pt suffixes. Placeholders in
 # a value are the same as in a fragment (${Title}, ${Date}, ${Author}, any
-# metadata key); {Title} with single braces is accepted as its alias.
+# metadata key), with ${PageNo} for the page's own number; {Title} with
+# single braces is accepted as its alias.
 #
 # About the other files
 # ---------------------
@@ -1387,119 +1492,321 @@ Page size: A4
 # like once you want more than the built-in fragments.
 BOOK_CSS = DEFAULT_CSS + """\
 
-/* The Book set's own: a part page, a title page, a dedication, a
-   contents page. Delete a rule and nothing breaks — the text stays. */
-.part { text-align: center; margin: 6em 0 0; }
-.part-title {
-  font-size: 1.7em;
-  font-variant: small-caps;
-  letter-spacing: 0.08em;
+/* The Book set's own pages. Every rule is a default, not a requirement:
+   the fragments also carry their own styling, so a rule deleted here
+   changes nothing about what prints. */
+
+/* A chapter opens on a fresh page with its title set down a third of the
+   way from the top, which is the space the design used to make with
+   blank lines. */
+.chapter-title {
+  text-align: center;
+  font-size: 1.3em;
+  letter-spacing: 0.06em;
   text-indent: 0;
+  margin: 30% 0 1.2em;
 }
-.chapter-number {
-  font-variant: small-caps;
-  letter-spacing: 0.35em;
+
+/* An epigraph, when a scene's Metadata carries Quote, Source and Date. */
+.scene .quote {
+  text-align: center;
+  font-style: italic;
   text-indent: 0;
-  margin: 0 0 0.3em;
+  margin: 0 10% 0.2em;
 }
-.pov {
-  font-variant: small-caps;
+.scene .attribution {
+  text-align: right;
+  font-style: italic;
+  text-indent: 0;
+  margin: 0 10% 1.6em 0;
+}
+
+/* Who and where the scene happens: the smallest line on the page. */
+.scene-head {
+  font-size: 1em;
+  font-weight: normal;
   letter-spacing: 0.12em;
-  text-indent: 0;
-  margin: 0 0 1em;
-}
-.title-page { text-align: center; margin-top: 28%; }
-.book-title {
-  font-size: 2.4em;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  border: 0;
+  text-transform: uppercase;
   margin: 0 0 0.8em;
 }
+
+/* The title page, centred in its own space. */
+.title-page { text-align: center; margin-top: 28%; }
+.book-title {
+  font-size: 2.2em;
+  font-weight: normal;
+  letter-spacing: 0.04em;
+  text-indent: 0;
+  margin: 0 0 0.6em;
+}
 .byline { font-style: italic; text-indent: 0; }
-.dedication { margin: 22% 8% 0; font-style: italic; }
-.dedication p { text-indent: 0; margin-bottom: 0.7em; }
+.tagline { font-size: 1.1em; letter-spacing: 0.08em; text-indent: 0; }
+
+/* A contents page, from the ${ToC} placeholder. */
 .contents h1 { text-align: center; }
 .contents ol { list-style: none; padding: 0; margin: 1.5em 0 0; }
 .contents li { text-indent: 0; margin: 0.4em 0; }
 """
 
-BOOK_README = """# Book — one book, dressed from the filename up
+GUIDE_CSS = DEFAULT_CSS + """\
 
-This set is the worked example of the one rule: a template is named after
-the Type it dresses. Nothing in it is needed. Copy it, change it, or use
-only the pieces you like.
+/* The guide's own: a shaded heading for each section, and a little more
+   room for each step into the detail. Delete a rule and nothing breaks
+   — the text stays. */
+
+.section-head {
+  background: #5b4b8a;
+  color: #ffffff;
+  padding: 0.5em 0.9em;
+  margin: 0 0 1.1em;
+  border-radius: 2px;
+}
+
+.section-head h1 {
+  margin: 0;
+  font-size: 1.45em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 0;
+  color: #ffffff;
+}
+
+.section-body ul {
+  list-style: disc;
+  margin: 0 0 0 1.3em;
+  padding: 0;
+}
+
+.section-body li {
+  margin: 0 0 0.45em 0;
+}
+
+/* Each step into the detail is indented a little further, and marked
+   with a quieter bullet in the accent, so the levels read at a glance. */
+.section-body ul ul {
+  list-style: circle;
+  margin: 0.35em 0 0 1.5em;
+}
+
+.section-body ul ul li::marker {
+  color: #5b4b8a;
+}
+
+.section-body ul ul li {
+  margin: 0 0 0.3em 0;
+}
+
+.section-body ul ul ul {
+  list-style: square;
+  margin: 0.3em 0 0 1.5em;
+}
+
+.section-body p {
+  margin: 0 0 0.8em;
+}
+
+/* Links wear the accent too, so a reader can see them at a glance. */
+a {
+  color: #5b4b8a;
+}
+"""
+
+GUIDE_HEADING_HTML = """<!-- Guide — a section's banner: the title, shaded. -->
+<section class="section-head">
+<h1>${Title}</h1>
+</section>"""
+
+GUIDE_SECTION_HTML = """<!-- Guide — a section and its prose. -->
+<section class="section-head">
+<h1>${Title}</h1>
+</section>
+<div class="section-body">
+${Content}
+</div>"""
+
+BOOK_PAGE_HTML = """<!-- Book — the single page the whole book is dressed by.
+
+     A cover belongs here: put an image in this file and it prints once,
+     before everything else. Print exports usually want this page empty,
+     which is why nothing else is on it. -->"""
+
+BOOK_CHAPTER_HTML = """<section class="chapter">
+<p class="chapter-title">${Title}</p>
+$if(Content)<div class="content">${Content}</div>
+$endif<div class="children">${children}</div>
+</section>"""
+
+BOOK_SCENE_HTML = """<section class="scene">
+$if(Quote)
+<p class="quote">${Quote}</p>
+<p class="attribution">~ ${Source}, ${Date}</p>
+$endif
+$if(PoV)
+<h3 class="scene-head">${PoV}$if(Location): ${Location}$endif</h3>
+$endif
+<div class="content">${Content}</div>
+</section>"""
+
+BOOK_TITLE_PAGE_HTML = """<section class="title-page">
+<p class="book-title">${Title}</p>
+<p class="byline">${Author}</p>
+$if(BookTagline)
+<p class="tagline">${BookTagline}</p>
+$endif
+</section>"""
+
+BOOK_README = """# Book — one page per kind of thing
+
+This set is the worked example of the naming rule: a file is named after
+the Type it dresses. Call a folder `book`, a chapter `chapter`, a scene
+`scene`, and each one finds its page here by itself. Nothing is required —
+delete a file and the built-in page for that shape answers instead.
 
 ## What is in here
 
-| File | What it dresses | Which Type it matches |
+| File | What it dresses | The Type it answers to |
 |---|---|---|
-| folder.html | a part: the title page of a section, its scenes under it | the set's own slot |
-| documents/Chapter.html | a chapter: its number, its scenes — titles come from the part page and the contents page | `Chapter` |
-| documents/Scene.html | a scene, with a PoV head only when the scene's Metadata has one | `Scene` |
-| documents/Title.html | a title page: the title, the author | `Title` |
-| documents/Frontmatter.html | a dedication page, filled with placeholder text | `Frontmatter` |
-| (built in) contents | a contents page, from the ${ToC} placeholder | `Contents` |
+| book.html | the book itself, before anything else | `book` |
+| chapter.html | a chapter: its title, set down the page | `chapter` |
+| scene.html | a scene: its epigraph, who and where, then the prose | `scene` |
+| title-page.html | a title page, picked by hand | any scene or chapter — choose it in the Document template row |
+| style.css | the look for all four | — |
+| print-config.txt | the annotated manual every set starts with, all comments | — |
 
-## How the assigning works
+## How the naming works
 
-Name the folder `Book`, and this set is its template (the Book template
-row in the sidebar lists it). Type a chapter `Chapter`, and its document
-template is documents/Chapter.html. Type a scene `Scene`, and it is
-documents/Scene.html. The Type row in the sidebar is where the name goes;
-the Document template row shows what the name found, and you can change it
-there without changing the Type.
+The Type row and the Document template row sit next to each other in the
+sidebar. Type a chapter `chapter` and the Document template row fills
+itself with chapter.html. You can also pick a page by hand there, which is
+how title-page.html is meant to be used: on a document you want to look
+like the front of a book. That document has to be a scene or a chapter —
+those are the kinds an export prints; a note is research and stays out of
+the book.
 
-## Front matter
+## What the scene page does
 
-Front matter is binder content, not template content: put the title page,
-the dedication and the contents page at the top of the folder, above the
-first chapter, and the export prints them in that order. Type each one
-`Title`, `Frontmatter`, `Contents` — or pick the face by hand in the
-Document template row.
+A scene prints no heading unless it has something to say. Give it three
+fields in its Metadata and an epigraph appears above the prose:
 
-The dedication's text here is placeholder prose on purpose: it shows the
-page without asking you to write anything, and it is the first thing to
-delete.
+    Quote    the quotation
+    Source   who said it
+    Date     when
 
-## Chapter numbers, scene points of view
+Give it `PoV` and `Location` and a line names who and where the scene
+happens; with those empty, that line disappears too. This is a
+conditional, `$if(...)`: whatever the writer did not fill simply does not
+print, so no scene is forced to carry a heading.
 
-A chapter prints its number and nothing else — its name is on the contents
-page (and the part page above it, if the chapters sit in parts).
-`${Position}` is the chapter's place among the siblings that share its
-Type — a title page and a dedication above the first chapter are other
-Types, so they do not push the chapters to 2, 3, 4. Write
-`${Position-spell}` for "two" instead of "2", and `${Position-depth:2}`
-for a dotted number a scene inherits from its chapter: 2.1, 2.2.
+## What the title page asks for
 
-A scene prints no heading of its own. Give the scene a `PoV` field in its
-Metadata (the metadata panel adds any field you name) and the face prints it
-above the prose:
+`${Title}` is the document's own title and `${Author}` is a project field
+(the whole-project Metadata in the sidebar). `${BookTagline}` is a project
+field as well: add one called `BookTagline` and the line prints; without
+it, the page is just the title and the author.
 
-    $if(Metadata.PoV)<p class="pov">${Metadata.PoV}</p>
-    $endif
+## The fields above are yours, not Lekhak's
 
-That is a conditional (§2.2 of docs/TEMPLATES.md): with no `PoV` field the
-line disappears, so no scene is forced to have one. Change `PoV` for
-`Location`, `Date`, `Status` — whatever the field is called — and it prints
-the same way.
+None of `Quote`, `Source`, `Date`, `PoV`, `Location` or `BookTagline` is
+a Lekhak feature. A field exists because you wrote it, and what it is
+called is your business: rename `PoV` to `Narrator`, `Viewpoint` or
+`Season` in this set's fragments and in your documents, and it works the
+same. The names above are this template's worked example of what is
+possible; delete a `$if(...)` block and the field is simply ignored.
 
-## Paper, margins, running heads
+Where a field lives: **in the document's own file**, in the metadata
+block at the top of its head — so the file carries everything about the
+document and travels on its own:
 
-Page setup in the sidebar is where the trim and margins live, so this set
-states no paper of its own; print-config.txt is the same annotated manual
-every set starts with, all comments. Uncomment a line to try it: the
-config overrides page setup, and page setup overrides the built-in A4.
+    ---
+    title: Chapter Two
+    metadata:
+      PoV: Aaxyl
+      Location: The Null Dorms
+    ---
+
+The sidebar's Advanced / Custom table is where you write them and the
+app's database is what it reads while you work, so the two are kept in
+step on every save; edit them in the sidebar and the head follows.
+Inside a fragment, `${PoV}` prints a field, `$if(PoV)` prints a block
+only when the field is not empty, and `${Metadata.PoV}` spells the same
+name the long way.
+
+## The fonts
+
+The pages ask for Cinzel, Cormorant, Mixolydian Titling, Larabiefont and
+Lato Black by name, with an ordinary serif underneath. With those fonts
+installed the book looks exactly as designed; without them it falls back
+and still reads. Replace a name in the file's styling to use whatever you
+have.
+
+## Pages, margins, running heads
+
+Page setup in the sidebar is where trim and margins live, so this set
+states no paper of its own; print-config.txt is all comments. Uncomment a
+line to try it: the config overrides page setup, and page setup overrides
+the built-in A4.
 """
+
+# The children family: `${children}` is every child a container holds,
+# `${children-<type>}` is the ones of one kind. The qualifier is the word
+# the writer gave the type, used as it stands — no plurals, no guessing:
+# English would not be tamed by a rule anyway, and the type list in the
+# sidebar is the truth. The family is matched without regard to case,
+# because it is a word the writer is thinking of, not a data key.
+CHILDREN_NAME = "children"
+
+
+def is_children_name(name: str) -> bool:
+    """Whether a name belongs to the children family."""
+    folded = name.casefold().strip()
+    return folded == CHILDREN_NAME or folded.startswith(CHILDREN_NAME + "-")
+
+
+def children_candidates(name: str) -> list[str]:
+    """The registry key a name in the children family means: the
+    qualifier as written, with the family in lower case."""
+    folded = name.casefold().strip()
+    if folded == CHILDREN_NAME:
+        return [CHILDREN_NAME]
+    prefix = CHILDREN_NAME + "-"
+    if folded.startswith(prefix):
+        return [prefix + folded[len(prefix):]]
+    return []
+
+
+def unescape_placeholders(text: str) -> str:
+    """The prose as the writer means it: `$$` is the escape for a literal
+    `$`, so a document that talks about `${Title}` shows `${Title}` in the
+    editor while the file keeps `$${Title}` for the export to leave
+    alone."""
+    return text.replace("$$", "$")
+
+
+def escape_placeholders(text: str) -> str:
+    """The prose as the file keeps it: a `$` that opens a placeholder is
+    escaped, so the export expands the real ones and leaves the rest."""
+    return re.sub(r"\$(?=\{)", "$$", text)
+
+
+def lookup_value(values: dict[str, str], name: str) -> str:
+    """The value a name stands for: the name itself, or — for the
+    children family — the key the writer's word answers to."""
+    if name in values:
+        return values[name]
+    for candidate in children_candidates(name):
+        if candidate in values:
+            return values[candidate]
+    return ""
+
 
 # One map per shipped set: relative path -> file text. A `.html`/`.txt`
 # entry in the root is a fragment slot, a file opening with the `Docx`
 # marker is print configuration, and anything else — including nested
 # paths and the `documents/` shelf — is written out as it stands.
-NOTHING_HTML = """# nothing — a template that prints nothing
+NO_EXPORT_HTML = """# no-export — a template that prints nothing
 # =========================================
 #
-# This set is one file: nothing.html, whose body is empty.
+# This set is one file: no-export.html, whose body is empty.
 #
 #     (an empty body element)
 #
@@ -1511,7 +1818,7 @@ NOTHING_HTML = """# nothing — a template that prints nothing
 # set, not of each shape it might dress. A set whose own fragments are all
 # empty prints nothing, whatever slot the compile asks for, so there is
 # nothing to enumerate. To make it output again, change the template assigned
-# to that folder, or give nothing.html a body — the set then owns a
+# to that folder, or give no-export.html a body — the set then owns a
 # non-empty fragment and every slot answers normally. Nothing was emptied to
 # make this set, so nothing is lost by using it.
 #
@@ -1540,58 +1847,33 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
         "style.css": DEFAULT_CSS,
     },
     "Book": {
-        # A whole book, dressed the way the naming convention asks: the
-        # folder is a Book, its chapters Chapters, its scenes Scenes. No
-        # file here is required — delete one and the built-in fragment or
-        # the set's own slot answers instead (§3.2).
-        "folder.html": ('<section class="part">\n'
-                        '<p class="part-title">${Title}</p>\n'
-                        '<div class="content">${Content}</div>\n'
-                        '<div class="scenes">${Scenes}</div>\n</section>'),
-        "folder.txt": "${Title}\n\n${Content}\n\n${Scenes}",
-        # A chapter is its number: the folder it sits in carries the
-        # title (a part page), and the contents page lists them all.
-        "documents/Chapter.html": (
-            '<section class="chapter">\n'
-            '<p class="chapter-number">${Position}</p>\n'
-            '<div class="content">${Content}</div>\n'
-            '<div class="scenes">${Scenes}</div>\n</section>'),
-        "documents/Chapter.txt": "${Position}\n\n${Content}\n\n${Scenes}",
-        # A scene has no heading unless the writer gives it one: a `PoV`
-        # field in the scene's Metadata prints above the prose (2.2).
-        "documents/Scene.html": (
-            '<!-- Add a PoV field in this scene\'s Metadata and it prints\n'
-            '     above the prose; without one, the scene has no heading. -->\n'
-            '<section class="scene">\n'
-            '$if(Metadata.PoV)<p class="pov">${Metadata.PoV}</p>\n$endif'
-            '<div class="content">${Content}</div>\n</section>'),
-        "documents/Scene.txt": (
-            "$if(Metadata.PoV)${Metadata.PoV}\n\n$endif${Content}"),
-        "documents/Title.html": ('<section class="title-page">\n'
-                                 '<h1 class="book-title">${Title}</h1>\n'
-                                 '<p class="byline">${Author}</p>\n</section>'),
-        "documents/Title.txt": "${Title}\n\n${Author}",
-        "documents/Frontmatter.html": (
-            '<section class="dedication">\n'
-            '<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed\n'
-            'do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>\n'
-            '<p>Ut enim ad minim veniam, quis nostrud exercitation ullamco\n'
-            'laboris nisi ut aliquip ex ea commodo consequat.</p>\n'
-            '</section>'),
-        "documents/Frontmatter.txt": (
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do\n"
-            "eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\n"
-            "Ut enim ad minim veniam, quis nostrud exercitation ullamco\n"
-            "laboris nisi ut aliquip ex ea commodo consequat.\n"),
+        # One page per kind of thing, named after the Type it dresses.
+        # A writer's own design, shipped: their folder is a `book`, its
+        # chapters `chapter`, its scenes `scene`. No file here is
+        # required — delete one and the built-in page for that shape
+        # answers instead (§3.2).
+        "book.html": BOOK_PAGE_HTML,
+        "chapter.html": BOOK_CHAPTER_HTML,
+        "scene.html": BOOK_SCENE_HTML,
+        "title-page.html": BOOK_TITLE_PAGE_HTML,
         "print-config.txt": DEFAULT_CONFIG,
         "style.css": BOOK_CSS,
         "README": BOOK_README,
     },
-    "nothing": {
+    "Guide": {
+        # A documentation set, the one this guide's own pages are
+        # written for: two pages named after the Types a manual uses,
+        # so a document typed `heading` prints its title as a banner
+        # and one typed `section` prints banner and prose.
+        "documents/heading.html": GUIDE_HEADING_HTML,
+        "documents/section.html": GUIDE_SECTION_HTML,
+        "style.css": GUIDE_CSS,
+    },
+    "no-export": {
         # One empty body, not an emptied vocabulary (§3). This file (and
         # the notes beside it) is the whole set, so it prints nothing —
         # give it a body, or reassign the folder, and it answers normally.
-        "nothing.html": NOTHING_HTML,
+        "no-export.html": NO_EXPORT_HTML,
     },
 }
 

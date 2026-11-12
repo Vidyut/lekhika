@@ -307,6 +307,18 @@ entries anyway. End-to-end smoke through `pdf.export_pdf`: nine entries,
 printed numbers equal to link targets, each heading present on its
 target page.
 
+**Revised 2026-11-12 (headings are the truth):** for `html`, `epub` and
+`text`, `${ToC}`/contents is built from the headings that appear in the
+rendered export, nested by heading level, and the contents page itself
+is never listed. The fragment's `<ol>`/`<ul>` (or nothing) decides the
+wrapper; `text` is indented with real newlines. A document with no
+heading in its rendered output produces no entry. The EPUB navigation
+document shares the same entries. **Open:** `docx`/`pdf` still stamp
+headings by structural role in code and use a fixed `TOC \o "1-3"` field,
+so they do not yet follow the templates — making DOCX/PDF render the
+fragments is the named next piece (2.1b). A plain binder folder is not a
+compile unit, so it cannot appear in the contents today.
+
 ### 1.9 Resume where you left off — DONE
 **Request:** "When the software is started, resume from where the cursor was
 when it was closed the last time."
@@ -986,8 +998,19 @@ re-proposed. (One thing the work did establish, which 2.1 still wants:
 substitutions, and indent flattening inside the template's styles are each
 already owned by an existing mechanism.)
 
-### 2.1b The template composes the book: ordered pieces around a content slot
+### 2.1b The template composes the book: ordered pieces around a content slot — REMOVED (2026-11-11)
 (captured 2026-10-31, author's examples — planning only, no code yet)
+
+**Removed by the author (2026-11-11):** "Pieces was an old weird format with
+text areas to enter placeholders into. We don't use it now. Should be
+removed." It never shipped — the `Pieces:` line and its assembly step have no
+support in the code, and the `DONE` markers on steps 1 and 3 below are wrong
+(they named nine tests in a `tests/test_template_pieces.py` that does not
+exist). Front and back matter are binder folders above the manuscript, which
+is how every export already composes a book, and the dead `exclude_ids`
+plumbing that only this model used has been deleted.
+
+The section stays as the design record of what was tried.
 
 **Request, in the author's words.** Templates decide what to include and
 exclude, as an ordered sequence of pieces with the manuscript somewhere in it:
@@ -1078,6 +1101,14 @@ should mean adding a folder, never editing the line.
 - No mechanism expresses an *order* of pieces, or a format-specific piece
   beyond the existing `epub/` and `pdf/` folders (§1.3).
 
+**2026-11-12 note (related):** custom metadata fields are written into each
+document's head as well as the database (so the file carries them), and
+`Project.metadata_drift()`/`apply_file_metadata()` detect and resolve a
+file-vs-project disagreement for those fields. The writer-facing prompt
+(the same report-and-ask dialog used for manifest/`.order.json`) is not
+wired yet. Built-in head keys (title, kind, page break, …) and title
+itself are separate concerns — title affects the binder and the filename.
+
 **Order of work (planned).**
 1. **Storage — DONE (2026-10-31).** One config line, `Pieces: frontmatter,
    content, backmatter`, read into `TemplateSet.pieces` (templates.py) and
@@ -1146,8 +1177,8 @@ or only the content slot. Steps 1–2 do not depend on the answer.
 depends on the ordering model in (1), and building it against the two-slot
 abstraction would have been thrown away.
 
-### 2.1c Page size: the topmost level of the export decides
-(captured 2026-10-31, author's direction — planning only)
+### 2.1c Page size: the topmost level of the export decides — DONE (2026-11-03)
+(captured 2026-10-31, author's direction)
 
 A book template at 6×9 with scene templates at A4 exports as 6×9 throughout: a
 book never contains A4 pages. The individual A4 templates matter when *they*
@@ -1158,6 +1189,17 @@ their own prose without changing the export's paper.
 *Assumption E:* this is already what `_docx_geometry` does for a whole-project
 compile (2.1's "one file carries one paper"), and the work is to verify the
 document-only case uses that document's own geometry, plus a test pinning both.
+
+**Implemented (2026-11-03, shipped with 1.18).** `Project.standalone_page_setup`
+is the document-only answer: the nearest book folder seeds the geometry as
+usual, then the page's own design overlays it, so a scene template carrying
+`Page size (inches - horizontal, vertical): 5,7` prints at 5×7 when that scene
+is the export. `_docx_geometry` applies the same overlay in its one-page
+branch, so DOCX — and therefore PDF — agree; a multi-page export keeps the
+book's trim and ignores the page's size silently, which is the model above.
+Both halves are pinned by `test_a_page_printed_alone_takes_its_own_designs_paper`
+(`tests/test_docx_config.py`), which exports one scene twice: in the book at
+6.0 in, alone at 5.0 in. Suite 965, exit 0.
 
 ### 2.1d Compile settings, consolidated: one place per fact, not nine panels
 (captured 2026-10-31, author's direction after the full Format Designer tour)
@@ -1177,7 +1219,7 @@ functionality lands:
 | Scrivener panel | What it really holds | Where it goes in Lekhak |
 | --- | --- | --- |
 | Page Settings | trim, margins, headers/footers, facing pages | **Already the metadata-bar Page setup control** (2.1's geometry + mirrored heads/folios). Extend that control, don't add a panel. |
-| Transformations | dumb quotes, italics↔underline, ordinals, indent-per-level | **Template manifest switches** — they change text, so they belong to the template that owns the words, not to a global page. |
+| Transformations | dumb quotes, italics↔underline, ordinals, indent-per-level | **Quotes and dashes already exist** as *Edit → Standardise text* (on the manuscript, once); the rest declined (see below). |
 | Replacements | a regex find/replace table | **Dropped as a feature** (author: does not work well). If a real need appears, a literal-only two-column list in the manifest — no regex, no case/whole-word matrix. |
 | Statistics | which text counts, footnotes/comments, spaces | **The existing count surfaces** (status bar, outliner rollups) gain the counting rule; nothing new to open. |
 | Tables | stitch adjacent tables, width | **Output-format detail, decided automatically** — DOCX behaviour with no switch unless a real case appears. |
@@ -1188,6 +1230,27 @@ What this means for 2.1b's order of work: the processing seam is real but
 **small** — one place where the assembled parts pass through the manifest's
 transformations before an exporter writes them. It is not a settings subsystem,
 and there is no per-format designer to build.
+
+**Transformations, decided 2026-11-11 (not built, deliberately).** The author
+offered them if they were not too complicated. They are not worth it, for three
+reasons:
+
+- **The two that matter already exist**, on the manuscript rather than at
+  export: *Edit → Standardise text* makes straight quotes curly (or back),
+  and turns `--` into an em dash, across one document or the whole project.
+  Doing it again at export would give two places that can disagree, and the
+  export-time version would have to parse HTML to avoid rewriting tags and
+  attributes — real difficulty for no new capability.
+- **Italics ↔ underline** is the typewriter convention for manuscript
+  submission to an editor who wants it, and Markdown export already carries
+  emphasis as markup. A switch here would change every `.txt` a writer
+  produces, in service of a habit most of them do not have.
+- **Ordinals and indent-per-level** are styling, and styling already has a
+  home: paragraph styles, the stylesheet, and the `Font:` line. Superscripting
+  `1st`/`21st` in running prose is also a guess with dates in it.
+
+So 2.1d's transformations row reads: quotes and dashes **already exist as an
+editor command**; the rest are declined.
 
 *Assumption H:* the inspector's metadata bar is the home for *document/book*
 facts (page setup already is), while template-wide processing lives in the
@@ -1337,7 +1400,7 @@ harmless, but a deliberate link to the opening scene needs another
 title; setext headings (`Title` over `===`) are not dividers; no
 front-matter/synopsis extraction — a file is prose and structure only.
 **Markdown export implemented (2026-10-20):** one commit (`b8ec0a4`).
-File → "Export Markdown…": clean structure only — `#` chapter / `##`
+Markdown export (clean structure only — `#` chapter / `##`) was implemented, then removed from the export UI for now; implementation notes remain below.
 scene headings, prose converted back from stored HTML with bold and
 italic kept (`markdown_from_html` mirrors `markdown_to_html`'s subset),
 wiki links as plain words via the 2.2 text fallthrough. No template
@@ -2063,6 +2126,13 @@ is a decision for when this gets scheduled.
   a determined writer's eccentricities. Where a convention is genuinely needed
   — `Templates` as a reserved folder name is the clearest case — it is said
   once, in one place, and only then.
+- **Platforms are community-found (author, 2026-11-11).** Launchers exist for
+  Linux, Windows and macOS, but Lekhak is free GPL software built by one person
+  on Linux. No pre-release run happens on Windows or macOS: a platform bug is
+  found by a writer, reported, and fixed then. Likewise no synthetic
+  five-hundred-document project — the author's own projects are the scale that
+  matters, and "we don't have 500 docs. lol." Usability reports and complaints
+  are the input for 1.x.
 - **Lean over clever, and every line must earn its place.** Before
   implementing a feature, check both sides: what it costs (a new mechanism,
   a new stored role, a new regex in a write path, a new code path that can

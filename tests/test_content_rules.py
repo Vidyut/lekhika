@@ -138,8 +138,10 @@ class WikiLinkCompileTests(unittest.TestCase):
 
     def test_published_link_becomes_an_html_anchor(self):
         exported = self._export_html()
-        self.assertIn("<a href='#unit-2'>Chapter Two</a>", exported)
-        self.assertIn("<a id='unit-2'></a>", exported)
+        # The root and book folders are exported units, so Chapter Two is
+        # a later unit than before — the link resolves to that unit.
+        self.assertIn("<a href='#unit-5'>Chapter Two</a>", exported)
+        self.assertIn("<a id='unit-5'></a>", exported)
         self.assertNotIn("[[", exported)
 
     def test_published_link_points_at_the_right_epub_section(self):
@@ -149,7 +151,7 @@ class WikiLinkCompileTests(unittest.TestCase):
             sections = [name for name in archive.namelist()
                         if name.startswith("OEBPS/section-")]
             joined = "".join(archive.read(name).decode() for name in sections)
-        self.assertIn("href='section-2.xhtml'", joined)
+        self.assertIn("href='section-5.xhtml'", joined)
 
     def test_unpublished_link_keeps_its_words_by_default(self):
         exported = self._export_html({self.chapter_one.id})
@@ -241,7 +243,7 @@ class WikiLinkCompileTests(unittest.TestCase):
         destination = self.root / "book.html"
         self.project.export_html(destination, None, templates)
         exported = destination.read_text(encoding="utf-8")
-        self.assertIn("<a href='#unit-2'>Chapter Two</a>", exported)
+        self.assertIn("<a href='#unit-5'>Chapter Two</a>", exported)
 
 
 if __name__ == "__main__":

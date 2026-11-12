@@ -1,5 +1,4 @@
-"""2.3, next slice: clean markdown export — the inverse of the
-markdown import, plus the HTML-to-markdown conversion itself.
+"""Clean markdown export — plus the HTML-to-markdown conversion itself.
 """
 
 import tempfile
@@ -9,9 +8,8 @@ from pathlib import Path
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from lekhak.importer import (  # noqa: E402
-    import_markdown_file, markdown_from_html, markdown_to_html,
-    split_markdown,
+from lekhak.markdown import (  # noqa: E402
+    markdown_from_html, markdown_to_html,
 )
 from lekhak.project import Project  # noqa: E402
 
@@ -99,26 +97,20 @@ class ExportMarkdownTests(unittest.TestCase):
         self.assertIn("See First Light and Nowhere.", text)
         self.assertNotIn("[[", text)
 
-    def test_import_export_import_round_trip(self):
-        source = self.root / "solo.md"
-        source.write_text(
-            "# The War\nWar prose.\n\n## First Light\nScene *soft*.",
-            encoding="utf-8")
-        folder_id = import_markdown_file(self.project, source)
+    def test_export_writes_markdown_a_human_can_reread(self):
+        # Formerly an import→export→import round trip. Import is
+        # archived (lekhak-imports), so the export test stands alone:
+        # headings + prose land as readable markdown.
+        self._build_manuscript()
         destination = self.root / "out.md"
 
         self.project.export_markdown(destination)
-        second = Project.create(self.root / "Again", "Again")
-        try:
-            import_markdown_file(second, destination)
-            titles = [(d.title, d.kind)
-                      for d in second.documents() if d.kind in ("chapter", "scene")]
-            self.assertEqual(titles, [("The War", "chapter"),
-                                      ("First Light", "scene")])
-            chunks = split_markdown(destination.read_text(encoding="utf-8"))
-            self.assertIn("Scene *soft*.", chunks[1].body)
-        finally:
-            second.close()
+
+        text = destination.read_text(encoding="utf-8")
+        self.assertIn("# The War", text)
+        self.assertIn("## First Light", text)
+        self.assertIn("Scene **bold** and *soft*.", text)
+        self.assertIn("War prose.\n\n## First Light", text)
 
 
 if __name__ == "__main__":

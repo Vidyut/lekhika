@@ -15,10 +15,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -146,15 +147,18 @@ class TemplateNavigationTests(unittest.TestCase):
         self.assertEqual(names, [s.name for s in discover_template_sets(
             self.project.root)])
         self.assertEqual(names,
-                         ["default", "short story", "Book", "nothing"])
+                         ["default", "short story", "Book", "Guide",
+                          "no-export"])
 
     def test_the_templates_folder_is_not_a_row_of_its_own(self):
-        # The area is the project's templates/ folder on disk, not
-        # another thing in the binder.
+        # Templates is a normal binder folder (user 2026-11-08): it
+        # lives on disk *and* as a row, visible and editable.
         create_template_set("Mine", self.project.root)
         self.project.sync_with_disk()
-        self.assertEqual([d for d in self.project.documents()
-                          if (d.path or "") == "templates"], [])
+        rows = [d for d in self.project.documents()
+                if (d.path or "") == "templates"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].kind, "folder")
         self.window._reload_tree()
         self.assertEqual([item.text(0) for item in self._of_kind(
             TEMPLATE_SET_KIND)], [])
@@ -395,6 +399,49 @@ class TemplateNavigationTests(unittest.TestCase):
         # furniture, §3.2) — the fragment is in there, still tagged.
         self.assertIn("${Content}", on_disk)
         self.assertIn("<p", on_disk)
+
+    def test_a_placeholder_lakhak_does_not_know_is_reported_once(self):
+        # An unknown name prints nothing, so a misspelling is silent: the
+        # writer is told, but the file is still written (a tripwire, not
+        # a gate).
+        _created, path = self._open_fragment(
+            relative="<p>${Documnets} ${Content}</p>")
+
+        with patch.object(QMessageBox, "warning") as warning:
+            self.assertTrue(self.window.save_current())
+
+        self.assertEqual(warning.call_count, 1)
+        self.assertIn("${Documnets}", warning.call_args[0][2])
+        # The file is saved as it stands.
+        self.assertIn("${Documnets}", path.read_text(encoding="utf-8"))
+
+        # The same issues again say nothing new: one warning per set.
+        with patch.object(QMessageBox, "warning") as warning:
+            self.assertTrue(self.window.save_current())
+        self.assertEqual(warning.call_count, 0)
+
+    def test_a_field_the_project_owns_is_not_a_typo(self):
+        self.project.set_metadata(self.draft.id, {"Type": "Scene",
+                                                  "PoV": "Maren"})
+        _created, _path = self._open_fragment(
+            relative="<p>${PoV} ${Content}</p>")
+
+        with patch.object(QMessageBox, "warning") as warning:
+            self.assertTrue(self.window.save_current())
+
+        self.assertEqual(warning.call_count, 0)
+
+    def test_a_type_word_is_not_a_typo(self):
+        # A type is one exact word: the name a template uses to ask for
+        # the children of that type.
+        self.project.set_metadata(self.draft.id, {"Type": "leaf"})
+        _created, _path = self._open_fragment(
+            relative="<p>${children-leaf} ${Content}</p>")
+
+        with patch.object(QMessageBox, "warning") as warning:
+            self.assertTrue(self.window.save_current())
+
+        self.assertEqual(warning.call_count, 0)
 
     def test_the_naming_reminder_is_the_shared_text(self):
         self._open_fragment()
@@ -719,7 +766,7 @@ class TemplateNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.current_id, self.draft.id)
         self.assertTrue(self.window.views.currentWidget()
                         in (self.window.editor_page, self.window.corkboard,
-                            self.window.outliner))
+                            getattr(self.window, 'outliner_page', self.window.outliner)))
 
     def test_a_document_can_be_picked_again_after_the_sets_were_listed(self):
         # The editor was emptied to list the sets, so the binder must not
@@ -742,7 +789,7 @@ class TemplateNavigationTests(unittest.TestCase):
         self._select_set((created))
         self.window._select_document(self.draft.id)
         self.assertIn(self.window.views.currentWidget(),
-                      (self.window.corkboard, self.window.outliner))
+                      (self.window.corkboard, getattr(self.window, 'outliner_page', self.window.outliner)))
 
     # --- duplication is flat ------------------------------------------------
 
@@ -802,7 +849,8 @@ class TemplateNavigationTests(unittest.TestCase):
             TEMPLATE_SET_KIND) if item.text(0) == "Chapter only")
         self.assertIsNone(copy_item.parent())
         copy_dir = self.project.root / "templates" / "Chapter only"
-        self.assertEqual(sorted(path.name for path in copy_dir.iterdir()),
+        self.assertEqual(sorted(path.name for path in copy_dir.iterdir()
+                                if not path.name.startswith(".")),
                          ["folder.html"])
         self.assertIn("mine ${Content}",
                       (copy_dir / "folder.html").read_text(encoding="utf-8"))
@@ -815,7 +863,8 @@ class TemplateNavigationTests(unittest.TestCase):
         self.window._copy_template_file("folder.html", "My chapter")
 
         copy_dir = self.project.root / "templates" / "My chapter"
-        self.assertEqual(sorted(path.name for path in copy_dir.iterdir()),
+        self.assertEqual(sorted(path.name for path in copy_dir.iterdir()
+                                if not path.name.startswith(".")),
                          ["folder.html"])
         self.assertEqual(
             (copy_dir / "folder.html").read_text(encoding="utf-8"),

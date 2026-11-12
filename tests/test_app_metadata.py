@@ -55,9 +55,10 @@ class MetadataPanelTests(unittest.TestCase):
 
         table = self.window.metadata_table
         self.assertEqual(self.window._metadata_target, self.scene.id)
-        self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 0).text(), "POV")
-        self.assertEqual(table.item(0, 1).text(), "Maya")
+        # Column 0 is the required checkbox; Field/Value/Format follow.
+        row = next(r for r in range(table.rowCount())
+                   if table.item(r, 1) and table.item(r, 1).text() == "POV")
+        self.assertEqual(table.item(row, 2).text(), "Maya")
 
     def test_the_lock_is_a_tick_of_its_own_not_a_custom_field(self):
         # The lock is a marker file in the tree (docs/STORAGE.md), not one
@@ -68,6 +69,10 @@ class MetadataPanelTests(unittest.TestCase):
         table = self.window.metadata_table
         names = [table.item(row, 0).text() for row in range(table.rowCount())]
         self.assertNotIn("Locked", names)
+        lock_fold = next((f for f in self.window.metadata_folds
+                          if f.header.text() == "Formatting related"), None)
+        if lock_fold is not None:
+            lock_fold.header.setChecked(True)
         self.assertTrue(self.window.lock_box.isVisibleTo(self.window))
         self.assertFalse(self.window.lock_box.isChecked())
 
@@ -106,8 +111,8 @@ class MetadataPanelTests(unittest.TestCase):
         table = self.window.metadata_table
         self.assertEqual(self.window._metadata_target, PROJECT_METADATA_TARGET)
         self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 0).text(), "Series")
-        self.assertEqual(table.item(0, 1).text(), "Series")
+        self.assertEqual(table.item(0, 2).text(), "Series")
+        self.assertEqual(table.item(0, 2).text(), "Series")
 
     def test_nothing_selected_targets_the_project(self):
         self.project.set_project_metadata({"Series": ("Series", "text", [])})
@@ -122,8 +127,10 @@ class MetadataPanelTests(unittest.TestCase):
         self.window._select_document(self.scene.id)
 
         self.window.metadata_table.add_field()
-        self.window.metadata_table.item(0, 0).setText("POV")
-        self.window.metadata_table.item(0, 1).setText("Maya")
+        # With the required checkbox in column 0, Field/Value are 1/2.
+        row = self.window.metadata_table.rowCount() - 1
+        self.window.metadata_table.item(row, 1).setText("POV")
+        self.window.metadata_table.item(row, 2).setText("Maya")
 
         self.assertEqual(
             self.project.metadata_entries(self.scene.id)["POV"],
@@ -134,8 +141,9 @@ class MetadataPanelTests(unittest.TestCase):
         self.window._select_document(self.folder.id)
 
         self.window.metadata_table.add_field()
-        self.window.metadata_table.item(0, 0).setText("Series")
-        self.window.metadata_table.item(0, 1).setText("Series")
+        row = self.window.metadata_table.rowCount() - 1
+        self.window.metadata_table.item(row, 1).setText("Series")
+        self.window.metadata_table.item(row, 2).setText("Series")
 
         self.assertEqual(
             self.project.project_metadata()["Series"],
@@ -149,14 +157,17 @@ class MetadataPanelTests(unittest.TestCase):
         self.project.set_metadata(self.scene.id, {"POV": "Maya"})
         self.window._select_document(self.scene.id)
 
-        self.window.metadata_table.item(0, 0).setText("")
+        row = next(r for r in range(self.window.metadata_table.rowCount())
+                   if self.window.metadata_table.item(r, 1)
+                   and self.window.metadata_table.item(r, 1).text() == "POV")
+        self.window.metadata_table.item(row, 1).setText("")
 
         self.assertEqual(
             self.project.metadata_entries(self.scene.id)["POV"],
             ("Maya", "text", []),
         )
 
-        self.window.metadata_table.item(0, 0).setText("Hero")
+        self.window.metadata_table.item(row, 1).setText("Hero")
 
         entries = self.project.metadata_entries(self.scene.id)
         self.assertNotIn("POV", entries)
@@ -189,10 +200,10 @@ class MetadataPanelTests(unittest.TestCase):
         )
         self.window._select_document(self.scene.id)
 
-        type_box = self.window.metadata_table.cellWidget(0, 2)
+        type_box = self.window.metadata_table.cellWidget(0, 3)
         self.assertIsInstance(type_box, QComboBox)
         self.assertEqual(type_box.currentData(), "text")
-        self.assertEqual(self.window.metadata_table.item(0, 1).text(), "Draft")
+        self.assertEqual(self.window.metadata_table.item(0, 2).text(), "Draft")
 
     def test_metadata_widgets_disabled_without_a_project(self):
         window = MainWindow()
@@ -232,12 +243,18 @@ class MetadataPanelTests(unittest.TestCase):
         self.project.set_metadata(self.scene.id, {"POV": "Maya"})
         self.project.set_project_metadata({"Series": ("Series", "text", [])})
         self.window._select_document(self.scene.id)
-        self.assertEqual(self.window.metadata_table.item(0, 0).text(), "POV")
+        row = next(r for r in range(self.window.metadata_table.rowCount())
+                   if self.window.metadata_table.item(r, 1)
+                   and self.window.metadata_table.item(r, 1).text() == "POV")
+        self.assertEqual(self.window.metadata_table.item(row, 2).text(), "Maya")
 
         self.window._select_document(self.folder.id)
 
         self.assertEqual(self.window._metadata_target, PROJECT_METADATA_TARGET)
-        self.assertEqual(self.window.metadata_table.item(0, 0).text(), "Series")
+        row = next(r for r in range(self.window.metadata_table.rowCount())
+                   if self.window.metadata_table.item(r, 1)
+                   and self.window.metadata_table.item(r, 1).text() == "Series")
+        self.assertEqual(self.window.metadata_table.item(row, 2).text(), "Series")
 
     def test_checkbox_type_stores_yes_or_no(self):
         self.project.set_metadata(
@@ -245,7 +262,7 @@ class MetadataPanelTests(unittest.TestCase):
         )
         self.window._select_document(self.scene.id)
 
-        value_widget = self.window.metadata_table.cellWidget(0, 1)
+        value_widget = self.window.metadata_table.cellWidget(0, 2)
         self.assertTrue(value_widget.isChecked())
 
         value_widget.setChecked(False)
@@ -261,7 +278,7 @@ class MetadataPanelTests(unittest.TestCase):
         )
         self.window._select_document(self.scene.id)
 
-        editor = self.window.metadata_table.cellWidget(0, 1)
+        editor = self.window.metadata_table.cellWidget(0, 2)
         editor.setPlainText("one\ntwo\nthree")
         # Typing alone must not save per keystroke: the commit fires when
         # the caret leaves the widget (the line-edit editingFinished
@@ -283,7 +300,7 @@ class MetadataPanelTests(unittest.TestCase):
         self.window._select_document(self.scene.id)
         self.window.metadata_table.add_field()
 
-        type_box = self.window.metadata_table.cellWidget(0, 2)
+        type_box = self.window.metadata_table.cellWidget(0, 3)
         values = [type_box.itemData(index) for index in range(type_box.count())]
         self.assertEqual(values, ["text", "textarea", "checkbox", "date"])
 
@@ -291,10 +308,10 @@ class MetadataPanelTests(unittest.TestCase):
         self.project.set_metadata(self.scene.id, {"Done": "maybe"})
         self.window._select_document(self.scene.id)
 
-        type_box = self.window.metadata_table.cellWidget(0, 2)
+        type_box = self.window.metadata_table.cellWidget(0, 3)
         type_box.setCurrentIndex(type_box.findData("checkbox"))
 
-        value_widget = self.window.metadata_table.cellWidget(0, 1)
+        value_widget = self.window.metadata_table.cellWidget(0, 2)
         self.assertFalse(value_widget.isChecked())      # "maybe" is not yes
         value_widget.setChecked(True)
         self.assertEqual(
@@ -305,10 +322,10 @@ class MetadataPanelTests(unittest.TestCase):
 
     def test_column_order_puts_value_next_to_the_field(self):
         table = self.window.metadata_table
-        headers = [table.horizontalHeaderItem(i).text() for i in range(3)]
-        # "Format", not "Type": Type is the protected role key
-        # (docs/MODEL.md) and must not share a word with the widget column.
-        self.assertEqual(headers, ["Field", "Value", "Format"])
+        headers = [table.horizontalHeaderItem(i).text() for i in range(4)]
+        # Column 0 is the required mark; "Format" (not "Type") is the
+        # value-widget column (docs/MODEL.md).
+        self.assertEqual(headers, ["", "Field", "Value", "Format"])
 
     def test_scrivener_long_date_opens_in_the_picker_as_a_real_date(self):
         self.project.set_metadata(
@@ -317,7 +334,7 @@ class MetadataPanelTests(unittest.TestCase):
         )
         self.window._select_document(self.scene.id)
 
-        editor = self.window.metadata_table.cellWidget(0, 1)
+        editor = self.window.metadata_table.cellWidget(0, 2)
         self.assertIsInstance(editor, QDateEdit)
         self.assertEqual(editor.date().toString(Qt.ISODate), "2443-01-07")
         self.assertEqual(
@@ -369,24 +386,33 @@ class MetadataBoxesTests(unittest.TestCase):
 
     def test_the_panel_reads_as_four_groups_in_order(self):
         titles = [fold.header.text() for fold in self.window.metadata_folds]
-        self.assertEqual(titles, ["Basic", "Synopsis", "Format / Scene",
-                                   "Advanced / Custom"])
+        self.assertEqual(titles, ["Content related", "Formatting related",
+                                   "Related files", "Media"])
 
     def test_the_facts_land_in_their_groups(self):
-        basic = self._fold("Basic")
-        self.assertIn(self.window.type_box, self._widgets(basic))
-        self.assertIn(self.window.target, self._widgets(basic))
-        self.assertIn(self.window.doc_template_box, self._widgets(basic))
-        self.assertEqual(self._widgets(self._fold("Synopsis")),
-                         [self.window.synopsis])
-        format_fold = self._fold("Format / Scene")
+        # Word goal stands alone (not in a fold); Type/template sit in
+        # Formatting below Content; Synopsis + Advanced nest in Content.
+        from lekhak.app import Fold
+        # Word goal row is outside any fold but in the metadata section.
+        self.assertNotIn(self.window.target, self._widgets(self._fold("Content related")))
+        self.assertIsNotNone(self.window.word_goal_row.parent())
+        self.assertTrue(self.window.word_goal_row.isVisibleTo(self.window))
+        content = self._fold("Content related")
+        # Synopsis lives one level deeper, inside its own Fold inside Content.
+        synopsis_folds = [f for f in content.findChildren(Fold) if f.header.text() == "Synopsis"]
+        self.assertTrue(synopsis_folds)
+        self.assertIn(self.window.synopsis, self._widgets(synopsis_folds[0]))
+        formatting = self._fold("Formatting related")
+        self.assertIn(self.window.type_box, self._widgets(formatting))
+        self.assertIn(self.window.doc_template_box, self._widgets(formatting))
         self.assertIn(self.window.scene_divider_edit,
-                      self._widgets(format_fold))
-        self.assertIn(self.window.book_cover_edit, self._widgets(format_fold))
+                      self._widgets(formatting))
+        self.assertIn(self.window.book_cover_edit, self._widgets(formatting))
         self.assertIn(self.window.page_setup_button,
-                      self._widgets(format_fold))
-        self.assertIn(self.window.metadata_table,
-                      self._widgets(self._fold("Advanced / Custom")))
+                      self._widgets(formatting))
+        adv = [f for f in content.findChildren(Fold) if f.header.text() == "Advanced / Custom"]
+        self.assertTrue(adv)
+        self.assertIn(self.window.metadata_table, self._widgets(adv[0]))
 
     def test_the_long_fields_are_capped(self):
         # Capped, not shrunk: a long synopsis or field list scrolls inside
@@ -398,7 +424,7 @@ class MetadataBoxesTests(unittest.TestCase):
         # The Format / Scene rows are the folder's (a scene has none of
         # them), so the fold is checked on the folder.
         self.window._select_document(self.folder.id)
-        fold = self._fold("Format / Scene")
+        fold = self._fold("Formatting related")
         self.assertFalse(fold.header.isChecked())
         self.assertFalse(self.window.page_setup_button.isVisibleTo(self.window))
 

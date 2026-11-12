@@ -55,10 +55,10 @@ class InspectorLabelTests(unittest.TestCase):
 
     def test_the_toolbar_makes_documents_not_scenes(self):
         # Scene is a role a document can carry (1.17), not the thing the
-        # toolbar makes: what it makes is a document.
-        toolbar = next(bar for bar in self.window.findChildren(QToolBar)
-                       if bar.windowTitle() == "Writing")
-        texts = [action.text() for action in toolbar.actions()]
+        # toolbar makes: what it makes is a document. The Writing bar
+        # now lives in the binder header, not the window chrome.
+        from PySide6.QtWidgets import QToolButton
+        texts = [btn.text() for btn in self.window.binder_page.findChildren(QToolButton)]
         self.assertIn("New Document", texts)
         self.assertNotIn("New Scene", texts)
 

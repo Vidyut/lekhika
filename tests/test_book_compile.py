@@ -202,7 +202,7 @@ class BookCompileTests(unittest.TestCase):
         set_dir = create_template_set("headed", self.project.root).directory
         (set_dir / "print-config.txt").write_text(
             "Docx\nHeader left: ${Metadata.Series}, ,\n"
-            "Header right: , ,${Book}\nFooter: ,, ${Page}\n")
+            "Header right: , ,${BookTitle}\nFooter: ,, ${Page}\n")
         destination = self.root / "headed.docx"
 
         self.project.export_docx(
@@ -233,6 +233,191 @@ class BookCompileTests(unittest.TestCase):
         heads = [part for part in self._running_parts(destination)
                  if part[1] == "header"]
         self.assertEqual(heads, [])
+
+    def test_a_first_page_line_takes_the_head_off_the_opening_page(self):
+        # A chapter opener wearing a running head looks wrong (§3.1), so
+        # the `first page` pair say what each section's opening page
+        # carries: here, no head at all, while every other page keeps one.
+        set_dir = create_template_set("openers", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nNew Chapter: Recto\nHeader: ,${BookTitle},\n"
+            "Header first page: none\n")
+        destination = self.root / "openers.docx"
+
+        self.project.export_docx(
+            destination, None, TemplateSet.load("openers", set_dir))
+
+        parts = self._running_parts(destination)
+        self.assertIn(("default", "header", "Novel"), parts)
+        # The opening page's part is written and empty, and the section
+        # is flagged to use it — the two halves of the one answer.
+        self.assertIn(("first", "header", ""), parts)
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+        self.assertIn("<w:titlePg", doc)
+
+    def test_a_plain_head_line_leaves_the_opening_page_alone(self):
+        # The flip side: without the `first page` line the flag is never
+        # set, so the sample's own title page stays the sample's.
+        set_dir = create_template_set("plain", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nHeader: ,${BookTitle},\n")
+        destination = self.root / "plain.docx"
+
+        self.project.export_docx(
+            destination, None, TemplateSet.load("plain", set_dir))
+
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+        self.assertNotIn("<w:titlePg", doc)
+
+    def test_a_container_never_loses_its_children_by_silence(self):
+        # `${children}` says *where* a chapter's scenes go (§3), it does
+        # not gate them: a fragment that never names the family has them
+        # appended, because a template must not swallow manuscript.
+        set_dir = create_template_set("silent", self.project.root).directory
+        (set_dir / "folder.html").write_text("<h1>${Title}</h1>",
+                                            encoding="utf-8")
+        destination = self.root / "silent.html"
+
+        self.project.export_html(
+            destination, None, TemplateSet.load("silent", set_dir))
+
+        exported = destination.read_text(encoding="utf-8")
+        self.assertIn("First light prose.", exported)
+        # Without the placeholder the scenes follow the fragment; with
+        # it they sit where the writer put them.
+        self.assertLess(exported.find("<h1>Chapter One</h1>"),
+                        exported.find("First light prose."))
+
+    def test_a_page_designs_first_page_line_speaks_for_its_own_section(self):
+        # A title page wearing a design of its own (1.18): its
+        # `Header first page: none` belongs to the section it opened,
+        # not to the file — the chapters after it keep the book's head
+        # and their own opening pages unflagged.
+        set_dir = create_template_set("plain", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nPage size: A4\nNew Chapter: Recto\nHeader: ,${BookTitle},\n")
+        design = self.project.root / "templates" / "front.html"
+        design.write_text("Docx\nHeader first page: none\n${Content}",
+                          encoding="utf-8")
+        self.project.update_document(self.scene.id, doc_template="front")
+        destination = self.root / "front.docx"
+
+        self.project.export_docx(
+            destination, None, TemplateSet.load("plain", set_dir))
+
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+        sections = re.findall(r"<w:sectPr.*?</w:sectPr>", doc, re.DOTALL)
+        flagged = [index for index, sect in enumerate(sections)
+                   if "<w:titlePg" in sect]
+        self.assertEqual(len(flagged), 1)
+        # The chapters after it carry the book's head and no first-page
+        # part of their own.
+        parts = self._running_parts(destination)
+        self.assertIn(("default", "header", "Novel"), parts)
+        self.assertIn(("first", "header", ""), parts)
+        self.assertEqual(sum(1 for part in parts if part[0] == "first"), 1)
+
+    def test_the_head_font_line_sets_the_running_heads_type(self):
+        # `Head font:` is the running heads' own type (§3.1): the folio
+        # is usually smaller than the body, and this is the line that
+        # says so — on the pieces and on the PAGE field alike.
+        set_dir = create_template_set("heads", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nHeader: ,${BookTitle},\nFooter: ,${PageNo},\n"
+            "Head font: Georgia, 8\n")
+        destination = self.root / "heads.docx"
+
+        self.project.export_docx(
+            destination, None, TemplateSet.load("heads", set_dir))
+
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+            rels = archive.read("word/_rels/document.xml.rels").decode()
+            for rid in re.findall(r'w:(?:header|footer)Reference[^>]*'
+                                  r'r:id="([^"]+)"', doc):
+                target = re.search(rf'Id="{rid}"[^>]*Target="([^"]+)"',
+                                   rels).group(1)
+                part = archive.read(f"word/{target}").decode()
+                self.assertIn('w:ascii="Georgia"', part)
+                # 8pt is 16 half-points in Word's own units.
+                self.assertIn('<w:sz w:val="16"/>', part)
+
+    def test_page_no_names_the_folio_and_page_keeps_working(self):
+        # `${PageNo}` is the name the panel inserts and the reference
+        # lists; `${Page}` is what the first templates wrote, and a
+        # template that says it still gets its number (§3.2).
+        self.project.write_content(
+            self.scene.id, "<p>First light.</p><p>${PageNo}</p>")
+        destination = self.root / "folio-no.docx"
+
+        self.project.export_docx(destination, {self.scene.id})
+
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+        self.assertIn('<w:instrText xml:space="preserve"> PAGE </w:instrText>',
+                      doc)
+        self.assertNotIn("${PageNo}", doc)
+        self.assertNotIn("PageNo", doc)
+
+    def test_a_page_placeholder_in_the_text_positions_the_folio(self):
+        # `${Page}` is a position, not a count (3.1): it becomes Word's
+        # own PAGE field where the writer put it, so the number stays
+        # right as the text reflows. It never appears as literal text.
+        self.project.write_content(
+            self.scene.id, "<p>First light prose.</p><p>${Page}</p>")
+        destination = self.root / "folio.docx"
+
+        self.project.export_docx(destination, {self.scene.id})
+
+        with zipfile.ZipFile(destination) as archive:
+            doc = archive.read("word/document.xml").decode()
+        self.assertIn('<w:instrText xml:space="preserve"> PAGE </w:instrText>',
+                      doc)
+        self.assertNotIn("${Page}", doc)
+
+    def test_the_page_placeholder_prints_nothing_where_there_are_no_pages(self):
+        # HTML has no fixed pages, so the placeholder leaves no trace —
+        # not even the private-use marker it resolves to for Word.
+        self.project.write_content(
+            self.scene.id, "<p>First light prose.</p><p>${Page}</p>")
+        destination = self.root / "folio.html"
+
+        self.project.export_html(destination, {self.scene.id})
+
+        page = destination.read_text(encoding="utf-8")
+        self.assertNotIn("${Page}", page)
+        self.assertNotIn("\ue000", page)
+
+    def test_a_document_export_sets_no_book_title(self):
+        # A lone document is not a book (3.1): `${BookTitle}` is blank
+        # rather than the document's own name wearing the book's part,
+        # and an all-empty head line says nothing at all.
+        set_dir = create_template_set("lonesome", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nHeader: , ,${BookTitle}\n", encoding="utf-8")
+        destination = self.root / "lone.docx"
+
+        self.project.export_docx(destination, {self.scene.id},
+                                 TemplateSet.load("lonesome", set_dir))
+
+        heads = [part for part in self._running_parts(destination)
+                 if part[1] == "header"]
+        self.assertEqual(heads, [])
+
+    def test_a_folder_export_wears_the_folders_name_as_the_book(self):
+        set_dir = create_template_set("titled", self.project.root).directory
+        (set_dir / "print-config.txt").write_text(
+            "Docx\nHeader: , ,${BookTitle}\n", encoding="utf-8")
+        destination = self.root / "titled.docx"
+
+        self.project.export_docx(destination, {self.book.id},
+                                 TemplateSet.load("titled", set_dir))
+
+        parts = self._running_parts(destination)
+        self.assertIn(("default", "header", "A Fictional Book"), parts)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QToolButton  # noqa: E402
 
 from lekhak import ai  # noqa: E402
 from lekhak.app import MainWindow, PreferencesDialog  # noqa: E402
@@ -71,11 +71,14 @@ class PreferencesNoteTests(unittest.TestCase):
             ai.AISettings(endpoint=ai.DEFAULT_ENDPOINT, model=""),
             None, [])
 
-        text = "\n".join(label.text()
-                         for label in dialog.findChildren(QLabel))
-        self.assertIn("ollama pull", text)
-        self.assertIn("Read this before you rely on it", text)
-        self.assertIn("minimal edits", text)
+        # The explanation lives behind the "?" (docs/TEMPLATES.md §7) —
+        # visible on hover, not filling the page.
+        tips = "\n".join(widget.toolTip()
+                         for widget in dialog.findChildren(QLabel)
+                         + dialog.findChildren(QToolButton))
+        self.assertIn("ollama pull", tips)
+        self.assertIn("Read this before you rely on it", tips)
+        self.assertIn("minimal edits", tips)
 
 
 class ThinkingModelTests(unittest.TestCase):

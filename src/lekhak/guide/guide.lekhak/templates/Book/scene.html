@@ -1,0 +1,10 @@
+<section class="scene">
+$if(Quote)
+<p class="quote">${Quote}</p>
+<p class="attribution">~ ${Source}, ${Date}</p>
+$endif
+$if(PoV)
+<h3 class="scene-head">${PoV}$if(Location): ${Location}$endif</h3>
+$endif
+<div class="content">${Content}</div>
+</section>

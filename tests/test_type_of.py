@@ -21,11 +21,9 @@ class TypeOfTests(unittest.TestCase):
     def test_two_base_roles_read_as_folder_and_document(self):
         chapter = self.project.add_document("Ch", self.draft.id, "chapter")
         scene = self.project.add_document("Sc", chapter.id, "scene")
-        note = self.project.add_document("Nt", chapter.id, "note")
         self.assertEqual(self.project.default_type(self.draft), "Folder")
         self.assertEqual(self.project.default_type(chapter), "Document")
         self.assertEqual(self.project.default_type(scene), "Document")
-        self.assertEqual(self.project.default_type(note), "Document")
 
     def test_book_settings_do_not_promote_a_folder(self):
         # The role is what the writer says it is now (1.17): a folder

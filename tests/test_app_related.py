@@ -31,7 +31,7 @@ class RelatedFilesTests(unittest.TestCase):
         self.project = Project.create(Path(self.temporary.name) / "Novel", "Novel")
         self.folder = self.project.documents()[0]          # Draft, kind "folder"
         self.someone = self.project.add_document(
-            "Someone", parent_id=self.folder.id, kind="note"
+            "Someone", parent_id=self.folder.id, kind="scene"
         )
         self.scene = self.project.add_document(
             "Scene One", parent_id=self.folder.id, kind="scene"
@@ -73,7 +73,7 @@ class RelatedFilesTests(unittest.TestCase):
         self.assertIsNotNone(group)
         children = [group.child(index).text(0)
                     for index in range(group.childCount())]
-        self.assertEqual(children, ["Someone  (Note)"])
+        self.assertEqual(children, ["Someone  (Scene)"])
 
     def test_clicking_a_related_document_jumps_there(self):
         self.window._select_document(self.scene.id)

@@ -187,7 +187,9 @@ class PageSetupExportTests(unittest.TestCase):
         self.project.set_page_setup(self.root.id, _six_by_nine())
         with self._export() as archive:
             sections = _sections(archive)
-            self.assertEqual(len(sections), 2)
+            # The root folder is an exported unit now, so the geometry is
+            # stamped on every section that follows it as well.
+            self.assertEqual(len(sections), 3)
             for section in sections:
                 page = section.find(f"{W}pgSz")
                 self.assertEqual(page.get(f"{W}w"), _twips(6.0))

@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import unittest
 import zipfile
@@ -44,16 +45,32 @@ class ProjectTests(unittest.TestCase):
         exported = destination.read_text(encoding="utf-8")
         self.assertLess(exported.index("Opening"), exported.index("Chapter text"))
 
-    def test_delete_removes_descendant_files(self):
+    def test_delete_trashes_descendant_files(self):
         root = self.project.documents()[0]
         child = self.project.add_document("Child", root.id)
         self.project.delete_document(root.id)
-        self.assertEqual(self.project.documents(), [])
-        self.assertFalse(self.project.content_path(child.id).exists())
+        # First delete trashes: rows stay, re-pointed into trash/.
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertIn(root.id, by_id)
+        self.assertIn(child.id, by_id)
+        self.assertEqual(by_id[root.id].path, "trash/Draft")
+        self.assertEqual(by_id[child.id].path, "trash/Draft/Child.html")
+        original = self.project.root / "Draft" / "Child.html"
+        self.assertFalse(original.exists())
+        self.assertTrue(
+            (self.project.root / "trash/Draft/Child.html").exists())
+        # Second delete from trash erases altogether: rows and files.
+        self.project.delete_document(root.id)
+        # Only the trash root folder itself remains.
+        remaining = {d.title for d in self.project.documents()}
+        self.assertEqual(remaining, {"trash"})
+        self.assertFalse(
+            (self.project.root / "trash/Draft/Child.html").exists())
 
-    def test_deleting_a_folder_removes_the_folder_from_disk(self):
-        # A container is a directory: deleting it takes the directory
-        # with it, not just the file inside it.
+    def test_deleting_a_folder_trashes_the_folder_on_disk(self):
+        # A container is a directory: deleting it trashes the directory
+        # with it (mirroring its path under trash/), not just the file
+        # inside it. A second delete from trash erases it altogether.
         root = self.project.documents()[0]
         folder = self.project.add_document("A Book", root.id, "folder")
         scene = self.project.add_document("A Scene", folder.id, "scene")
@@ -63,30 +80,83 @@ class ProjectTests(unittest.TestCase):
         self.project.delete_document(folder.id)
         self.assertFalse(folder_path.exists())
         self.assertFalse(scene_path.exists())
+        trashed_folder = self.project.root / "trash/Draft/A Book"
+        trashed_scene = self.project.root / "trash/Draft/A Book/A Scene.html"
+        self.assertTrue(trashed_folder.is_dir())
+        self.assertTrue(trashed_scene.exists())
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertEqual(by_id[folder.id].path, "trash/Draft/A Book")
+        self.assertEqual(by_id[scene.id].path, "trash/Draft/A Book/A Scene.html")
+        self.project.delete_document(folder.id)
+        self.assertFalse(trashed_folder.exists())
+        self.assertFalse(trashed_scene.exists())
         self.assertEqual(
             [d.id for d in self.project.documents() if d.id in
              (folder.id, scene.id)], [])
 
+    def test_drag_restoring_from_trash_prunes_empty_parents(self):
+        # A drag-restore out of trash prunes the vacated mirror parents
+        # (and their rows) up to the trash root — no empty clutter stays.
+        root = self.project.documents()[0]
+        folder = self.project.add_document("A Book", root.id, "folder")
+        scene = self.project.add_document("A Scene", folder.id, "scene")
+        self.project.delete_document(folder.id)
+        ok = self.project.reorder(scene.id, root.id, 1)
+        self.assertTrue(ok)
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertEqual(by_id[scene.id].path, "Draft/A Scene.html")
+        self.assertTrue((self.project.root / "Draft/A Scene.html").exists())
+        self.assertFalse((self.project.root / "trash/Draft").exists())
+        self.assertNotIn(folder.id, by_id)
+        self.assertEqual(self.project.validate_alignment(), [])
+
+    def test_emptying_the_trash_takes_the_rows_with_the_files(self):
+        # Emptying the trash is permanent: the files go and so do their
+        # rows, so the binder is not left with ghosts pointing at files
+        # that are no longer there. The trash folder itself stays, empty
+        # and in step with its own order file.
+        root = self.project.documents()[0]
+        folder = self.project.add_document("A Book", root.id, "folder")
+        scene = self.project.add_document("A Scene", folder.id, "scene")
+        self.project.delete_document(folder.id)
+        self.assertTrue((self.project.root / "trash/Draft/A Book").is_dir())
+
+        self.project.empty_trash()
+
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertNotIn(folder.id, by_id)
+        self.assertNotIn(scene.id, by_id)
+        # A project starts with its Draft folder, and the trash itself:
+        # emptying takes what was thrown away, not the two standing ones.
+        self.assertEqual([d.title for d in self.project.documents()],
+                         ["Draft", "trash"])
+        self.assertEqual(self.project.list_trash(), [])
+        self.assertTrue((self.project.root / "trash/.order.json").is_file())
+        self.assertEqual(self.project.validate_alignment(), [])
+
     def test_a_file_that_will_not_delete_keeps_the_document(self):
         # A permission problem, a read-only mount, a lock: nothing is
-        # deleted, the document stays in the binder, and the reason is
-        # reported.
+        # trashed, the document stays in the binder, and the reason is
+        # reported. (Delete moves to trash; a move that fails is the
+        # undeletable-file case.)
         root = self.project.documents()[0]
         scene = self.project.add_document("Stuck", root.id, "scene")
         path = self.project.root / scene.path
-        real_unlink = Path.unlink
+        real_move = shutil.move
 
-        def refuse(self, *args, **kwargs):
-            if self == path:
+        def refuse(source, destination, *args, **kwargs):
+            if Path(source) == path:
                 raise PermissionError(13, "Permission denied")
-            return real_unlink(self, *args, **kwargs)
+            return real_move(source, destination, *args, **kwargs)
 
-        with mock.patch.object(Path, "unlink", refuse):
+        with mock.patch.object(shutil, "move", refuse):
             with self.assertRaises(DeleteError) as caught:
                 self.project.delete_document(scene.id)
         self.assertTrue(caught.exception.failures)
-        # The row is back, and the file is still there.
-        self.assertIn(scene.id, [d.id for d in self.project.documents()])
+        # The row is back, at its original path, and the file is still there.
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertIn(scene.id, by_id)
+        self.assertEqual(by_id[scene.id].path, scene.path)
         self.assertTrue(path.exists())
 
     def test_backup_is_recoverable(self):
@@ -195,7 +265,9 @@ class ProjectTests(unittest.TestCase):
         with zipfile.ZipFile(destination) as archive:
             self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
             self.assertIn("OEBPS/content.opf", archive.namelist())
-            self.assertIn("Once upon a time", archive.read("OEBPS/section-1.xhtml").decode())
+            pages = [archive.read(name).decode()
+                     for name in archive.namelist() if name.endswith(".xhtml")]
+            self.assertTrue(any("Once upon a time" in page for page in pages))
 
     def test_docx_export_contains_scene_text(self):
         chapter = self.project.documents()[0]
@@ -307,8 +379,8 @@ class ProjectTests(unittest.TestCase):
 
     def test_related_documents_matches_whole_words_in_both_directions(self):
         root = self.project.documents()[0]
-        someone = self.project.add_document("Someone", root.id, "note")
-        somewhere = self.project.add_document("Somewhere", root.id, "note")
+        someone = self.project.add_document("Someone", root.id, "scene")
+        somewhere = self.project.add_document("Somewhere", root.id, "scene")
         scene = self.project.add_document("Scene One", root.id, "scene")
         self.project.write_content(scene.id, "<p>Someone went to somewhere.</p>")
         self.project.write_content(somewhere.id, "<p>Someone's home port.</p>")
@@ -323,13 +395,13 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual([d.id for d in mentioned_by], [somewhere.id, scene.id])
 
         # Whole word: the title "Rid" must not match inside "Somewhere".
-        rid = self.project.add_document("Rid", root.id, "note")
+        rid = self.project.add_document("Rid", root.id, "scene")
         _mentions, mentioned_by = self.project.related_documents(rid.id)
         self.assertEqual(mentioned_by, [])
 
     def test_related_scan_reflects_a_rewrite(self):
         root = self.project.documents()[0]
-        someone = self.project.add_document("Someone", root.id, "note")
+        someone = self.project.add_document("Someone", root.id, "scene")
         scene = self.project.add_document("Scene One", root.id, "scene")
         self.project.write_content(scene.id, "<p>Someone went to Somewhere.</p>")
         self.assertEqual(
@@ -400,19 +472,23 @@ class ProjectTests(unittest.TestCase):
             [world.id, chapter.id, scene.id, nested.id],
         )
 
-    def test_export_skips_folders_and_notes(self):
+    def test_export_includes_folders_in_scope(self):
+        # A folder carries its own content and, when it is in the export
+        # scope, that content contributes — a grouping/part folder with an
+        # index page is manuscript, not decoration (templates are excluded
+        # by path, not by kind).
         root = self.project.documents()[0]
-        self.project.write_content(root.id, "<p>Folder text should not export.</p>")
+        self.project.write_content(root.id, "<p>Root folder text.</p>")
         chapter = self.project.add_document("Chapter", root.id, "chapter")
         self.project.write_content(chapter.id, "<p>Chapter prose.</p>")
-        note = self.project.add_document("Aside", chapter.id, "note")
-        self.project.write_content(note.id, "<p>Note text should not export.</p>")
+        part = self.project.add_document("Aside", chapter.id, "folder")
+        self.project.write_content(part.id, "<p>Folder note text.</p>")
         destination = Path(self.temporary.name) / "book.txt"
         self.project.export_text(destination)
         exported = destination.read_text(encoding="utf-8")
         self.assertIn("Chapter prose.", exported)
-        self.assertNotIn("Folder text", exported)
-        self.assertNotIn("Note text", exported)
+        self.assertIn("Root folder text.", exported)
+        self.assertIn("Folder note text.", exported)
 
     def test_old_draft_chapter_migrates_to_folder(self):
         import sqlite3
@@ -727,8 +803,12 @@ class SplitMergeTests(unittest.TestCase):
         self.assertIn("alpha beta gamma", text)
         self.assertIn("second scene", text)
         self.assertEqual(merged.word_count, 5)
-        remaining = {d.title for d in self.project.documents()}
-        self.assertNotIn("B", remaining)
+        # The merged-away scene is trashed, not left in the manuscript.
+        live = {d.title for d in self.project.documents()
+                if not d.path.startswith("trash/")}
+        self.assertNotIn("B", live)
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertEqual(by_id[self.scene_b.id].path, "trash/Draft/B.html")
         names = [s.name for s in self.project.snapshots(self.scene_a.id)]
         self.assertIn("Before merge", names)
 
@@ -750,7 +830,7 @@ class SplitMergeTests(unittest.TestCase):
             self.project.merge_documents(self.scene_b.id, self.scene_a.id)
 
     def test_merge_refuses_when_second_has_children(self):
-        child = self.project.add_document("child", self.scene_b.id, "note")
+        child = self.project.add_document("child", self.scene_b.id, "scene")
         with self.assertRaises(ValueError):
             self.project.merge_documents(self.scene_a.id, self.scene_b.id)
         self.assertIsNotNone(child.id)
@@ -921,6 +1001,122 @@ class BookAndTemplateStorageTests(unittest.TestCase):
         explicit.parent.mkdir(parents=True)
         explicit.write_bytes(b"jpg-bytes")
         self.assertEqual(self.project.effective_cover(draft.id), explicit)
+
+
+class MetadataInTheHeadTests(unittest.TestCase):
+    """The writer's own fields are in the file, not only the database.
+
+    docs/STORAGE.md: the head carries a `metadata:` map such as
+    `PoV: Narrator`, so a document opened in any editor is complete on
+    its own. Value types and option lists stay behind — they are editing
+    affordances, not content.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project = Project.create(
+            Path(self.temporary.name) / "Novel", "Novel")
+        self.document = self.project.documents()[0]
+
+    def tearDown(self):
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _head(self, document_id) -> str:
+        text = self.project.content_path(document_id).read_text()
+        return text[:text.index("---\n", 4) + 4]
+
+    def test_a_writers_field_is_written_under_metadata(self):
+        self.project.set_metadata(self.document.id,
+                                  {"PoV": "Aaxyl", "Type": "chapter"})
+        self.project.write_content(self.document.id, "<p>Words.</p>")
+        head = self._head(self.document.id)
+        self.assertIn("metadata:\n", head)
+        self.assertIn("  PoV: Aaxyl\n", head)
+        self.assertIn("  Type: chapter\n", head)
+
+    def test_a_value_with_a_colon_survives_the_round_trip(self):
+        self.project.set_metadata(self.document.id,
+                                  {"Note": "a value: with a colon"})
+        self.project.write_content(self.document.id, "<p>Words.</p>")
+        self.assertIn('  Note: "a value: with a colon"\n',
+                      self._head(self.document.id))
+        from lekhak.disk_doc import read_document
+        metadata, _prose = read_document(
+            self.project.content_path(self.document.id))
+        self.assertEqual(metadata["metadata"]["Note"], "a value: with a colon")
+
+    def test_an_empty_field_and_the_templates_own_keys_stay_out(self):
+        self.project.set_metadata(self.document.id, {"Blank": ""})
+        self.project.write_content(self.document.id, "<p>Words.</p>")
+        self.assertNotIn("metadata:", self._head(self.document.id))
+
+        face = self.project.add_document("My face", self.document.id, "scene")
+        self.project.set_metadata(face.id, {
+            "Template": "yes",
+            "Template config": "Page size: 5,8\nPoV: Aaxyl"})
+        self.project.write_content(face.id, "<p>x</p>")
+        head = self._head(face.id)
+        self.assertIn("template: yes\n", head)
+        self.assertIn("Page size: 5,8\n", head)
+        self.assertNotIn("Template config:", head)
+        self.assertNotIn("Template:", head)
+
+
+class MetadataDriftTests(unittest.TestCase):
+    """A file edited outside Lekhak disagrees — and says so.
+
+    The manifest and .order.json rule (docs/STORAGE.md): a disagreement is
+    reported, never silently fixed, and the writer settles which side is
+    right.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project = Project.create(
+            Path(self.temporary.name) / "Novel", "Novel")
+        self.document = self.project.documents()[0]
+        self.project.set_metadata(self.document.id, {"PoV": "Aaxyl"})
+        self.project.write_content(self.document.id, "<p>Words.</p>")
+
+    def tearDown(self):
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _hand_edit(self, old: str, new: str) -> None:
+        path = self.project.content_path(self.document.id)
+        path.write_text(path.read_text().replace(old, new))
+
+    def test_a_clean_project_reports_nothing(self):
+        self.assertEqual(self.project.metadata_drift(), [])
+
+    def test_a_key_the_head_does_not_mention_is_not_a_disagreement(self):
+        # A head written before the field existed is not drift: the next
+        # save writes it. Only a value the file states counts.
+        self._hand_edit("  PoV: Aaxyl\n", "")
+        self.assertEqual(self.project.metadata_drift(), [])
+
+    def test_a_different_value_is_reported_with_both_sides(self):
+        self._hand_edit("  PoV: Aaxyl", "  PoV: Aameh")
+        self.assertEqual(
+            self.project.metadata_drift(),
+            [(self.document.id, self.document.title, "PoV", "Aameh", "Aaxyl")])
+
+    def test_the_files_word_can_be_taken(self):
+        self._hand_edit("  PoV: Aaxyl", "  PoV: Aameh")
+        self.assertTrue(self.project.apply_file_metadata(self.document.id, "PoV"))
+        self.assertEqual(self.project.metadata(self.document.id)["PoV"], "Aameh")
+        self.assertEqual(self.project.metadata_drift(), [])
+
+    def test_the_projects_word_is_the_ordinary_save(self):
+        self._hand_edit("  PoV: Aaxyl", "  PoV: Aameh")
+        self.project.set_metadata(self.document.id, {"PoV": "Aaxyl"})
+        self.assertEqual(self.project.metadata_drift(), [])
+        self.assertIn("  PoV: Aaxyl", self._head())
+
+    def _head(self) -> str:
+        text = self.project.content_path(self.document.id).read_text()
+        return text[:text.index("---\n", 4) + 4]
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ class FolderViewTests(unittest.TestCase):
     def test_folder_selection_opens_the_outliner_by_default(self):
         self._select(self.folder_a.id)
 
-        self.assertIs(self.window.views.currentWidget(), self.window.outliner)
+        self.assertIs(self.window.views.currentWidget(), getattr(self.window, 'outliner_page', self.window.outliner))
         self.assertEqual(self.project.get_setting("folder_view"), "")
 
     def test_a_hand_switch_to_the_corkboard_is_remembered(self):
@@ -113,7 +113,7 @@ class FolderViewTests(unittest.TestCase):
 
         self._select(self.folder_a.id)
 
-        self.assertIs(self.window.views.currentWidget(), self.window.outliner)
+        self.assertIs(self.window.views.currentWidget(), getattr(self.window, 'outliner_page', self.window.outliner))
 
     def test_a_document_selection_never_records_the_preference(self):
         self._select(self.folder_a.id)
@@ -124,7 +124,7 @@ class FolderViewTests(unittest.TestCase):
         )
         self.window._reload_tree()
         self._select(chapter.id)
-        self._click_tab(self.window.outliner)
+        self._click_tab(getattr(self.window, 'outliner_page', self.window.outliner))
 
         self.assertEqual(self.project.get_setting("folder_view"), "corkboard")
 

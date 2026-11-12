@@ -6,7 +6,7 @@ from lekhak.project import Project, config_geometry
 from lekhak.templates import (
     TemplateSet, copy_template_file, create_template_set,
     discover_template_sets, document_template_stem, parse_docx_config,
-    write_config_line,
+    validate_slot, write_config_line,
 )
 
 
@@ -46,8 +46,135 @@ class TemplateTests(unittest.TestCase):
         self.project.export_html(destination)
         exported = destination.read_text(encoding="utf-8")
         self.assertIn('class="chapter"', exported)
-        self.assertIn("<h1>Chapter One</h1>", exported)
+        self.assertIn("<h2>Chapter One</h2>", exported)
         self.assertIn('class="document"', exported)
+
+    def test_the_children_of_a_container_answer_to_one_word(self):
+        # One word, one name: `children`. The older names are not names
+        # any more — a template coder cannot afford to be approximate.
+        chapter, scenes = self._chapter_with_scenes(["Alpha"])
+        set_dir = create_template_set("children", self.project.root).directory
+        (set_dir / "folder.txt").write_text(
+            "NEW[${children}] OLD[${Scenes}]", encoding="utf-8")
+        templates = TemplateSet.load("children", set_dir)
+
+        destination = self.root / "book.txt"
+        self.project.export_text(destination, None, templates)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("NEW[Alpha", exported)
+        # The old name is no name at all: it prints nothing.
+        self.assertIn("OLD[]", exported)
+        # And the editor says so when the file is saved.
+        self.assertIn("unknown placeholder ${Scenes}",
+                      validate_slot("${Scenes}"))
+
+    def test_a_type_answers_to_its_own_word(self):
+        # A type is one exact word, used as it stands: no plurals, no
+        # guessing. The type list in the sidebar is the truth.
+        chapter, scenes = self._chapter_with_scenes(["Alpha"])
+        self.project.set_metadata(scenes[0].id, {"Type": "leaf"})
+        set_dir = create_template_set("leaves", self.project.root).directory
+        (set_dir / "folder.txt").write_text(
+            "ONE[${children-leaf}] OTHER[${children-leaves}]", encoding="utf-8")
+        templates = TemplateSet.load("leaves", set_dir)
+
+        destination = self.root / "book.txt"
+        self.project.export_text(destination, None, templates)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("ONE[Alpha", exported)
+        # The plural is not the type: it finds nothing.
+        self.assertIn("OTHER[]", exported)
+
+    def test_a_doubled_dollar_prints_a_placeholder_rather_than_expanding(self):
+        # The escape the docs promise: a document can talk about a
+        # placeholder instead of being one.
+        chapter, scenes = self._chapter_with_scenes(["Alpha"])
+        scene = scenes[0]
+        project = self.project
+        project.write_content(scene.id, "<p>Write $${Title} here.</p>")
+
+        destination = self.root / "book.html"
+        project.export_html(destination, None)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("Write ${Title} here.", exported)
+        self.assertNotIn("$${Title}", exported)
+
+    def test_a_value_is_not_expanded_again_after_it_is_placed(self):
+        # The prose carries its own ${...} markers; they are expanded
+        # once, when the export lifts the content, and not again when
+        # the value is put into the fragment.
+        chapter, scenes = self._chapter_with_scenes(["Alpha"])
+        scene = scenes[0]
+        project = self.project
+        project.write_content(scene.id, "<p>$${Title}</p>")
+
+        destination = self.root / "book.html"
+        project.export_html(destination, None)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("${Title}", exported)
+        self.assertNotIn("Alpha</p>", exported)
+
+    def test_the_project_name_is_not_the_document_title(self):
+        # ${Project} is the project's own name, the same for every
+        # document in it; ${Title} is the document being dressed. A
+        # project may hold several books, so the two are not the same.
+        self.project.set_setting("title", "The Whole Work")
+        chapter, scenes = self._chapter_with_scenes(["Alpha"])
+        set_dir = create_template_set("named", self.project.root).directory
+        (set_dir / "document.txt").write_text(
+            "P[${Project}] T[${Title}]", encoding="utf-8")
+        templates = TemplateSet.load("named", set_dir)
+
+        destination = self.root / "book.txt"
+        self.project.export_text(destination, None, templates)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("P[The Whole Work]", exported)
+        self.assertIn("T[Alpha]", exported)
+
+    def test_a_type_placeholder_lists_only_that_type(self):
+        chapter, scenes = self._chapter_with_scenes(["Alpha", "Beta"])
+        self.project.set_metadata(scenes[0].id, {"Type": "leaf"})
+        self.project.set_metadata(scenes[1].id, {"Type": "Vignette"})
+        set_dir = create_template_set("kinds", self.project.root).directory
+        (set_dir / "folder.txt").write_text(
+            "ALL[${children}] LEAF[${children-leaf}] "
+            "VIGNETTE[${children-vignette}]", encoding="utf-8")
+        templates = TemplateSet.load("kinds", set_dir)
+
+        destination = self.root / "book.txt"
+        self.project.export_text(destination, None, templates)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("ALL[Alpha", exported)
+        self.assertIn("Beta text.] LEAF[", exported)   # both in ALL
+        self.assertIn("LEAF[Alpha", exported)
+        self.assertNotIn("LEAF[Beta", exported)
+        self.assertIn("VIGNETTE[Beta", exported)
+        self.assertNotIn("VIGNETTE[Alpha", exported)
+
+    def test_the_children_are_dressed_in_their_own_templates_in_order(self):
+        # `${children}` is every child a container holds, each one in the
+        # template that applies to it, in binder order — not alphabetical.
+        chapter, scenes = self._chapter_with_scenes(["Zulu", "Alpha"])
+        for scene in scenes:
+            self.project.set_metadata(scene.id, {"Type": "Scene"})
+        set_dir = create_template_set("own", self.project.root).directory
+        (set_dir / "folder.txt").write_text(
+            "PARENT[${children}]", encoding="utf-8")
+        (set_dir / "documents" / "Scene.txt").write_text(
+            "SCENE<${Title}>", encoding="utf-8")
+        templates = TemplateSet.load("own", set_dir)
+
+        destination = self.root / "book.txt"
+        self.project.export_text(destination, None, templates)
+        exported = destination.read_text(encoding="utf-8")
+
+        self.assertIn("PARENT[SCENE<Zulu>\nSCENE<Alpha>]", exported)
 
     def test_counters_and_running_word_total(self):
         chapter, scenes = self._chapter_with_scenes(["Alpha", "Beta"])
@@ -95,10 +222,12 @@ class TemplateTests(unittest.TestCase):
         self.project.export_epub(destination)
         with zipfile.ZipFile(destination) as archive:
             sections = [n for n in archive.namelist() if n.startswith("OEBPS/section-")]
-            self.assertEqual(len(sections), 1)
-            page = archive.read(sections[0]).decode()
-        self.assertIn("Alpha text.", page)
-        self.assertIn("Beta text.", page)
+            # The root folder is a unit now; the chapter is its own unit
+            # with both scenes embedded inside it.
+            self.assertEqual(len(sections), 2)
+            pages = [archive.read(n).decode() for n in sections]
+        chapter_page = next(p for p in pages if "Alpha text." in p)
+        self.assertIn("Beta text.", chapter_page)
 
 class CopyTemplateFileTests(unittest.TestCase):
     """One file out into a set of its own (§1.1).
@@ -411,7 +540,7 @@ class FragmentVocabularyTests(unittest.TestCase):
         created = self._set()
         for suffix in (".html", ".txt"):
             (created.directory / ("folder" + suffix)).write_text(
-                "CHAPTER<${Content}>${Scenes}", encoding="utf-8")
+                "CHAPTER<${Content}>${children}", encoding="utf-8")
             (created.directory / ("document" + suffix)).write_text(
                 "SCENE<${Content}>", encoding="utf-8")
         templates = TemplateSet.load("written", created.directory)

@@ -20,7 +20,6 @@ from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyle  # noqa: E402
 
 from lekhak.app import FOLDER_ROLE, MainWindow  # noqa: E402
-from lekhak.importer import import_all_books, parse_dump  # noqa: E402
 from lekhak.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
@@ -28,49 +27,6 @@ _application.setOrganizationName("Lekhak")
 _application.setApplicationName("Lekhak")
 _settings_dir = tempfile.mkdtemp(prefix="lekhak-tree-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
-
-
-NESTED_DUMP = """\
-===DOCUMENT===
-
-Type: Scene
-
-ID: 1
-
-Position: 1
-
-ParentPosition: 0
-
-Parent: Outer
-
-Title: A Scene
-
-Synopsis:
-
-===TEXT===
-
-The scene's own words.
-
-===DOCUMENT===
-
-Type: Scene
-
-ID: 2
-
-Position: 1
-
-ParentPosition: 0
-
-Parent: A Scene
-
-Title: Nested
-
-Synopsis:
-
-===TEXT===
-
-The nested words.
-"""
 
 
 class BinderTreeTests(unittest.TestCase):
@@ -211,15 +167,16 @@ class BinderTreeTests(unittest.TestCase):
         self.assertTrue((self.project.root / inner.path).is_file())
         self.assertFalse((self.project.root / "Draft/Outer.html").exists())
 
-    def test_the_import_keeps_a_nested_scene_in_its_parents_folder(self):
-        dump = Path(self.temporary.name) / "dump.md"
-        dump.write_text(NESTED_DUMP, encoding="utf-8")
+    def test_a_nested_scene_stays_inside_its_parents_folder(self):
+        # Formerly "the import keeps ..." — the behaviour belongs to
+        # Project.add_document, not to any importer: a leaf that gains
+        # a child moves to a directory and keeps its prose as index.html.
+        outer = self.project.add_document("Outer", self.root.id, "scene")
+        self.project.write_content(outer.id, "<p>The scene's own words.</p>")
+        nested = self.project.add_document("Nested", outer.id, "scene")
 
-        import_all_books(self.project, parse_dump(dump))
-
-        outer = next(d for d in self.project.documents()
-                     if d.title == "A Scene" and d.path.startswith("Outer/"))
-        nested = next(d for d in self.project.documents() if d.title == "Nested")
+        outer = next(d for d in self.project.documents() if d.id == outer.id)
+        nested = next(d for d in self.project.documents() if d.id == nested.id)
         self.assertEqual(nested.path, f"{outer.path}/Nested.html")
         self.assertTrue((self.project.root / nested.path).is_file())
         self.assertFalse((self.project.root / f"{outer.path}.html").exists())

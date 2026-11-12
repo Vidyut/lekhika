@@ -86,8 +86,9 @@ class InsertDateTests(unittest.TestCase):
         self.window.insert_date()
 
         keys = [
-            self.window.metadata_table.item(row, 0).text()
+            self.window.metadata_table.item(row, 1).text()
             for row in range(self.window.metadata_table.rowCount())
+            if self.window.metadata_table.item(row, 1)
         ]
         self.assertIn("Date", keys)
 

@@ -17,7 +17,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings  # noqa: E402
+from PySide6.QtCore import QEvent, QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from lekhak.app import MainWindow  # noqa: E402
@@ -61,6 +61,26 @@ class TemplateDocumentTests(unittest.TestCase):
                         encoding="utf-8")
         return path
 
+    def test_converting_content_to_template_is_refused(self):
+        # FIRST metadata must be Template: yes — no content before.
+        self.project.write_content(self.scene.id, "<p>Prose.</p>")
+        with self.assertRaises(ValueError):
+            self.project.set_template(self.scene.id, True)
+        self.assertFalse(self.project.is_template(self.scene.id))
+
+    def test_confirmed_conversion_is_allowed(self):
+        # After the popup ("Yes, I am sure"), confirmed=True converts.
+        self.project.write_content(self.scene.id, "<p>Prose.</p>")
+        self.project.set_template(self.scene.id, True, confirmed=True)
+        self.assertTrue(self.project.is_template(self.scene.id))
+
+    def test_template_folder_starts_empty(self):
+        # The templates folder itself can be made a template while
+        # empty, then children may be added as templates from birth.
+        folder = self.project.add_document("Templates", self.folder.id, "folder")
+        self.project.set_template(folder.id, True)
+        self.assertTrue(self.project.is_template(folder.id))
+
     def test_the_template_mark_round_trips(self):
         self.project.set_template(self.scene.id, True)
         self.assertTrue(self.project.is_template(self.scene.id))
@@ -74,8 +94,9 @@ class TemplateDocumentTests(unittest.TestCase):
         self.assertNotIn("Template", self.project.metadata(self.scene.id))
 
     def test_a_template_document_stays_out_of_the_export(self):
-        self.project.write_content(self.scene.id, "<p>Chapter prose.</p>")
+        # Template starts empty, then markup is written after (no conversion).
         self.project.set_template(self.scene.id, True)
+        self.project.write_content(self.scene.id, "<p>Chapter prose.</p>")
 
         destination = Path(self.temporary.name) / "book.txt"
         self.project.export_text(destination)
@@ -144,9 +165,9 @@ class TemplateInspectorTests(unittest.TestCase):
 
     def _table_keys(self):
         table = self.window.metadata_table
-        return [table.item(row, 0).text()
+        return [table.item(row, 1).text()
                 for row in range(table.rowCount())
-                if table.item(row, 0)]
+                if table.item(row, 1) and table.item(row, 1).text()]
 
     def test_the_type_box_offers_only_its_own_groups_roles(self):
         self.window._select_document(self.folder.id)
@@ -178,16 +199,24 @@ class TemplateInspectorTests(unittest.TestCase):
         self.assertEqual(self.window.metadata_table.row_value(row), "")
 
     def test_the_template_tick_swaps_the_sidebar(self):
+        # No inspector switch any more; selecting a template document
+        # still swaps the sidebar for its design panel.
         self.window._select_document(self.scene.id)
         self.assertFalse(self.window.template_panel.isVisibleTo(self.window))
+        # The switch is gone: content cannot be flipped by a click.
+        self.assertIsNone(self.window.template_flag_box)
 
-        self.window.template_flag_box.setChecked(True)
+        self.project.set_template(self.scene.id, True)
+        self.window._reload_tree(self.scene.id)
+        self.window._select_document(self.scene.id)
 
         self.assertTrue(self.project.is_template(self.scene.id))
         self.assertTrue(self.window.template_panel.isVisibleTo(self.window))
         self.assertFalse(self.window.metadata_section.isVisibleTo(self.window))
 
-        self.window.template_flag_box.setChecked(False)
+        self.project.set_template(self.scene.id, False)
+        self.window._reload_tree(self.scene.id)
+        self.window._select_document(self.scene.id)
 
         self.assertFalse(self.project.is_template(self.scene.id))
         self.assertFalse(self.window.template_panel.isVisibleTo(self.window))
@@ -195,7 +224,9 @@ class TemplateInspectorTests(unittest.TestCase):
 
     def test_the_design_reaches_the_document_and_the_file(self):
         self.window._select_document(self.scene.id)
-        self.window.template_flag_box.setChecked(True)
+        self.project.set_template(self.scene.id, True)
+        self.window._reload_tree(self.scene.id)
+        self.window._select_document(self.scene.id)
 
         self.window.template_config_box.setPlainText(
             "# a design\nNew Chapter: Recto\n")
@@ -265,6 +296,9 @@ class TemplateInspectorTests(unittest.TestCase):
                          TEMPLATE_DOC_PREFIX + self.other.id)
 
     def test_copying_the_default_templates_puts_them_in_the_project(self):
+        # Nothing selected: historic landing is templates/default.
+        self.window.current_id = None
+        self.window._clear_binder_selection()
         self.window.copy_defaults_button.click()
 
         copied = self.root / "templates" / "default"
@@ -275,6 +309,59 @@ class TemplateInspectorTests(unittest.TestCase):
         landed = self.window.current_template_set
         self.assertIsNotNone(landed)
         self.assertEqual(landed.directory, copied)
+
+    def test_copying_defaults_to_a_folder_places_them_inside_it(self):
+        self.window._select_document(self.folder.id)
+        self.window.copy_defaults_button.click()
+
+        copied = self.root / "Draft" / "default"
+        self.assertTrue(copied.is_dir())
+        self.assertTrue((copied / "document.html").exists())
+        self.assertEqual(self.window.current_template_set.directory, copied)
+
+    def test_copying_to_a_subfolder_warns_about_parent_documents(self):
+        # Sub-folder copy warns that parent documents won't be dressed.
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+        sub = self.project.add_document("Sub", self.folder.id, "folder")
+        self.window._reload_tree()
+        self.window._select_document(sub.id)
+        with patch.object(QMessageBox, "question",
+                         return_value=QMessageBox.StandardButton.No,
+                         ) as ask:
+            self.window.copy_defaults_button.click()
+        ask.assert_called_once()
+        # No copy happened.
+        self.assertFalse((self.root / "Draft" / "Sub" / "default").is_dir())
+
+    def test_copying_defaults_next_to_a_document_places_them_beside_it(self):
+        self.window._select_document(self.scene.id)
+        self.window.copy_defaults_button.click()
+
+        copied = self.root / "Draft" / "default"
+        self.assertTrue(copied.is_dir())
+        self.assertTrue((copied / "document.html").exists())
+        # The scene itself is untouched.
+        self.assertTrue((self.root / "Draft" / "Scene.html").exists())
+        self.assertEqual(self.window.current_template_set.directory, copied)
+
+    def test_a_set_copied_into_a_folder_is_tracked_and_never_exported(self):
+        # The DB tracks templates copied into folders (is_template mark),
+        # so the slot files read as format, never manuscript.
+        real = self.project.add_document(
+            "Real", self.folder.id, "scene")
+        self.project.write_content(real.id, "<p>Real prose</p>")
+        self.window._select_document(self.folder.id)
+        self.window.copy_defaults_button.click()
+
+        marked = [d for d in self.project.documents()
+                  if d.path.startswith("Draft/default")
+                  and self.project.is_template(d.id)]
+        self.assertTrue(marked, "slot files carry the Template mark")
+        exported = [d.path for d in self.project._export_documents()]
+        self.assertIn("Draft/Real.html", exported)
+        self.assertFalse(any(path.startswith("Draft/default")
+                             for path in exported))
 
 
 class TemplateSelectorTests(unittest.TestCase):
@@ -543,6 +630,142 @@ class TemplateCreationTests(unittest.TestCase):
                          "Inside (spine)")
         self.assertEqual(self.window.margin_outside_label.text(),
                          "Outside")
+
+    def test_the_head_boxes_write_the_three_piece_line(self):
+        """Left, middle and right are the config's one `Header:` line
+        (1.2) — the same line a hand would have typed into the box."""
+        book = self._template_folder()
+        self.window.add_chapter()
+        made = self._made_in(book.id)
+        self.assertEqual(len(made), 1)
+
+        self.window.head_edits[("header", "middle")].setText("${BookTitle}")
+        self.window.head_edits[("header", "middle")].editingFinished.emit()
+
+        self.assertIn("Header: , ${BookTitle},",
+                      self.window.template_config_box.toPlainText())
+        self.assertIn("Header: , ${BookTitle},",
+                      self.project.metadata(made[0].id)[TEMPLATE_CONFIG_KEY])
+
+    def test_the_facing_pages_pick_writes_the_verso_line(self):
+        """A mirrored book's even pages carry their own head, and the
+        pick is what says which line the boxes are speaking for."""
+        self._template_folder()
+        self.window.add_chapter()
+        box = self.window.heads_pages_box
+        box.setCurrentIndex(box.findData(" left"))
+
+        self.window.head_edits[("footer", "middle")].setText("${Page}")
+        self.window.head_edits[("footer", "middle")].editingFinished.emit()
+
+        self.assertIn("Footer left: , ${Page},",
+                      self.window.template_config_box.toPlainText())
+
+    def test_clearing_a_head_takes_its_line_away(self):
+        """An absent line means "keep the sample's head", so a cleared row
+        leaves nothing behind rather than an empty line."""
+        self._template_folder()
+        self.window.add_chapter()
+        self.window.template_config_box.setPlainText("Header: A, B, C\n")
+        self.assertEqual(self.window.head_edits[("header", "left")].text(), "A")
+
+        for piece in ("left", "middle", "right"):
+            self.window.head_edits[("header", piece)].setText("")
+        self.window.head_edits[("header", "left")].editingFinished.emit()
+
+        self.assertNotIn("Header", self.window.template_config_box.toPlainText())
+
+    def test_the_first_page_pick_writes_the_opening_pages_line(self):
+        """`First page` is the pick that speaks for each section's opening
+        page (1.2, 3.1) — the head a chapter opener should not wear."""
+        self._template_folder()
+        self.window.add_chapter()
+        box = self.window.heads_pages_box
+        box.setCurrentIndex(box.findData(" first page"))
+
+        self.window.head_none_boxes["header"].setChecked(True)
+
+        self.assertIn("Header first page: none",
+                      self.window.template_config_box.toPlainText())
+        # And the main body's own line is untouched, because the pick
+        # says which line the boxes are speaking for.
+        self.assertNotIn("\nHeader: none",
+                         self.window.template_config_box.toPlainText())
+
+    def test_the_font_row_writes_the_head_font_line(self):
+        """The running heads' own type (1.2, 3.1): one `Head font:` line
+        for the header and the footer both."""
+        self._template_folder()
+        self.window.add_chapter()
+        family = self.window.head_font_box.itemText(1)
+
+        self.window.head_font_box.setCurrentIndex(1)
+        self.window.head_size_box.setValue(8)
+
+        stored = self.window.template_config_box.toPlainText()
+        self.assertIn(f"Head font: {family}, 8", stored)
+        # And reading it back: a line the head already carries shows in
+        # the row rather than being silently written over.
+        self.window.template_config_box.setPlainText(
+            f"Head font: {family}, 9\n")
+        self.assertEqual(self.window.head_size_box.value(), 9)
+        self.assertEqual(self.window.head_font_box.currentIndex(), 1)
+
+    def test_a_head_font_this_machine_lacks_still_shows(self):
+        """A family the file names but this machine has not got is not
+        thrown away by the row: it shows, so editing the size beside it
+        cannot silently drop it (1.2)."""
+        self._template_folder()
+        self.window.add_chapter()
+        self.window.template_config_box.setPlainText(
+            "Head font: Lekhak Test Face, 9\n")
+
+        self.assertEqual(self.window.head_font_box.currentText(),
+                         "Lekhak Test Face")
+
+        self.window.head_size_box.setValue(10)
+
+        self.assertIn("Head font: Lekhak Test Face, 10",
+                      self.window.template_config_box.toPlainText())
+
+    def test_a_name_from_the_reference_page_lands_in_the_active_box(self):
+        """The reference page is also the way to write a name (3.2): a
+        click puts it at the cursor of the box the writer was in."""
+        self._template_folder()
+        self.window.add_chapter()
+        edit = self.window.head_edits[("footer", "middle")]
+        edit.setFocus()
+        self.window.eventFilter(edit, QEvent(QEvent.Type.FocusIn))
+
+        self.window.insert_placeholder("PageNo")
+
+        self.assertEqual(edit.text(), "${PageNo}")
+        self.assertIn("Footer: , ${PageNo},",
+                      self.window.template_config_box.toPlainText())
+
+    def test_a_name_from_the_reference_page_falls_to_the_config_box(self):
+        """With no head box touched, the config box is the box that had
+        the cursor — the page inserts somewhere sensible either way."""
+        self._template_folder()
+        self.window.add_chapter()
+        self.window._head_focus = None
+
+        self.window.insert_placeholder("BookTitle")
+
+        self.assertIn("${BookTitle}",
+                      self.window.template_config_box.toPlainText())
+
+    def test_a_none_tick_says_the_pages_carry_no_head(self):
+        """`Header: none` is not an empty line (3.1): it takes the head
+        away where empty would keep the sample's, and greys the boxes
+        that no longer speak."""
+        self._template_folder()
+        self.window.add_chapter()
+
+        self.window.head_none_boxes["header"].setChecked(True)
+
+        self.assertIn("Header: none", self.window.template_config_box.toPlainText())
+        self.assertFalse(self.window.head_edits[("header", "middle")].isEnabled())
 
 
 class PlaceholderReferenceTests(unittest.TestCase):

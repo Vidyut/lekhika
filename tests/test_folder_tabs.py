@@ -78,7 +78,7 @@ class FolderTabTests(unittest.TestCase):
         self._select(self.scene.id)
         self._select(self.book.id)
         self.assertIn(self.window.views.currentWidget(),
-                      (self.window.corkboard, self.window.outliner))
+                      (self.window.corkboard, getattr(self.window, 'outliner_page', self.window.outliner)))
 
 
 if __name__ == "__main__":

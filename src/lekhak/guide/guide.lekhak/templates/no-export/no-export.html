@@ -1,0 +1,24 @@
+# no-export — a template that prints nothing
+# =========================================
+#
+# This set is one file: no-export.html, whose body is empty.
+#
+#     (an empty body element)
+#
+# That is the whole template. It carries no content, so an export using it
+# prints nothing — DOCX and plain text write empty files, HTML and EPUB keep
+# their wrappers with nothing inside them.
+#
+# Why one file and not one empty file per slot: silence is a property of the
+# set, not of each shape it might dress. A set whose own fragments are all
+# empty prints nothing, whatever slot the compile asks for, so there is
+# nothing to enumerate. To make it output again, change the template assigned
+# to that folder, or give no-export.html a body — the set then owns a
+# non-empty fragment and every slot answers normally. Nothing was emptied to
+# make this set, so nothing is lost by using it.
+#
+# Assign it to a folder to keep that folder out of an export, or use it as a
+# starting point for a print-only or compilation-only workflow. Duplicated
+# copies are yours.
+#
+<body></body>

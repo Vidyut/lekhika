@@ -1,0 +1,9 @@
+{
+  "children": [
+    "Book",
+    "default",
+    "Guide",
+    "no-export",
+    "short story"
+  ]
+}
