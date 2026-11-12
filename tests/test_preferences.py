@@ -499,7 +499,7 @@ class HelpPageTests(unittest.TestCase):
         self.assertIn("https://paypal.me/VidyutG", urls)          # a gift
         self.assertIn("https://vidyut.net/category/books/", urls)  # the books
         self.assertIn("https://vidyut.net/newsletter-signup/", urls)
-        self.assertIn("https://github.com/Vidyut/lekhak/issues/new", urls)
+        self.assertIn("https://github.com/Vidyut/lekhika/issues/new", urls)
 
     def test_copying_the_details_puts_them_on_the_clipboard(self):
         self.dialog._copy_diagnostics()

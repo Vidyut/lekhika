@@ -114,7 +114,7 @@ def release_repo() -> str:
         found = re.search(r"github\.com[:/]([^/]+)/([^/\.]+)", remote)
         if found:
             return f"{found.group(1)}/{found.group(2)}"
-    return "Vidyut/lekhak"
+    return "Vidyut/lekhika"
 
 
 def numeric_version(text: str) -> tuple[int, ...]:
@@ -1110,13 +1110,13 @@ class PreferencesDialog(QDialog):
 
         help_layout.addWidget(_link_row(
             "Report a problem — GitHub issues →",
-            "https://github.com/Vidyut/lekhak/issues/new",
+            "https://github.com/Vidyut/lekhika/issues/new",
             "Opens a new issue. Press Copy system details first, paste "
             "that in, and say what you did, what happened, and what you "
             "expected."))
         help_layout.addWidget(_link_row(
             "Source code and releases — GitHub →",
-            "https://github.com/Vidyut/lekhak",
+            "https://github.com/Vidyut/lekhika",
             "The code, the tags, and the releases: version history and "
             "what changed between them."))
         help_layout.addWidget(_link_row(
@@ -1178,7 +1178,7 @@ class PreferencesDialog(QDialog):
         support_layout.addWidget(tell)
         support_layout.addWidget(_link_row(
             "Report a bug or ask for a feature →",
-            "https://github.com/Vidyut/lekhak/issues/new",
+            "https://github.com/Vidyut/lekhika/issues/new",
             "Problems and requests collect in one place, so they can be "
             "fixed and built. Copy the system details from the Help page "
             "first, then say what you did, what happened, and what you "

@@ -50,11 +50,11 @@ Lekhak will run on almost any Python you already have (3.9 or newer). If you hav
 **First, get the code.** In a terminal:
 
 ```bash
-git clone https://github.com/Vidyut/lekhak.git   # download it
+git clone https://github.com/Vidyut/lekhika.git   # download it
 cd lekhak                                        # go into that folder
 ```
 
-No Git? On the [GitHub page](https://github.com/Vidyut/lekhak) click **Code → Download ZIP**, unzip it, and open a terminal in the folder you unzipped. Either way, every command below runs from inside that folder.
+No Git? On the [GitHub page](https://github.com/Vidyut/lekhika) click **Code → Download ZIP**, unzip it, and open a terminal in the folder you unzipped. Either way, every command below runs from inside that folder.
 
 **Now set it up.** This keeps Lekhak's bits in a private folder inside the checkout — nothing system-wide, no administrator rights needed.
 
@@ -104,4 +104,4 @@ It's still an early release, so expect rough edges; the roadmap is in [ROADMAP.m
 
 **Lekhak is free and open source, licensed under the GPL.** Use it, modify it, share it. If you'd like to say thank you, [send a gift](https://paypal.me/VidyutG) — optional, and it stays free either way.
 
-Source code: [GitHub](https://github.com/Vidyut/lekhak).
+Source code: [GitHub](https://github.com/Vidyut/lekhika).

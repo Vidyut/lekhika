@@ -9213,7 +9213,7 @@ class MainWindow(QMainWindow):
                 "in your file manager, or change the permissions and try "
                 "again.\n\n"
                 "If you think this is a bug, please report it:\n"
-                "https://github.com/Vidyut/lekhak/issues")
+                "https://github.com/Vidyut/lekhika/issues")
             box.setDetailedText(reasons)
             box.setStandardButtons(QMessageBox.Ok)
             box.exec()
