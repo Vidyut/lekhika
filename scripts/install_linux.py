@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Install (or remove) the Lekhak desktop entry for the current user, Linux.
+"""Install (or remove) the Lekhika desktop entry for the current user, Linux.
 
 Writes:
-  ~/.local/share/applications/lekhak.desktop
-  ~/.local/share/icons/hicolor/scalable/apps/lekhak.svg
-  ~/.local/share/icons/hicolor/256x256/apps/lekhak.png
+  ~/.local/share/applications/lekhika.desktop
+  ~/.local/share/icons/hicolor/scalable/apps/lekhika.svg
+  ~/.local/share/icons/hicolor/256x256/apps/lekhika.png
 
 The Exec line prefers, in order: this checkout's .venv console script, a
-`lekhak` command already on PATH, then this checkout's .venv interpreter
-with `-m lekhak`. Stdlib only — works with a bare python3.
+`lekhika` command already on PATH, then this checkout's .venv interpreter
+with `-m lekhika`. Stdlib only — works with a bare python3.
 
 Usage:  python3 scripts/install_linux.py [--uninstall] [--check]
 """
@@ -24,40 +24,40 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGING = ROOT / "packaging"
 APPLICATIONS = Path.home() / ".local" / "share" / "applications"
 HICOLOR = Path.home() / ".local" / "share" / "icons" / "hicolor"
-DESKTOP_FILE = APPLICATIONS / "lekhak.desktop"
+DESKTOP_FILE = APPLICATIONS / "lekhika.desktop"
 
 DESKTOP_TEMPLATE = """\
 [Desktop Entry]
 Type=Application
 Version=1.4
-Name=Lekhak
+Name=Lekhika
 GenericName=Writing Environment
 Comment=Plan and write long-form documents
 Exec={exec}
-Icon=lekhak
+Icon=lekhika
 Terminal=false
 Categories=Office;WordProcessor;
 StartupNotify=true
-StartupWMClass=Lekhak
+StartupWMClass=Lekhika
 Keywords=writing;novel;book;manuscript;outline;scrivener;
 """
 
 
 def exec_line() -> str:
-    venv_console = ROOT / ".venv" / "bin" / "lekhak"
+    venv_console = ROOT / ".venv" / "bin" / "lekhika"
     if venv_console.exists():
         return quote(str(venv_console))
-    on_path = shutil.which("lekhak")
+    on_path = shutil.which("lekhika")
     if on_path:
         return quote(on_path)
     venv_python = ROOT / ".venv" / "bin" / "python"
     if venv_python.exists():
-        return f"{quote(str(venv_python))} -m lekhak"
+        return f"{quote(str(venv_python))} -m lekhika"
     system_python = shutil.which("python3")
     if system_python:
-        return f"{quote(system_python)} -m lekhak"
+        return f"{quote(system_python)} -m lekhika"
     raise SystemExit(
-        "No Lekhak launcher found. Install the package first:\n"
+        "No Lekhika launcher found. Install the package first:\n"
         f"    python3 -m venv {ROOT / '.venv'} && "
         f"{ROOT / '.venv' / 'bin' / 'pip'} install -e {ROOT}"
     )
@@ -73,10 +73,10 @@ def install() -> None:
     (HICOLOR / "256x256" / "apps").mkdir(parents=True, exist_ok=True)
 
     DESKTOP_FILE.write_text(DESKTOP_TEMPLATE.format(exec=exec_line()))
-    shutil.copyfile(PACKAGING / "lekhak.svg",
-                    HICOLOR / "scalable" / "apps" / "lekhak.svg")
-    shutil.copyfile(PACKAGING / "lekhak.png",
-                    HICOLOR / "256x256" / "apps" / "lekhak.png")
+    shutil.copyfile(PACKAGING / "lekhika.svg",
+                    HICOLOR / "scalable" / "apps" / "lekhika.svg")
+    shutil.copyfile(PACKAGING / "lekhika.png",
+                    HICOLOR / "256x256" / "apps" / "lekhika.png")
 
     validate = shutil.which("desktop-file-validate")
     if validate:
@@ -95,15 +95,15 @@ def install() -> None:
 
     print(f"installed {DESKTOP_FILE}")
     print(f"  {DESKTOP_FILE.read_text().splitlines()[6]}")
-    print(f"  icon: {HICOLOR / 'scalable' / 'apps' / 'lekhak.svg'}")
+    print(f"  icon: {HICOLOR / 'scalable' / 'apps' / 'lekhika.svg'}")
 
 
 def uninstall() -> None:
     removed = []
     for path in (
         DESKTOP_FILE,
-        HICOLOR / "scalable" / "apps" / "lekhak.svg",
-        HICOLOR / "256x256" / "apps" / "lekhak.png",
+        HICOLOR / "scalable" / "apps" / "lekhika.svg",
+        HICOLOR / "256x256" / "apps" / "lekhika.png",
     ):
         if path.exists():
             path.unlink()
@@ -128,7 +128,7 @@ def check() -> None:
         target = line.removeprefix("Exec=").strip().strip('"').split(" ")[0]
         if not Path(target).exists():
             problems.append(f"Exec target gone: {target}")
-    if not (HICOLOR / "scalable" / "apps" / "lekhak.svg").exists():
+    if not (HICOLOR / "scalable" / "apps" / "lekhika.svg").exists():
         problems.append("scalable icon missing")
     if problems:
         raise SystemExit("stale install:\n  " + "\n  ".join(problems)

@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from lekhak.project import DeleteError, Project
+from lekhika.project import DeleteError, Project
 
 
 class ProjectTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class ProjectTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_create_uses_transparent_layout(self):
-        self.assertEqual(self.project.root.suffix, ".lekhak")
+        self.assertEqual(self.project.root.suffix, ".lekhika")
         self.assertTrue(self.project.db_path.exists())
         # The book itself is a folder tree on disk (docs/STORAGE.md): the
         # manifest marks the project, and every document is a real file.
@@ -289,7 +289,7 @@ class ProjectTests(unittest.TestCase):
         self.assertIn("Place: Delhi", rendered)
 
     def test_export_can_select_individual_scenes(self):
-        from lekhak.templates import TemplateSet
+        from lekhika.templates import TemplateSet
 
         root = self.project.documents()[0]
         first = self.project.add_document("First", root.id, "scene")
@@ -523,7 +523,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.project.documents()[0].kind, "chapter")
 
     def test_backup_pruning_leaves_foreign_directories_alone(self):
-        """Pruning may only delete Lekhak's own timestamped backups: the
+        """Pruning may only delete Lekhika's own timestamped backups: the
         backup folder belongs to the writer and can already hold anything."""
         folder = (Path(self.temporary.name) / "External Backups"
                   / self.project.root.name)
@@ -928,9 +928,9 @@ class WikiLinkTests(unittest.TestCase):
 
     def test_canonicalize_links_restores_editor_markup_to_wiki_form(self):
         html = (
-            '<p>See <a href="lekhak://doc/x"><span style="color:#0000ff;">'
+            '<p>See <a href="lekhika://doc/x"><span style="color:#0000ff;">'
             "Scene B</span></a> and "
-            '<a href="lekhak://missing"><span style="color:#c0392b;">'
+            '<a href="lekhika://missing"><span style="color:#c0392b;">'
             "[missing: Nope]</span></a>.</p>"
         )
         canonical = self.project.canonicalize_links(html)
@@ -943,7 +943,7 @@ class WikiLinkTests(unittest.TestCase):
         plain = "<p>Ordinary prose with no links.</p>"
         self.assertEqual(self.project.canonicalize_links(plain), plain)
         once = self.project.canonicalize_links(
-            '<p><a href="lekhak://doc/x">Scene B</a></p>')
+            '<p><a href="lekhika://doc/x">Scene B</a></p>')
         self.assertEqual(self.project.canonicalize_links(once), once)
 
 
@@ -1041,7 +1041,7 @@ class MetadataInTheHeadTests(unittest.TestCase):
         self.project.write_content(self.document.id, "<p>Words.</p>")
         self.assertIn('  Note: "a value: with a colon"\n',
                       self._head(self.document.id))
-        from lekhak.disk_doc import read_document
+        from lekhika.disk_doc import read_document
         metadata, _prose = read_document(
             self.project.content_path(self.document.id))
         self.assertEqual(metadata["metadata"]["Note"], "a value: with a colon")
@@ -1064,7 +1064,7 @@ class MetadataInTheHeadTests(unittest.TestCase):
 
 
 class MetadataDriftTests(unittest.TestCase):
-    """A file edited outside Lekhak disagrees — and says so.
+    """A file edited outside Lekhika disagrees — and says so.
 
     The manifest and .order.json rule (docs/STORAGE.md): a disagreement is
     reported, never silently fixed, and the writer settles which side is

@@ -19,7 +19,7 @@ The model is now the running application, not a plan.
 - **A lock is a marker file in the tree.** `.locked` inside a folder locks that folder and everything inside it; `.<name>.locked` beside a file locks that file. The tick beside the Type row says whether the marker is there; the marker is the truth, and it travels with a copied folder.
 - **A leaf that gains children moves before its child is placed.** The child's path is worked out *after* the promotion from `X.html` to the directory `X/`, so the two halves of one binder cannot end up in two trees. `repair_tree.py` puts an older split back together — it finds the ghost directories (a directory named like a file), moves their contents where they belong, and takes a backup before it touches anything.
 
-The rest of this document is the design record — the reasoning, the decisions and the experiments that led here. Where it describes the planned `.lekhak/` machinery, read it as the proposal that the simpler `manifest.json` + `.order.json` shape replaced.
+The rest of this document is the design record — the reasoning, the decisions and the experiments that led here. Where it describes the planned `.lekhika/` machinery, read it as the proposal that the simpler `manifest.json` + `.order.json` shape replaced.
 
 ## Why
 
@@ -32,7 +32,7 @@ drop it back and it is a folder again. A series can live in one collection while
 ## Layout
 
 ```
-My Novel.lekhak/          ← a project: a folder with manifest.json
+My Novel.lekhika/          ← a project: a folder with manifest.json
 ├── manifest.json                   ← title, format version, root child order
 ├── project.sqlite3                 ← the index: metadata, search, history
 ├── Book Three/
@@ -43,7 +43,7 @@ My Novel.lekhak/          ← a project: a folder with manifest.json
 └── images/
 ```
 
-The `.lekhak` **suffix is a convention**, not a requirement: any folder containing `manifest.json` is a project.
+The `.lekhika` **suffix is a convention**, not a requirement: any folder containing `manifest.json` is a project.
 
 **Nothing else lives in the project.** No `documents/` store, no `backups/` folder: the first is gone now that each document is a real file in the tree, and the second because a project that is lost must not take its backups with it. A project folder holds the book and the index, and nothing more.
 
@@ -70,7 +70,7 @@ metadata:
 ```
 
 - **A writer's own field is in the file (built 2026-11-12).** `metadata:` above is written and kept: `Type`, `PoV`, a `Series` — every field the writer's own table holds — travels in the head of the file, so a document opened in any editor is complete on its own. Value types and option lists stay in the database, since they are editing affordances rather than content, and the head's own keys (`title`, `kind`, `page_break`, …) are not repeated inside the block.
-- **Disagreements are reported, never silently fixed.** When a file's head and the project's record disagree, Lekhak reports it on detection while it is fresh. Metadata drift is resolved per document and per field (choose file or project for each, or accept all from one side). Title/identity drift is handled separately: the writer chooses which title is right, is told the consequences (automated links may no longer resolve naturally; manual or hardcoded wiki links may break), and may opt in to a project-wide find/replace update of hardcoded `[[wiki links]]` only — the rest is fixed by hand.
+- **Disagreements are reported, never silently fixed.** When a file's head and the project's record disagree, Lekhika reports it on detection while it is fresh. Metadata drift is resolved per document and per field (choose file or project for each, or accept all from one side). Title/identity drift is handled separately: the writer chooses which title is right, is told the consequences (automated links may no longer resolve naturally; manual or hardcoded wiki links may break), and may opt in to a project-wide find/replace update of hardcoded `[[wiki links]]` only — the rest is fixed by hand.
 - **The title is the truth**; the filename is a slug derived from it. Titles are free text and filenames are not, so the two cannot be the same thing.
 - **`id` is stable and permanent** — the thing that makes a rename harmless:
 covers keep finding their folder, snapshots and revisions keep their document, and an external move looks like a move rather than a delete plus a create. *Recommended; amend if you'd rather have no ids at all and accept that renames lose history and covers.*
@@ -86,7 +86,7 @@ No anchors, aliases, multi-document streams or tags. A hand-rolled parser keeps 
 
 **`index.html` is a reserved name, in every folder.** It is the container's own prose — a part of the parent, not one of the children — so it leads the folder's order file, and the order applies to the rest. A document *titled* "index" may exist: it is written as `_index.html`, and the title still reads "index" in the binder. Without that, the two would be one file and the document would be swallowed by the container's page.
 
-**A conflict is reported, never rewritten.** If a folder's `index.html` says in its own head that it is some *other* document — a writer made a document called "index" before the name was reserved — the two meanings collide. The file is read as the folder's page (the rule above), the writer is told which folder and which title, and **nothing is changed**. Lekhak never rewrites a file it did not write on purpose: a wrong guess at the writer's intent loses their words, and a silent fix turns a working file into a troubleshooting session.
+**A conflict is reported, never rewritten.** If a folder's `index.html` says in its own head that it is some *other* document — a writer made a document called "index" before the name was reserved — the two meanings collide. The file is read as the folder's page (the rule above), the writer is told which folder and which title, and **nothing is changed**. Lekhika never rewrites a file it did not write on purpose: a wrong guess at the writer's intent loses their words, and a silent fix turns a working file into a troubleshooting session.
 
 Order is a list of **names**, not numeric prefixes: reordering rewrites one small file instead of renaming every document.
 
@@ -114,9 +114,9 @@ Order is a list of **names**, not numeric prefixes: reordering rewrites one smal
 
 ## Nesting
 
-A project marker is honoured **only at the root you opened**. Nested inside another project, a project is a folder: its project settings are ignored, its `.lekhak/` is machinery rather than content, and its documents are simply content — counted, exported, reordered. Its own `Templates/` still governs its subtree, by the nearest-wins rule, which is what lets ten books carry ten formats inside one collection.
+A project marker is honoured **only at the root you opened**. Nested inside another project, a project is a folder: its project settings are ignored, its `.lekhika/` is machinery rather than content, and its documents are simply content — counted, exported, reordered. Its own `Templates/` still governs its subtree, by the nearest-wins rule, which is what lets ten books carry ten formats inside one collection.
 
-**Locks.** On open, check `.lekhak/lock` in the ancestors *and* immediate descendants: warn that the same files are open at another level, and allow an **override**, because a crashed session must not leave a project permanently unopenable. No arbitration beyond that.
+**Locks.** On open, check `.lekhika/lock` in the ancestors *and* immediate descendants: warn that the same files are open at another level, and allow an **override**, because a crashed session must not leave a project permanently unopenable. No arbitration beyond that.
 
 ## The areas
 
@@ -125,12 +125,12 @@ A project marker is honoured **only at the root you opened**. Nested inside anot
 
 ## Filenames: no spaces, enforced on sight
 
-**Author's decision (2026-10-25):** *"Lekhak filenames must not contain spaces"* — and the app enforces it rather than merely preferring it. Anybody who can take an HTML document out of a project folder and edit it can write a compliant filename; the alternative is a tree that every other tool reads differently from the way Lekhak does.
+**Author's decision (2026-10-25):** *"Lekhika filenames must not contain spaces"* — and the app enforces it rather than merely preferring it. Anybody who can take an HTML document out of a project folder and edit it can write a compliant filename; the alternative is a tree that every other tool reads differently from the way Lekhika does.
 
 - **On open, and on any rescan, non-compliant names are normalised**: spaces and illegal characters become a single hyphen, runs collapse, ends trim. Files **and folders** — a policy that stops at the last path separator is not a policy — and because the walk is top-down, renaming a folder needs no second pass for its children.
-- **Files from outside are accepted, never refused.** Enforcement is a rename, not a rejection: bring in whatever a file manager or another editor made, and Lekhak tidies the names on sight.
+- **Files from outside are accepted, never refused.** Enforcement is a rename, not a rejection: bring in whatever a file manager or another editor made, and Lekhika tidies the names on sight.
 - **Guards:** only while we hold the project lock; a single pass before any editing begins; never on a name that is already compliant; collisions get `-1`, `-2`, compared case-insensitively because macOS and Windows filesystems are; and every change is **reported** in the session summary, so no rename is a mystery. A per-project setting can switch normalisation off for someone deliberately syncing a project with another tool.
-- **Slug rules:** the writer's own names survive. Spaces and letters in any script stay; only characters a filesystem refuses (`/`, `:`, control codes…) become `-`; the ends are trimmed of dots and spaces; a 120-character cap; a title with nothing in it gives its *file* the name `Untitled`; Windows-illegal characters and reserved names (`CON`, `NUL`, `COM1`…) are avoided, and so is `index` — Lekhak's own reserved name, since a container's own prose is its `index.html` (§Folders). A name already taken in the same folder gets a number — `Epilogue.html` and `Epilogue-1.html` — and both read `Epilogue` in the binder.
+- **Slug rules:** the writer's own names survive. Spaces and letters in any script stay; only characters a filesystem refuses (`/`, `:`, control codes…) become `-`; the ends are trimmed of dots and spaces; a 120-character cap; a title with nothing in it gives its *file* the name `Untitled`; Windows-illegal characters and reserved names (`CON`, `NUL`, `COM1`…) are avoided, and so is `index` — Lekhika's own reserved name, since a container's own prose is its `index.html` (§Folders). A name already taken in the same folder gets a number — `Epilogue.html` and `Epilogue-1.html` — and both read `Epilogue` in the binder.
 - **The title is never touched.** It lives in the frontmatter; normalisation changes filenames only, and the writer's words are not rewritten (working agreements, "Manuscripts are precious"). In particular the collision suffix never reaches it: two documents titled `Epilogue` are `Epilogue.html` and `Epilogue-1.html` on disk and both read `Epilogue` in the binder, and a title the writer left blank stays blank rather than becoming `Untitled`. Only a file with no frontmatter at all borrows its title from its name — that one was written by another hand, and its name is all it has.
 
 ## Backups, locks, and edits from outside
@@ -164,7 +164,7 @@ Verified: `641 tests, exit 0`. Nothing in the running application changed — th
 
 - **`docs/STORAGE.md`** (this file) — the decided model, plus the `ROADMAP.md` amendment the format-contract clause required.
 - **`scripts/storage_layout_dryrun.py`** — read-only: prints the tree a migration would write, from an existing project's database. Run against the author's real project it reports **55 folders, 283 documents, 46 of them carrying their own prose as `index.html`, 282 names normalised by the no-spaces rule, 8 collisions needing a suffix, 0 problems.** *The 46 was wrong when written, and is stale now.* `f0803c4` (2026-10-25) showed those are Qt's stylesheet-only empty documents and titles typed once as headings — neither is prose. Re-run 2026-10-26: **51 folders, 281 documents, 0 index.html**, and the 0 was checked *against the files* with an independent HTML text extraction rather than through `has_prose` alone, because a wrong `has_prose` would make the round-trip gate agree with the writer and pass while dropping prose. No container in the author's project holds a sentence of its own, so none needs an `index.html`.
-- **`src/lekhak/layout.py`** and **`tests/test_layout.py`** (20 tests) — the core: name rules, the YAML-subset frontmatter and manifests, `write_tree` and `load_tree`, and the order guarantees below.
+- **`src/lekhika/layout.py`** and **`tests/test_layout.py`** (20 tests) — the core: name rules, the YAML-subset frontmatter and manifests, `write_tree` and `load_tree`, and the order guarantees below.
 
 ### Assumptions made, for the author to confirm or overturn
 
@@ -173,7 +173,7 @@ Verified: `641 tests, exit 0`. Nothing in the running application changed — th
 3. **Values are quoted whenever unquoting them would change them** (amended 2026-10-26). The earlier rule — "numeric-looking values are not quoted, so `Count: 3` reads back as the number 3" — quoted only a hand-picked list of words, and silently retyped `007` to `7`. A *string* is now quoted unless the parser would read it back as that exact string; numbers and booleans the model genuinely holds are written bare and come back as their type. So `Count: "3"` is the text 3, `word_target: 3` is the number 3, and a hand-written bare `3` still reads as a number (YAML's own habit).
 4. **`index.html` is not a child.** It is the container's own prose, so the scan skips it when listing children — otherwise a chapter's text appeared as one of its scenes.
 5. **Files added from outside append**, in name order after the manifest's children, rather than being inserted somewhere clever. The manifest is the order; new things go last.
-6. **The dry-run script still carries its own copy of the slug function** rather than importing `lekhak.layout.slug` — a tidy-up for the next pass, now that there is one place for it.
+6. **The dry-run script still carries its own copy of the slug function** rather than importing `lekhika.layout.slug` — a tidy-up for the next pass, now that there is one place for it.
 
 ### What the order guarantees actually are
 

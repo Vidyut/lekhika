@@ -7,7 +7,7 @@ Two writers, one repository. The rules first, then the areas, then the to-do. Re
 1. **`git pull --rebase origin main` before you start and before you push.** A rejected push means somebody else pushed; rebase, re-run the suite, push again. Never force-push.
 2. **The suite must be green before a commit lands** —
 `PYTHONPATH=src QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests`. A feature without tests is not finished.
-3. **One writer at a time in a shared file.** `src/lekhak/app.py`, `README.md` and `ROADMAP.md` are shared: say so before you edit, or work in a new module and let the other side wire it in.
+3. **One writer at a time in a shared file.** `src/lekhika/app.py`, `README.md` and `ROADMAP.md` are shared: say so before you edit, or work in a new module and let the other side wire it in.
 4. **Never overwrite someone else's uncommitted work.** If `git status` shows changes you did not make, stop and ask.
 5. **No AI edits text or code except through the mechanisms the app already has** (tracked changes for manuscripts; a human reviewing a diff for code). Advice is welcome; commits are a human act.
 6. Small commits, one idea each, message in the repo's style (`area: what changed`, from the user's point of view where possible).
@@ -64,16 +64,16 @@ Recurring tooling belongs in `scripts/`; one-off actions live in `/tmp/opencode/
 
 **Engine — opencode.** The parts that decide what an export *is*:
 
-- `src/lekhak/project.py` — storage, compile scope, export pipeline, page geometry, counts, snapshots, imports' safety floor.
-- `src/lekhak/templates.py` and the new template engine modules.
-- `src/lekhak/pageview.py`, `src/lekhak/pdf.py`, `uno_pdf.py`.
+- `src/lekhika/project.py` — storage, compile scope, export pipeline, page geometry, counts, snapshots, imports' safety floor.
+- `src/lekhika/templates.py` and the new template engine modules.
+- `src/lekhika/pageview.py`, `src/lekhika/pdf.py`, `uno_pdf.py`.
 - `docs/` — every design document, including this one.
 - Release chores: tagging, the blog page, the tester round.
 
 **Interface and features — MiMo.** The parts a writer touches:
 
-- `src/lekhak/app.py` (UI wiring), and new self-contained UI modules.
-- `src/lekhak/importer.py`, `odt.py`, `uno_odt.py`, `spellcheck.py`, `scrivener.py`, `ywriter.py`.
+- `src/lekhika/app.py` (UI wiring), and new self-contained UI modules.
+- `src/lekhika/importer.py`, `odt.py`, `uno_odt.py`, `spellcheck.py`, `scrivener.py`, `ywriter.py`.
 - New feature modules and their tests (`open_recent`, `quick_open`, `print`, session goal, and whatever comes next).
 - `docs/BUILD-NOW.md` as it works through the list.
 

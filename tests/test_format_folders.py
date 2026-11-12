@@ -23,8 +23,8 @@ from pathlib import Path
 
 from docx import Document as DocxDocument
 
-from lekhak.project import Project
-from lekhak.templates import DOCX_MARKER, TemplateSet, create_template_set
+from lekhika.project import Project
+from lekhika.templates import DOCX_MARKER, TemplateSet, create_template_set
 
 
 class FormatFolderTests(unittest.TestCase):

@@ -13,7 +13,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class TextPaginationTests(unittest.TestCase):

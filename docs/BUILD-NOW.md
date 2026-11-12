@@ -15,7 +15,7 @@ Not code. A tiny local model must not edit this repository — and it must not e
 ## 1. File → Open Recent
 Projects remembered in `QSettings` (`session/recentProjects`), newest first, capped at eight, entries pruned when the folder is gone, updated on a successful switch only. *Acceptance:* switching projects twice leaves both at the top of the menu, and deleting one on disk removes it from the list rather than offering a broken entry.
 
-**Built (2026-10-22).** `session/recentProjects`, recorded at the tail of `_switch_project` (a cancelled switch records nothing), capped at eight, pruned on every menu build *and* on a click that finds the folder already gone — which reports in the status bar instead of raising. Entries show the folder name without `.lekhak`, disambiguated by parent when two share one. Eight tests in `tests/test_recent_projects.py`. Suite 465, exit 0.
+**Built (2026-10-22).** `session/recentProjects`, recorded at the tail of `_switch_project` (a cancelled switch records nothing), capped at eight, pruned on every menu build *and* on a click that finds the folder already gone — which reports in the status bar instead of raising. Entries show the folder name without `.lekhika`, disambiguated by parent when two share one. Eight tests in `tests/test_recent_projects.py`. Suite 465, exit 0.
 
 ## 2. Quick open — `Ctrl+P`
 A one-field palette over document titles in binder order (substring, then fuzzy), Enter selects, Esc closes; it only *navigates*, never edits or deletes. *Acceptance:* typing three letters of a scene name jumps to it from anywhere; the palette never appears with no project open.
@@ -34,7 +34,7 @@ The status bar already recomputes on cursor moves — add "N words selected" whe
 ## 4. Print — `Ctrl+P`
 Reuse the PDF path (1.6/1.7): write the PDF to a temp file, hand it to the desktop's handler (or Qt's print dialog if it behaves), delete the temp file afterwards. *Acceptance:* printing a short story opens the system print flow with the same pagination the export produces; the temp file does not survive.
 
-**Built (2026-10-22).** `print_manuscript` compiles the PDF straight into a `lekhak-print-*` temp folder — stored template set, export scope, no dialogs — and hands it to `xdg-open` (or `gio open`); a daemon waiter deletes the folder when the handler's process exits, so the viewer may read the file as long as it likes and nothing is left behind. Every failure path (no project, cancelled save, conversion error, handler that never starts) removes the folder immediately. Seven tests in `tests/test_print.py`. Suite 484, exit 0.
+**Built (2026-10-22).** `print_manuscript` compiles the PDF straight into a `lekhika-print-*` temp folder — stored template set, export scope, no dialogs — and hands it to `xdg-open` (or `gio open`); a daemon waiter deletes the folder when the handler's process exits, so the viewer may read the file as long as it likes and nothing is left behind. Every failure path (no project, cancelled save, conversion error, handler that never starts) removes the folder immediately. Seven tests in `tests/test_print.py`. Suite 484, exit 0.
 
 ## 5. Insert date/time
 An editor command inserting the date (and optionally the time) at the caret; feeds the metadata `Date` value rather than being typed by hand. *Acceptance:* inserts today's date in the project's locale and is undoable as one step.
@@ -93,7 +93,7 @@ Two different DOCX jobs, and they must not be confused:
 | Images | any | **no full-colour content images** unless the book is genuinely an illustrated one (bleed, plates); colour content gets a print job rejected |
 | Output | DOCX, for editors and readers | the inner-block PDF to upload, plus a separate cover PDF |
 
-The cover creator is **optional and a later update** — it is not Lekhak's core competence. What it should do when it arrives, because the author asked for a full pipeline rather than an art studio: place cover, back and a sensibly proportioned spine for the book's trim, lay out margins per the printer's template, **overlay a grid so nothing important is provably cropped**, scale images to the required size with a quality warning when upscaling, allow text fields where the template permits, and export a print-ready PDF. Cover and inner copy are edited and exported **separately**.
+The cover creator is **optional and a later update** — it is not Lekhika's core competence. What it should do when it arrives, because the author asked for a full pipeline rather than an art studio: place cover, back and a sensibly proportioned spine for the book's trim, lay out margins per the printer's template, **overlay a grid so nothing important is provably cropped**, scale images to the required size with a quality warning when upscaling, allow text fields where the template permits, and export a print-ready PDF. Cover and inner copy are edited and exported **separately**.
 
 This is why the print copy belongs after the template engine: it needs the DOCX config/reference machinery (trim, mirrored margins, running heads, per-kind page starts) before it can be anything but a guess.
 

@@ -7,7 +7,7 @@ duplicate and empty titles, and the folders that would be written. Nothing is
 created, moved or renamed — this exists so the shape can be judged before any
 of it is real.
 
-    python3 scripts/storage_layout_dryrun.py "/path/to/Project.lekhak"
+    python3 scripts/storage_layout_dryrun.py "/path/to/Project.lekhika"
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
-from lekhak.layout import has_prose as _has_prose
+from lekhika.layout import has_prose as _has_prose
 
 # Characters no target filesystem will take, plus the ones Windows reserves.
 ILLEGAL = set('<>:"/\\|?*') | {chr(code) for code in range(32)}
@@ -176,7 +176,7 @@ def main() -> int:
     for path, names in manifests:
         if shown >= 4 or path.count("/") > 2:
             continue
-        print(f"{path}/.lekhak/folder.yaml")
+        print(f"{path}/.lekhika/folder.yaml")
         for name in names[:8]:
             print(f"  - {name}")
         if len(names) > 8:

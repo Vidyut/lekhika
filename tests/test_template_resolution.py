@@ -18,16 +18,16 @@ from unittest.mock import patch
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QDialog
 
-from lekhak.app import ExportOptionsDialog, MainWindow
-from lekhak.project import Project
-from lekhak.templates import TemplateSet, create_template_set
+from lekhika.app import ExportOptionsDialog, MainWindow
+from lekhika.project import Project
+from lekhika.templates import TemplateSet, create_template_set
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-template-chooser-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-template-chooser-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -306,7 +306,7 @@ class ExportChooserTests(unittest.TestCase):
                           return_value=QDialog.Accepted), \
                 patch.object(ExportOptionsDialog, "selected_template_set",
                              return_value=chosen), \
-                patch("lekhak.app.QFileDialog.getSaveFileName",
+                patch("lekhika.app.QFileDialog.getSaveFileName",
                       return_value=(str(destination), "")):
             self.window.export("text")
 

@@ -21,14 +21,14 @@ from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from lekhak import ai  # noqa: E402
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika import ai  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-ai-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-ai-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -174,7 +174,7 @@ class AIWindowTests(unittest.TestCase):
     def test_continue_scene_inserts_a_tracked_ai_change(self):
         self.assertFalse(self.window.editor.tracking)  # toggle not needed
 
-        with patch("lekhak.ai.complete", return_value=" The wind rose.") as call:
+        with patch("lekhika.ai.complete", return_value=" The wind rose.") as call:
             self.window._ai_continue_scene()
 
         self.assertTrue(call.called)
@@ -187,7 +187,7 @@ class AIWindowTests(unittest.TestCase):
     def test_proofread_selection_replaces_as_a_tracked_pair(self):
         self._select(6, 11)  # "light"
 
-        with patch("lekhak.ai.complete", return_value="Light"):
+        with patch("lekhika.ai.complete", return_value="Light"):
             self.window._ai_proofread_selection()
 
         # New words in front, old words struck behind — nothing lost.
@@ -203,7 +203,7 @@ class AIWindowTests(unittest.TestCase):
         cursor.clearSelection()
         self.window.editor.setTextCursor(cursor)
 
-        with patch("lekhak.ai.complete",
+        with patch("lekhika.ai.complete",
                    return_value="First Light!") as call:
             self.window._ai_proofread_selection()
 
@@ -213,7 +213,7 @@ class AIWindowTests(unittest.TestCase):
         self.assertEqual([row.kind for row in rows], ["delete", "insert"])
 
     def test_ai_error_shows_a_warning_and_writes_nothing(self):
-        with patch("lekhak.ai.complete",
+        with patch("lekhika.ai.complete",
                    side_effect=ai.AIError("no model")), \
                 patch.object(QMessageBox, "warning") as warning:
             self.window._ai_continue_scene()

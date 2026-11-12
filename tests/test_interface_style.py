@@ -10,13 +10,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-style-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-style-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 

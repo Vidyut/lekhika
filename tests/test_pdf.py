@@ -23,14 +23,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
-from lekhak import pdf  # noqa: E402
-from lekhak.app import ExportOptionsDialog, MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika import pdf  # noqa: E402
+from lekhika.app import ExportOptionsDialog, MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-pdf-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-pdf-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 _VERSION_STUB = """#!/bin/bash
@@ -173,9 +173,9 @@ class ConvertTests(unittest.TestCase):
         self.assertTrue(soffice.endswith("libreoffice"))
         # The worker's out.pdf landed in its scratch, then was replaced.
         self.assertEqual(scratch_pdf.parent, workdir)
-        # No .lekhak-pdf-* scratch directory left beside the destination.
+        # No .lekhika-pdf-* scratch directory left beside the destination.
         leftovers = [p.name for p in destination.parent.iterdir()
-                     if p.name.startswith(".lekhak-")]
+                     if p.name.startswith(".lekhika-")]
         self.assertEqual(leftovers, [])
 
     def test_timeout_kills_the_workers_whole_process_group(self):
@@ -246,7 +246,7 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(fmt, "pdf")
         self.assertFalse(scratch.exists())     # temp docx cleaned up
         leftovers = [p.name for p in self.root.iterdir()
-                     if p.name.startswith(".lekhak-")]
+                     if p.name.startswith(".lekhika-")]
         self.assertEqual(leftovers, [])
 
 
@@ -303,9 +303,9 @@ class ExportPdfMenuTests(unittest.TestCase):
         destination = Path(self.temporary.name) / "book.pdf"
         with patch.object(ExportOptionsDialog, "exec",
                           return_value=QDialog.Accepted), \
-                patch("lekhak.app.QFileDialog.getSaveFileName",
+                patch("lekhika.app.QFileDialog.getSaveFileName",
                       return_value=(str(destination), "")), \
-                patch("lekhak.app.pdf.export_pdf") as export_pdf:
+                patch("lekhika.app.pdf.export_pdf") as export_pdf:
             self.window.export("pdf")
 
         export_pdf.assert_called_once()

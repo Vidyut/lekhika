@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class MentionScanTests(unittest.TestCase):

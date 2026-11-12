@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.templates import (
+from lekhika.templates import (
     TemplateSet,
     discover_template_sets,
     named_template_sets,
@@ -44,7 +44,7 @@ class DiscoveryTests(unittest.TestCase):
         return [s.name for s in discover_template_sets(self.root)]
 
     def test_an_empty_project_has_exactly_the_shipped_sets(self):
-        # §1.1: five sets ship with Lekhak and need no folder anywhere,
+        # §1.1: five sets ship with Lekhika and need no folder anywhere,
         # so an empty project still offers all of them, default first.
         self.assertEqual(self._names(),
                          ["default", "short story", "Book", "Guide",
@@ -53,7 +53,7 @@ class DiscoveryTests(unittest.TestCase):
     def test_a_default_folder_is_listed_beside_the_shipped_default(self):
         # §1.1 flat, and §1.1's other half: the folder is a row of its
         # own, after the shipped sets, under its folder name — so its
-        # files are never hidden — while the top slot stays Lekhak's own,
+        # files are never hidden — while the top slot stays Lekhika's own,
         # the answer when nobody picked a set.
         directory = self.root / "templates" / "default"
         directory.mkdir(parents=True)
@@ -73,7 +73,7 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_the_name_default_always_resolves_to_the_shipped_set(self):
         # The name is what an assignment stores (§2), so it must keep
-        # meaning Lekhak's own set — the folder is listed and pickable,
+        # meaning Lekhika's own set — the folder is listed and pickable,
         # but it never answers to the name the shipped set already owns.
         directory = self.root / "templates" / "default"
         directory.mkdir(parents=True)
@@ -107,9 +107,9 @@ class DiscoveryTests(unittest.TestCase):
         # The rule that did not change: the project's own folder shadows
         # the user's one of the same name — only a shipped set's slot is
         # beyond a folder's reach.
-        (self.root / "config" / "lekhak" / "templates" / "Editorial"
+        (self.root / "config" / "lekhika" / "templates" / "Editorial"
          ).mkdir(parents=True)
-        (self.root / "config" / "lekhak" / "templates" / "Editorial"
+        (self.root / "config" / "lekhika" / "templates" / "Editorial"
          / "folder.html").write_text("<p>library</p>", encoding="utf-8")
         (self.root / "templates" / "Editorial").mkdir(parents=True)
         (self.root / "templates" / "Editorial" / "folder.html").write_text(

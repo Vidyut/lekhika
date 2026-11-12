@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lekhak"
+name = "lekhika"
 version = "1.0.0"
 description = "A reliable, Linux-first environment for long-form writing"
 # Floor is 3.9 by policy (see ROADMAP working agreements): the code only
@@ -21,12 +21,12 @@ dependencies = ["PySide6>=6.6", "python-docx>=1.1", "Pillow>=10",
                 "reportlab>=4.0"]
 
 [project.scripts]
-lekhak = "lekhak.app:main"
+lekhika = "lekhika.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
-# The guide ships with the software: a Lekhak project the app copies into
+# The guide ships with the software: a Lekhika project the app copies into
 # the user's own data folder and opens read-only. It is never opened from
 # the install folder, so a user cannot write into it.
 #
@@ -35,14 +35,14 @@ package-dir = {"" = "src"}
 # `.order.json` — the ones that say in what order a folder's children
 # stand.
 [tool.setuptools.package-data]
-lekhak = [
-    "guide/guide.lekhak/*",
-    "guide/guide.lekhak/*/*",
-    "guide/guide.lekhak/*/*/*",
-    "guide/guide.lekhak/*/*/*/*",
-    "guide/guide.lekhak/*/.*",
-    "guide/guide.lekhak/*/*/.*",
-    "guide/guide.lekhak/*/*/*/.*",
+lekhika = [
+    "guide/guide.lekhika/*",
+    "guide/guide.lekhika/*/*",
+    "guide/guide.lekhika/*/*/*",
+    "guide/guide.lekhika/*/*/*/*",
+    "guide/guide.lekhika/*/.*",
+    "guide/guide.lekhika/*/*/.*",
+    "guide/guide.lekhika/*/*/*/.*",
 ]
 
 [tool.setuptools.packages.find]

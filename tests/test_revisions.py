@@ -20,16 +20,16 @@ from PySide6.QtCore import QEvent, QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
-from lekhak import revisions  # noqa: E402
-from lekhak.app import LinkEditor, MainWindow  # noqa: E402
-from lekhak.project import (  # noqa: E402
+from lekhika import revisions  # noqa: E402
+from lekhika.app import LinkEditor, MainWindow  # noqa: E402
+from lekhika.project import (  # noqa: E402
     DELETE_SPAN_RE, INSERT_SPAN_RE, Project,
 )
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-revisions-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-revisions-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 # What Qt actually round-trips for the sentinel marks: a span with the
@@ -463,7 +463,7 @@ class RevisionWindowTests(unittest.TestCase):
         stored = self.project.read_content(self.scene.id)
         self.assertEqual(len(INSERT_SPAN_RE.findall(stored)), 1)
 
-        with patch("lekhak.app.QMessageBox.critical"), \
+        with patch("lekhika.app.QMessageBox.critical"), \
                 _fail_writes_after(1):
             self.window.accept_all_changes()
 
@@ -490,8 +490,8 @@ class RevisionWindowTests(unittest.TestCase):
             def selected_session(self):
                 return self.sessions[0]["session_id"]
 
-        with patch("lekhak.app.RevisionPassesDialog", _StubDialog), \
-                patch("lekhak.app.QMessageBox.critical"), \
+        with patch("lekhika.app.RevisionPassesDialog", _StubDialog), \
+                patch("lekhika.app.QMessageBox.critical"), \
                 _fail_writes_after(1):
             self.window.revision_passes()
 
@@ -525,7 +525,7 @@ class RevisionWindowTests(unittest.TestCase):
             def selected_session(self):
                 return self.sessions[0]["session_id"]
 
-        with patch("lekhak.app.RevisionPassesDialog", _StubDialog):
+        with patch("lekhika.app.RevisionPassesDialog", _StubDialog):
             self.window.revision_passes()
 
         remaining = self.project.revisions(self.scene.id)

@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project
-from lekhak.templates import TemplateSet, create_template_set
+from lekhika.project import Project
+from lekhika.templates import TemplateSet, create_template_set
 
 
 class MetadataInheritanceTests(unittest.TestCase):

@@ -16,9 +16,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 from guide_inventory import (  # noqa: E402
     CHAPTER, FINISHED, _key, _same_page, _text, inventory,
 )
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
-WORKING = Path.home() / "Documents" / "Lekhak Guide.lekhak"
+WORKING = Path.home() / "Documents" / "Lekhika Guide.lekhika"
 
 
 def main() -> int:
@@ -63,7 +63,7 @@ def main() -> int:
                             f"twice named: {seed.title!r} / {other.title!r}")
                         seen.remove(other)
         # shape of the files on disk
-        root = WORKING / "The Lekhak Guide" / CHAPTER
+        root = WORKING / "The Lekhika Guide" / CHAPTER
         for page in sorted(root.rglob("*.html")):
             if page.name == "index.html":
                 continue

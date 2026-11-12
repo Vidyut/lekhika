@@ -17,17 +17,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPointF, QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.pageview import (  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.pageview import (  # noqa: E402
     MAX_SCALE, MIN_SCALE, PageView, canvas_extent, content_origin,
     fit_scale, page_count, page_pixels, page_rects,
 )
-from lekhak.project import Project, clean_page_setup  # noqa: E402
+from lekhika.project import Project, clean_page_setup  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-pageview-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-pageview-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 

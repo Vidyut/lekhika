@@ -16,7 +16,7 @@ Two questions are answered, and they are different ones:
    is exactly the list that has to be empty (or consciously accepted) before
    the flat pool is retired.
 
-    python3 scripts/storage_roundtrip.py "/path/to/Project.lekhak"
+    python3 scripts/storage_roundtrip.py "/path/to/Project.lekhika"
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from lekhak.layout import has_prose
-from lekhak.project import Project, clean_page_setup
+from lekhika.layout import has_prose
+from lekhika.project import Project, clean_page_setup
 
 # Session state about the writer's machine, not about the manuscript: it
 # travels with the app, not with a copied folder. Listed so the report can
@@ -233,7 +233,7 @@ def main() -> int:
 
     # Everything happens on copies. The point of this script is that the
     # real project can be pointed at without a second thought.
-    with tempfile.TemporaryDirectory(prefix="lekhak-roundtrip-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="lekhika-roundtrip-") as temporary:
         scratch = Path(temporary)
         work = scratch / source.name
         work.mkdir()

@@ -2,7 +2,7 @@
 
 These are the only tests that build real Qt widgets. They run offscreen;
 QSettings is redirected into a temp dir so the suite never touches the
-user's real Lekhak configuration. Windows are never closed() — closeEvent
+user's real Lekhika configuration. Windows are never closed() — closeEvent
 would save into a possibly-closed project and pop a modal dialog, which
 would hang an offscreen run.
 """
@@ -17,13 +17,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-test-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-test-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
@@ -163,18 +163,18 @@ class SessionResumeTests(unittest.TestCase):
         # A project that has been deleted: the guide opens instead, so a
         # fresh install shows the software rather than an empty window.
         QSettings().setValue(
-            "session/lastProject", str(Path(self.temporary.name) / "gone.lekhak")
+            "session/lastProject", str(Path(self.temporary.name) / "gone.lekhika")
         )
 
         self.window.reopen_last_project()
 
         self.assertIsNotNone(self.window.project)
-        self.assertEqual(self.window.project.root.name, "guide.lekhak")
+        self.assertEqual(self.window.project.root.name, "guide.lekhika")
 
     def test_reopen_falls_back_when_project_wont_open(self):
-        # Path exists but isn't a Lekhak project (no database): startup
+        # Path exists but isn't a Lekhika project (no database): startup
         # must land on the empty window, not a dialog or a crash.
-        impostor = Path(self.temporary.name) / "Impostor.lekhak"
+        impostor = Path(self.temporary.name) / "Impostor.lekhika"
         impostor.mkdir()
         QSettings().setValue("session/lastProject", str(impostor))
 
@@ -189,7 +189,7 @@ class SessionResumeTests(unittest.TestCase):
         self.window.reopen_last_project()
 
         self.assertIsNotNone(self.window.project)
-        self.assertEqual(self.window.project.root.name, "guide.lekhak")
+        self.assertEqual(self.window.project.root.name, "guide.lekhika")
         # Read-only: the manual is the software's, not the writer's.
         self.assertTrue(self.window._project_is_read_only())
 

@@ -19,15 +19,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak import app as app_module  # noqa: E402
-from lekhak.app import MainWindow, print_via_desktop  # noqa: E402
-from lekhak.project import Project  # noqa: E402
-from lekhak.templates import create_template_set  # noqa: E402
+from lekhika import app as app_module  # noqa: E402
+from lekhika.app import MainWindow, print_via_desktop  # noqa: E402
+from lekhika.project import Project  # noqa: E402
+from lekhika.templates import create_template_set  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-test-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-test-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -151,7 +151,7 @@ class PrintTests(unittest.TestCase):
 
     def test_the_folder_outlives_the_handler_and_then_is_gone(self):
         self.print_area.mkdir()
-        pdf_path = self.print_area / "lekhak-print.pdf"
+        pdf_path = self.print_area / "lekhika-print.pdf"
         pdf_path.write_bytes(b"%PDF-fake")
         shell = shutil.which("sh")
 
@@ -168,7 +168,7 @@ class PrintTests(unittest.TestCase):
 
     def test_a_handler_that_never_starts_cleans_up(self):
         self.print_area.mkdir()
-        pdf_path = self.print_area / "lekhak-print.pdf"
+        pdf_path = self.print_area / "lekhika-print.pdf"
         pdf_path.write_bytes(b"%PDF-fake")
 
         with patch.object(app_module.subprocess, "Popen",

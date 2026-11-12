@@ -20,14 +20,14 @@ from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QToolButton  # noqa: E402
 
-from lekhak import ai  # noqa: E402
-from lekhak.app import MainWindow, PreferencesDialog  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika import ai  # noqa: E402
+from lekhika.app import MainWindow, PreferencesDialog  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-ai-local-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-ai-local-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -148,7 +148,7 @@ class LocalModelWindowTests(unittest.TestCase):
         self.assertEqual(ai.load_settings().model, "qwen3.5:2b")
         self._select(6, 11)  # "light"
 
-        with patch("lekhak.ai.complete", return_value="Light") as call, \
+        with patch("lekhika.ai.complete", return_value="Light") as call, \
                 patch.object(
                     self.window.editor, "apply_tracked_replacement",
                     wraps=self.window.editor.apply_tracked_replacement,

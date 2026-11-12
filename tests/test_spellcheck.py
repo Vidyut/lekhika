@@ -19,14 +19,14 @@ from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak import spellcheck  # noqa: E402
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika import spellcheck  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-spell-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-spell-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -140,7 +140,7 @@ class MisspellingsTests(unittest.TestCase):
         # metadata. The system dictionary would flag both, so both
         # are candidates — The/This sentence starters are not.
         with tempfile.TemporaryDirectory() as tmp:
-            project = Project.create(Path(tmp) / "Novel.lekhak", "Novel")
+            project = Project.create(Path(tmp) / "Novel.lekhika", "Novel")
             draft = project.documents()[0]
             chapter = project.add_document("Chapter One", draft.id, "chapter")
             scene = project.add_document("First Light", chapter.id, "scene")

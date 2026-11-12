@@ -1,6 +1,6 @@
 # The guide
 
-Lekhak ships with its own manual: a Lekhak project, `src/lekhak/guide/guide.lekhak`, that the app opens for you.
+Lekhika ships with its own manual: a Lekhika project, `src/lekhika/guide/guide.lekhika`, that the app opens for you.
 
 It is **the project's example document as well as the user guide** — a real book, in a real project, that you can browse, search and export.
 
@@ -13,12 +13,12 @@ It is **the project's example document as well as the user guide** — a real bo
 
 ## Writing it
 
-The guide is a regular Lekhak project, so it is written in Lekhak — and there is **one** working copy, so the two of us never edit apart:
+The guide is a regular Lekhika project, so it is written in Lekhika — and there is **one** working copy, so the two of us never edit apart:
 
 | | Where |
 |---|---|
-| The working guide | `~/Documents/Lekhak Guide.lekhak` — open it in Lekhak (File → Open Project) and write it there. |
-| The shipped guide | `src/lekhak/guide/guide.lekhak` — a **snapshot** of the working one, taken when the guide is ready. |
+| The working guide | `~/Documents/Lekhika Guide.lekhika` — open it in Lekhika (File → Open Project) and write it there. |
+| The shipped guide | `src/lekhika/guide/guide.lekhika` — a **snapshot** of the working one, taken when the guide is ready. |
 
 Ship it with:
 

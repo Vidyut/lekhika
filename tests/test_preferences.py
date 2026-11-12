@@ -21,16 +21,16 @@ from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QDialog, QLabel, QMessageBox, QPushButton)
 
-from lekhak import ai  # noqa: E402
-from lekhak.app import MainWindow, PreferencesDialog, load_paste_prefs  # noqa: E402
-from lekhak.preferences import (  # noqa: E402
+from lekhika import ai  # noqa: E402
+from lekhika.app import MainWindow, PreferencesDialog, load_paste_prefs  # noqa: E402
+from lekhika.preferences import (  # noqa: E402
     CSS_EDIT, diagnostics, update_check_due)
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-prefs-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-prefs-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 _PASTE_OFF = {"fonts": False, "paragraphs": False,
@@ -39,7 +39,7 @@ _PASTE_OFF = {"fonts": False, "paragraphs": False,
 _EXPECTED_CATEGORIES = [
     "General", "Editor", "Dictionary", "Appearance", "Files & saving",
     "Pasting", "Links", "Placeholders", "AI", "Read aloud",
-    "Updates", "Help", "Support Lekhak",
+    "Updates", "Help", "Support Lekhika",
 ]
 
 
@@ -129,7 +129,7 @@ class CategoryListTests(unittest.TestCase):
                    in self.dialog.findChildren(QPushButton)
                    if button.text() == "Choose..."]
         self.assertEqual(len(buttons), 1)
-        with patch("lekhak.preferences.QFileDialog.getExistingDirectory",
+        with patch("lekhika.preferences.QFileDialog.getExistingDirectory",
                    return_value="/media/Backups") as picker:
             buttons[0].click()
         self.assertEqual(picker.call_args.args[2], "/tmp")  # where the field points
@@ -267,7 +267,7 @@ class EditorStylesTests(unittest.TestCase):
         try:
             box = dialog.style_box
             box.setCurrentIndex(box.findData("Mine"))
-            with patch("lekhak.preferences.QDialog.exec",
+            with patch("lekhika.preferences.QDialog.exec",
                        return_value=QDialog.DialogCode.Accepted):
                 dialog._delete_style()
             self.assertEqual(deleted, [("Mine", True)])
@@ -289,7 +289,7 @@ class EditorStylesTests(unittest.TestCase):
         try:
             dialog.style_box.setCurrentIndex(
                 dialog.style_box.findData("Mine"))
-            with patch("lekhak.preferences.QDialog.exec",
+            with patch("lekhika.preferences.QDialog.exec",
                        return_value=QDialog.DialogCode.Accepted):
                 dialog._delete_style()
             self.assertEqual(documents, [("Mine", False)])
@@ -463,9 +463,9 @@ class HelpPageTests(unittest.TestCase):
         self.dialog.deleteLater()
 
     def test_the_version_is_named_on_the_page(self):
-        from lekhak import __version__
+        from lekhika import __version__
         labels = [label.text() for label in self.dialog.findChildren(QLabel)]
-        self.assertIn(f"Lekhak {__version__}", labels)
+        self.assertIn(f"Lekhika {__version__}", labels)
 
     def test_the_guide_button_opens_the_guide(self):
         self.dialog.open_manual_button.click()
@@ -489,9 +489,9 @@ class HelpPageTests(unittest.TestCase):
         self.assertEqual(
             self.dialog.categories.item(
                 self.dialog.categories.count() - 1).text(),
-            "Support Lekhak")
-        page = self._page("Support Lekhak")
-        with patch("lekhak.preferences.QDesktopServices.openUrl") as opened:
+            "Support Lekhika")
+        page = self._page("Support Lekhika")
+        with patch("lekhika.preferences.QDesktopServices.openUrl") as opened:
             for button in page.findChildren(QPushButton):
                 if button.text():
                     button.click()
@@ -516,9 +516,9 @@ class HelpPageTests(unittest.TestCase):
         project.write_content(project.documents()[0].id,
                               "<p>Secret prose of the manuscript.</p>")
         try:
-            from lekhak import __version__
+            from lekhika import __version__
             text = diagnostics(project)
-            self.assertIn(f"Lekhak {__version__}", text)
+            self.assertIn(f"Lekhika {__version__}", text)
             self.assertIn("documents", text)
             self.assertNotIn("Secret prose", text)
             self.assertNotIn(str(project.root), text)
@@ -585,12 +585,12 @@ class UpdateScheduleTests(unittest.TestCase):
         self.assertFalse(update_check_due())
 
     def test_a_pre_release_is_not_newer_than_its_version(self):
-        from lekhak.preferences import numeric_version
+        from lekhika.preferences import numeric_version
         self.assertEqual(numeric_version("v1.0.0"), numeric_version("1.0.0"))
         self.assertFalse(numeric_version("1.1.0-rc1") > numeric_version("1.1.0"))
 
     def test_the_version_the_check_compares_is_the_packaged_one(self):
-        from lekhak import __version__
+        from lekhika import __version__
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         self.assertIn(f'version = "{__version__}"', pyproject.read_text())
 
@@ -625,10 +625,10 @@ class StartupUpdateTests(unittest.TestCase):
             def start(self):
                 self.target()
 
-        with patch("lekhak.app.threading.Thread", Immediate), \
-                patch("lekhak.app.newer_release",
+        with patch("lekhika.app.threading.Thread", Immediate), \
+                patch("lekhika.app.newer_release",
                       return_value=self.FOUND) as probe, \
-                patch("lekhak.app.apply_update",
+                patch("lekhika.app.apply_update",
                       return_value=installed) as install:
             self.window.start_update_check()
         return self.window.statusBar().currentMessage(), probe, install

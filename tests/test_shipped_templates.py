@@ -1,4 +1,4 @@
-"""The sets that ship with Lekhak (docs/TEMPLATES.md §1.1): `default`,
+"""The sets that ship with Lekhika (docs/TEMPLATES.md §1.1): `default`,
 `short story`, `Book`, `Guide` and `no-export` — seeded by discovery without
 a folder, duplicable into the project with their own files, and standing for
 the whole range the system can express: the built-in look with an inert
@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project
-from lekhak.templates import (
+from lekhika.project import Project
+from lekhika.templates import (
     BUILTIN_HTML,
     BUILTIN_TEXT,
     SHIPPED_FILES,
@@ -50,7 +50,7 @@ class ShippedSetsTests(unittest.TestCase):
 
     def test_a_folder_named_after_a_shipped_set_is_listed_beside_it(self):
         # The `default` rule (§1.1) generalised: the shipped set keeps
-        # its slot — the top of the list is always Lekhak's own — and the
+        # its slot — the top of the list is always Lekhika's own — and the
         # project's copy appears after them as a set of its own, under
         # its folder name, so its files are never hidden.
         directory = self.root / "templates" / "Short Story"

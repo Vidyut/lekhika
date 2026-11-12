@@ -1,7 +1,7 @@
 """1.10 paste sanitizer: policy scrubbing, blank-line collapse, editor glue.
 
 QSettings is redirected into a temp dir (same contract as the resume
-tests) so the suite never touches the user's real Lekhak configuration.
+tests) so the suite never touches the user's real Lekhika configuration.
 """
 
 import os
@@ -14,15 +14,15 @@ from PySide6.QtCore import QMimeData, QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QAction, QTextCursor, QTextDocument  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import (  # noqa: E402
+from lekhika.app import (  # noqa: E402
     LinkEditor, MainWindow, PreferencesDialog, load_paste_prefs,
     sanitize_pasted_html,
 )
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-paste-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-paste-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 

@@ -15,13 +15,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-test-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-test-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -59,13 +59,13 @@ class RecentProjectsTests(unittest.TestCase):
 
     def test_the_list_is_capped_at_eight_newest_first(self):
         for index in range(10):
-            path = str(Path(self.temporary.name) / f"p{index}.lekhak")
+            path = str(Path(self.temporary.name) / f"p{index}.lekhika")
             self.window._record_recent(path)
 
         entries = self.window._recent_projects()
         self.assertEqual(len(entries), 8)
-        self.assertEqual(entries[0], str(Path(self.temporary.name) / "p9.lekhak"))
-        self.assertNotIn(str(Path(self.temporary.name) / "p0.lekhak"), entries)
+        self.assertEqual(entries[0], str(Path(self.temporary.name) / "p9.lekhika"))
+        self.assertNotIn(str(Path(self.temporary.name) / "p0.lekhika"), entries)
 
     def test_a_deleted_folder_is_pruned_when_the_menu_builds(self):
         gone = str(Path(self.temporary.name) / "Deleted")
@@ -117,8 +117,8 @@ class RecentProjectsTests(unittest.TestCase):
         self.assertIn("no longer exists", self.window.statusBar().currentMessage())
 
     def test_duplicate_folder_names_are_disambiguated(self):
-        first = str(Path(self.temporary.name) / "One" / "Same.lekhak")
-        second = str(Path(self.temporary.name) / "Two" / "Same.lekhak")
+        first = str(Path(self.temporary.name) / "One" / "Same.lekhika")
+        second = str(Path(self.temporary.name) / "Two" / "Same.lekhika")
         Path(first).mkdir(parents=True, exist_ok=True)
         Path(second).mkdir(parents=True, exist_ok=True)
         QSettings().setValue("session/recentProjects", [first, second])

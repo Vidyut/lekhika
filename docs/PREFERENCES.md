@@ -30,10 +30,10 @@ App-wide settings and **defaults** only, with one deliberate exception that name
 7. **AI** — endpoint, model, key; the small-model warning from `docs/AI.md`;
 the `ollama pull` line; the proofreading prompt behind an accordion with its do-not-edit-unless-you-know warning.
 8. **Read aloud** — voice and rate, as today.
-9. **Help** — what a bug report needs and where to send it: the version, where the program is installed, the settings folder with an "Open" button, **Copy system details**, and the pointers out (a new GitHub issue, the code and its tags, the blog where the newest manual is posted). Plus "Open the Lekhak Guide" for the manual that ships with the app. The online/offline manual switch this category was once going to hold was never built: the manual ships with the software and the blog carries the newest copy.
+9. **Help** — what a bug report needs and where to send it: the version, where the program is installed, the settings folder with an "Open" button, **Copy system details**, and the pointers out (a new GitHub issue, the code and its tags, the blog where the newest manual is posted). Plus "Open the Lekhika Guide" for the manual that ships with the app. The online/offline manual switch this category was once going to hold was never built: the manual ships with the software and the blog carries the newest copy.
 10. **Updates** — the four modes (Auto / Check / Manual / Nothing), "check now", and the recommendation note from `docs/TEMPLATES.md` §8. Manual is the default: consent first.
 11. **Metadata (this computer)** — the app-level key/value list that applies to every export unless a project overrides it (§3.1). Still to come, and not the same store as Placeholders: a key of this computer is not a key of the manuscript.
-12. **Support Lekhak** — the page the last tab owes a solo project: a one-off gift, the books I write, the newsletter, a line asking the writer to recommend the software to someone who would use it, and one link for bugs and feature requests. Every link is a real destination or it does not ship.
+12. **Support Lekhika** — the page the last tab owes a solo project: a one-off gift, the books I write, the newsletter, a line asking the writer to recommend the software to someone who would use it, and one link for bugs and feature requests. Every link is a real destination or it does not ship.
 
 ## Each category, in detail
 
@@ -59,7 +59,7 @@ the `ollama pull` line; the proofreading prompt behind an accordion with its do-
 | Updates | Auto / Check / Manual / Nothing | `update/mode` | app | Manual |
 | Updates | check now, and the recommendation note | — | app | — |
 | Metadata | key/value rows for every project | `metadata/*` | default | empty |
-| Support Lekhak | gift, books, newsletter, issues | — | app | — |
+| Support Lekhika | gift, books, newsletter, issues | — | app | — |
 
 Two notes that follow from writing it out:
 
@@ -76,6 +76,6 @@ Two notes that follow from writing it out:
 
 ## Build notes
 
-- Its **own module** (`src/lekhak/preferences.py`), not a rewrite inside `app.py` — the interruption rule (`docs/WORK-SPLIT.md`): a half-applied rebuild of a 5,000-line file breaks everything that builds against it, which is exactly what happened to MiMo's attempt. A new module plus one wiring line in `app.py` survives being cut off.
+- Its **own module** (`src/lekhika/preferences.py`), not a rewrite inside `app.py` — the interruption rule (`docs/WORK-SPLIT.md`): a half-applied rebuild of a 5,000-line file breaks everything that builds against it, which is exactly what happened to MiMo's attempt. A new module plus one wiring line in `app.py` survives being cut off.
 - Existing keys keep their names (`ui/fontSize`, `paste/*`, `ai/*`, `update/*`, `help/source`, `metadata/*`), so nothing needs migrating and the old dialog can be deleted in the same commit that adds the new one.
 - Tests: build the dialog, walk the category list, assert every category shows a page and that the known keys round-trip — no screenshots needed.

@@ -19,14 +19,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import _roundtrip_issues  # noqa: E402
-from lekhak.templates import (  # noqa: E402
+from lekhika.app import _roundtrip_issues  # noqa: E402
+from lekhika.templates import (  # noqa: E402
     BUILTIN_HTML, slot_file_path, validate_slot, write_slot,
 )
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
 
 
 class ValidateSlotTests(unittest.TestCase):

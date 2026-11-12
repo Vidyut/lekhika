@@ -19,7 +19,7 @@ So "print" is a *distinct export*, selected deliberately, not a checkbox on the 
 
 ## The cover: supported, not designed by us
 
-We do not become an art studio. What Lekhak can honestly do, as an optional future piece, is the mechanical part of print-on-demand cover preparation:
+We do not become an art studio. What Lekhika can honestly do, as an optional future piece, is the mechanical part of print-on-demand cover preparation:
 
 - place the cover image and the back image, with a **sensible spine width for the book's page count and paper**;
 - margins per the trim and bleed the vendor asks for;
@@ -28,7 +28,7 @@ We do not become an art studio. What Lekhak can honestly do, as an optional futu
 - let the writer place text fields where they want them, if that proves tractable;
 - export the result as a PDF ready to upload.
 
-It is edited and exported **separately from the interior** — two artefacts, two files — and it is explicitly optional: a future update, provided because Lekhak would like to cover the whole process, not because cover design is its competence.
+It is edited and exported **separately from the interior** — two artefacts, two files — and it is explicitly optional: a future update, provided because Lekhika would like to cover the whole process, not because cover design is its competence.
 
 ## Status
 

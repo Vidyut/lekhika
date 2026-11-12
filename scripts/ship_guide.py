@@ -1,8 +1,8 @@
 """Ship the guide: copy the working guide into the package.
 
-The guide is written in Lekhak, in one place: ``~/Documents/Lekhak
-Guide.lekhak``. This script takes that copy and puts it where the
-software ships it (``src/lekhak/guide/guide.lekhak``), so the packaged
+The guide is written in Lekhika, in one place: ``~/Documents/Lekhika
+Guide.lekhika``. This script takes that copy and puts it where the
+software ships it (``src/lekhika/guide/guide.lekhika``), so the packaged
 guide is a snapshot of the working one and never a second file the two
 of us edit apart.
 
@@ -22,10 +22,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
-WORKING = Path.home() / "Documents" / "Lekhak Guide.lekhak"
-SHIPPED = REPO / "src" / "lekhak" / "guide" / "guide.lekhak"
+WORKING = Path.home() / "Documents" / "Lekhika Guide.lekhika"
+SHIPPED = REPO / "src" / "lekhika" / "guide" / "guide.lekhika"
 
 
 def check(source: Path) -> list[str]:

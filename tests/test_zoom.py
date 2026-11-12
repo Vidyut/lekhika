@@ -21,18 +21,18 @@ from PySide6.QtCore import QMimeData, QSettings, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import (  # noqa: E402
+from lekhika.app import (  # noqa: E402
     ZOOM_ANCHOR_PT, ZOOM_MAX, ZOOM_MIN, MainWindow, scaled_font_sizes,
 )
-from lekhak.pageview import (  # noqa: E402
+from lekhika.pageview import (  # noqa: E402
     MAX_USER_SCALE, MIN_USER_SCALE, PageCanvas, fit_scale,
 )
-from lekhak.project import DEFAULT_PAGE_SETUP, Project  # noqa: E402
+from lekhika.project import DEFAULT_PAGE_SETUP, Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-test-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-test-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 

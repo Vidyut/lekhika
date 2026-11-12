@@ -8,10 +8,10 @@ from pathlib import Path
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from lekhak.markdown import (  # noqa: E402
+from lekhika.markdown import (  # noqa: E402
     markdown_from_html, markdown_to_html,
 )
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 
 class MarkdownFromHtmlTests(unittest.TestCase):
@@ -99,7 +99,7 @@ class ExportMarkdownTests(unittest.TestCase):
 
     def test_export_writes_markdown_a_human_can_reread(self):
         # Formerly an import→export→import round trip. Import is
-        # archived (lekhak-imports), so the export test stands alone:
+        # archived (lekhika-imports), so the export test stands alone:
         # headings + prose land as readable markdown.
         self._build_manuscript()
         destination = self.root / "out.md"

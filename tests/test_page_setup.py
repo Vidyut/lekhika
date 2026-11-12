@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from lekhak.project import (
+from lekhika.project import (
     DEFAULT_PAGE_SETUP, PAGE_TRIMS, Project, clean_page_setup, trim_id_for,
 )
 

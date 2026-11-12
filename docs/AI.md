@@ -1,6 +1,6 @@
-# AI in Lekhak — ways to connect, and what to expect
+# AI in Lekhika — ways to connect, and what to expect
 
-Lekhak talks to any **OpenAI-compatible** `/chat/completions` endpoint (2.4's client): an endpoint, a model name, optionally a key, all in Preferences. Two ways to use it.
+Lekhika talks to any **OpenAI-compatible** `/chat/completions` endpoint (2.4's client): an endpoint, a model name, optionally a key, all in Preferences. Two ways to use it.
 
 ## 1. A hosted model (the usual path)
 
@@ -14,13 +14,13 @@ Run a model on your own machine; nothing leaves the computer. Install [Ollama](h
 ollama pull <model-name>
 ```
 
-The default host and port are almost always correct — Lekhak expects `http://localhost:11434/v1`. Check it in Preferences if the connection misbehaves.
+The default host and port are almost always correct — Lekhika expects `http://localhost:11434/v1`. Check it in Preferences if the connection misbehaves.
 
 **Read this before you rely on it.** A local model that fits on an ordinary computer is a *very small* model, and it is offered for exactly that reason: it fits on almost any computer. The smaller the model, the more error-prone it is and the less it can usefully do. The smallest useful tier may manage nothing more than typos and simple bloopers — and that is not a small thing: fixing typos across a 100,000-word book is nothing to sneeze at. It is not to be trusted with anything unsupervised, and not for anything exotic.
 
 ## How the app should behave (decided 2026-10-21)
 
-**Do not trust the writer with the model's quirks; do the idiotproofing in the app.** When the configured model is small, Lekhak feeds the work in **paragraphs, or three or four sentences at a time, sequentially** — not the whole chapter — because we *know* long input is where it breaks. The writer presses one button; the chunking is not their problem.
+**Do not trust the writer with the model's quirks; do the idiotproofing in the app.** When the configured model is small, Lekhika feeds the work in **paragraphs, or three or four sentences at a time, sequentially** — not the whole chapter — because we *know* long input is where it breaks. The writer presses one button; the chunking is not their problem.
 
 - **"Click here to proofread."** The shipped prompt fixes typos, spelling, grammar, doubled lines, stray spaces and the like. The writer never sees it unless they want to.
 - **The prompt is editable, but folded away** behind a collapsible section whose heading recommends leaving it alone unless you know the eccentricities of small models. Sensible default, escape hatch, no footgun.
@@ -67,7 +67,7 @@ A spell dictionary helps, but writers ignore red squiggles once worldbuilding na
 
 ## No AI writes anything
 
-Two rules, both absolute. **No AI edits the manuscript** except through tracked changes the writer accepts (structural, 2.4). **No AI edits Lekhak's own code** — not a local model, not a hosted one, however capable. Advice is welcome; commits are a human act.
+Two rules, both absolute. **No AI edits the manuscript** except through tracked changes the writer accepts (structural, 2.4). **No AI edits Lekhika's own code** — not a local model, not a hosted one, however capable. Advice is welcome; commits are a human act.
 
 ## Warning text to show in Preferences
 

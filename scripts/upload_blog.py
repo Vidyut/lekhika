@@ -6,9 +6,9 @@ Reads credentials from the JSON reference file (default:
 --publish is given.
 
 Examples:
-  python scripts/upload_blog.py --title "Lekhak update" --file post.html
-  python scripts/upload_blog.py --title "Lekhak update" --file post.md --format markdown --publish
-  cat post.html | python scripts/upload_blog.py --title "Lekhak update"
+  python scripts/upload_blog.py --title "Lekhika update" --file post.html
+  python scripts/upload_blog.py --title "Lekhika update" --file post.md --format markdown --publish
+  cat post.html | python scripts/upload_blog.py --title "Lekhika update"
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def api_request(site: str, endpoint: str, creds: dict, payload: dict | None = No
     headers = {
         "Authorization": auth_header(creds),
         "Accept": "application/json",
-        "User-Agent": "Lekhak/1.0 (+https://vidyut.info/downloads/lekhak/) WordPress-REST",
+        "User-Agent": "Lekhika/1.0 (+https://vidyut.info/downloads/lekhika/) WordPress-REST",
     }
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")

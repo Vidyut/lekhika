@@ -1,0 +1,13 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html><head>
+---
+title: What survives
+kind: scene
+page_break: auto
+---
+</head><body style=" font-family:'Ubuntu Sans'; font-size:12pt; font-weight:400; font-style:normal;">
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Information that is present in the imported markdown can be brought in, but it is your responsibility to ensure the file contains what you need. Metadata included in YAML blocks can be read into fields; the rest of the content is imported as text.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">When a YAML value is read, Lekhika chooses a field type from what it sees: an ISO date becomes a <span style=" font-weight:700;">Date</span> field, <span style=" font-family:'monospace';">true</span> or <span style=" font-family:'monospace';">false</span> becomes a <span style=" font-weight:700;">Checkbox</span>, and anything else is <span style=" font-weight:700;">Text</span>. This recognition can be wrong; you can change a field's type afterwards if needed.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Some names are handled specially during import. <span style=" font-family:'monospace';">Template</span> and <span style=" font-family:'monospace';">Template config</span> are treated as design markers rather than ordinary metadata fields. <span style=" font-family:'monospace';">Type</span> is kept as the document’s role. If imported names conflict with names Lekhika reserves, the result may need adjustment after import.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Project-level keys (such as Author, Title or Copyright) fill the project's own fields only where you have not already set them. Values you have already set are kept.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Markdown import has not been robustly tested across every writing tool and export style. It is included because writers often need to bring existing projects in, but mapping one customisable tool’s export to another’s structure can be complicated. Expect to review and tweak the result, especially for heavily customised projects, and report problems on GitHub if you run into them.</p></body></html>

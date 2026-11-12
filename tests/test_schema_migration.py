@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class _NoDropConnection(sqlite3.Connection):
@@ -35,7 +35,7 @@ class _NoDropConnection(sqlite3.Connection):
 
 
 class _OldSQLite:
-    """``lekhak.project``'s view of the sqlite3 module, aged down.
+    """``lekhika.project``'s view of the sqlite3 module, aged down.
 
     Every name the project module borrows forwards to the real module;
     only ``connect`` differs, handing back the connection above.
@@ -54,7 +54,7 @@ class _OldSQLite:
 
 @contextmanager
 def _old_sqlite():
-    with mock.patch("lekhak.project.sqlite3", _OldSQLite(sqlite3)):
+    with mock.patch("lekhika.project.sqlite3", _OldSQLite(sqlite3)):
         yield
 
 

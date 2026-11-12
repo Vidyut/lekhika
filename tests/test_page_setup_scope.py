@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 SIX_BY_NINE = {"trim": "6x9", "width": 6.0, "height": 9.0,
                "top": 0.5, "bottom": 0.5, "inside": 0.5, "outside": 0.5,

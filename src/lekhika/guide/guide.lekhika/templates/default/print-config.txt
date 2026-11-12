@@ -1,0 +1,85 @@
+Docx
+# Sample configuration for DOCX and PDF. Every line below is a comment, so
+# this set changes nothing: converting a project to it keeps the export as
+# it is (A4, a page per document). Uncomment a line to use it. Each line
+# overrides the sample .docx, which overrides Page setup (TEMPLATES.md 3.1).
+#
+# Paper: W,H in inches (millimetres write as 127mm); margins: L,T,R,B or a
+# mirrored inside,outside pair.
+# Page size (inches - horizontal, vertical): 6,9
+# Margins: 0.75, 0.6
+# Mirror margins: yes
+#
+# Where chapters and scenes start: Recto, page-break.
+# New Chapter: Recto
+# New Scene: page-break
+#
+# Running heads: left, middle, right -- one piece each.
+# Header: ,{Title},
+# Footer: , ${PageNo},
+#
+# Type: family, size, line spacing, first-line indent.
+# Font: Georgia, 11pt, 1.15, 1cm
+#
+# The book is the binder: what sits above the manuscript in the folder
+# tree — a title page, a dedication, a contents page — exports before it.
+#
+# Printing from Lekhika (DOCX and PDF)
+# ===================================
+#
+# A template tells the exporter how your book is printed in three ways, in
+# escalating order — pick whichever is least work for you.
+#
+# 1. THIS CONFIG FILE (print-config.txt). Key: value lines, # for comments,
+#    and a first line that reads `Docx` — that marker is what makes the file
+#    configuration instead of a fragment. Its lines override everything below.
+#
+# 2. A SEPARATE TEMPLATE. Give the print version a set of its own and assign
+#    it: Book template in the inspector, or Template in Export Options for a
+#    single export.
+#
+# 3. A SAMPLE .docx. Drop any Word file with real page setup and styles into
+#    this folder — a vendor's formatting sample is exactly what this is for —
+#    and it supplies paper, styles, headers and footers. Lekhika keeps its
+#    formatting and ignores its text. There is one to try in examples/: move
+#    it up into this folder and it becomes your export's paper.
+#
+# Precedence, one rule: the sample supplies everything, each config line
+# overrides it, and Page setup in the inspector applies only where the
+# template is silent. With nothing at all you get A4 and a page per document.
+#
+# Lines the config understands
+# ----------------------------
+#
+#   Page size (inches - horizontal, vertical): 5,7      also A4, or 5x5
+#   Margins (L,T,R,B/I,T,O,B): 0.5, 0.3, 0.3, 0.3       four, or a mirrored pair
+#   Mirror margins: yes       or no — even pages swap inside and outside
+#   New Chapter: Recto        also: page-break, verso, flow, next-even
+#   New Scene: page-break
+#   Header: left, middle, right     and Header left / Header right for a
+#   Footer: left, middle, right     mirrored book's verso and recto heads
+#   Header: none                    this page carries no running head —
+#   Footer: none                    a title page, a dedication — where an
+#                                   empty line would keep the sample's own
+#   Header first page: none         the opening page of each section — a
+#   Footer first page: left, mid, right   chapter opener — which Word keeps
+#                                   apart from everything on this page
+#   Head font: Georgia, 9           the running heads' own family and size
+#   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
+#   Title style: Book Title         Chapter style / Scene style / Body style
+#
+# Units: inches by default, with mm / cm / in / pt suffixes. Placeholders in
+# a value are the same as in a fragment (${Title}, ${Date}, ${Author}, any
+# metadata key), with ${PageNo} for the page's own number; {Title} with
+# single braces is accepted as its alias.
+#
+# About the other files
+# ---------------------
+#
+# .html and .txt files in this folder are fragments — how one kind of thing
+# is dressed. Everything else (this file, print-config.txt, examples/) is
+# support material the exporter never prints.
+#
+# Nothing here is precious: Duplicate this set in the Templates view before
+# changing anything you might want back.
+#

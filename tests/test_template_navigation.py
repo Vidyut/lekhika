@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from lekhak.app import (
+from lekhika.app import (
     TEMPLATE_FILE_KIND,
     TEMPLATE_FOLDER_KIND,
     TEMPLATE_GROUP_KIND,
@@ -32,14 +32,14 @@ from lekhak.app import (
     TEMPLATE_SET_ROLE,
     MainWindow,
 )
-from lekhak.project import (
+from lekhika.project import (
     AMAZON_TRIMS,
     KDP_MARGIN_BANDS,
     KDP_MARGIN_MIN,
     PAGE_TRIMS,
     Project,
 )
-from lekhak.templates import (
+from lekhika.templates import (
     TEMPLATE_CONFIG_NOTE,
     TEMPLATE_NAMING_NOTE,
     TemplateSet,
@@ -49,9 +49,9 @@ from lekhak.templates import (
 )
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-template-nav-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-template-nav-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 

@@ -1,12 +1,12 @@
-# Features of Lekhak
+# Features of Lekhika
 
-A plain-language list of what Lekhak does today. Grouped by what you are trying to do, not by the menu it lives under. If a feature is listed here, it works in the current release; the "Not built yet" section at the end is honest about what does not.
+A plain-language list of what Lekhika does today. Grouped by what you are trying to do, not by the menu it lives under. If a feature is listed here, it works in the current release; the "Not built yet" section at the end is honest about what does not.
 
-Lekhak is one window, a binder on the left, the page in the middle, and an inspector on the right. Almost everything you do is a right-click or a menu away.
+Lekhika is one window, a binder on the left, the page in the middle, and an inspector on the right. Almost everything you do is a right-click or a menu away.
 
 ## 1. The guide
 
-Lekhak ships with its own manual, and a fresh install opens it: you can see what the software does before you are asked to create a project. It is the project's example document as well as the user guide — a real book, in a real project.
+Lekhika ships with its own manual, and a fresh install opens it: you can see what the software does before you are asked to create a project. It is the project's example document as well as the user guide — a real book, in a real project.
 
 - It browses and searches like any other, and **File → Export…** gives it to you as DOCX, EPUB, PDF, HTML, Markdown or plain text: keep it as a help document, or look at it to see how an export is put together.
 - It is **read-only**. It belongs to the software, and an update replaces it. **File → Save Project As…** copies it into a folder you choose, and that copy is yours to edit — the way to try the software out on a real book.
@@ -110,7 +110,7 @@ overall setup for the whole book — Author, synopsis, and your own fields. Ever
 
 ## 12. Import
 
-- **File → Import Markdown**: reads Lekhak's own export and Scrivener's markdown export. Every document becomes a folder or document; the tree is rebuilt from the file.
+- **File → Import Markdown**: reads Lekhika's own export and Scrivener's markdown export. Every document becomes a folder or document; the tree is rebuilt from the file.
 - **Metadata survives**: every key in the imported YAML becomes a metadata field — created if the project does not have it, filled if it does. `Type` is stored but does not create a new field; `Template` and `Template config` marks are never imported.
 - **Value shape picks the field type**: an ISO date becomes a Date field, true/false becomes a Checkbox, anything else Text. You can change the type afterwards.
 - **Project-level keys** (Author, Title, Copyright and the rest) fill the project's own metadata only when it has no value yet — your existing settings are never overwritten.
@@ -136,7 +136,7 @@ overall setup for the whole book — Author, synopsis, and your own fields. Ever
 
 - **Spell-check squiggles** in the editor (red wavy underlines). Toggle in Preferences or from the status bar.
 - **System dictionary** plus your own word list. Words you mark as correct are added to a per-project dictionary.
-- **Dictionary harvest**: Lekhak can scan the project and offer the words it does not know, so you can accept or reject them in batches.
+- **Dictionary harvest**: Lekhika can scan the project and offer the words it does not know, so you can accept or reject them in batches.
 
 ## 16. Preferences and appearance
 
@@ -159,7 +159,7 @@ overall setup for the whole book — Author, synopsis, and your own fields. Ever
 
 - A project is a folder: `project.sqlite3`, a tree of plain text/HTML files, `images/`, `templates/`, `trash/`. Open the folder and read it.
 - **Images** live under the project and are referenced by the manuscript.
-- **Cover** (inspector, folders only): the image the export uses for the book's cover. Left alone, Lekhak finds `images/…/cover.*` for you.
+- **Cover** (inspector, folders only): the image the export uses for the book's cover. Left alone, Lekhika finds `images/…/cover.*` for you.
 - **Recent projects** menu, populated on demand so a deleted project never offers a broken entry.
 - **Backup folder** setting, per project.
 
@@ -170,9 +170,9 @@ Honest list of what the app does not do today, so nobody is surprised:
 - **Importing anything but markdown.** There is no importer for Word, LibreOffice, yWriter, HTML or Scrivener's own `.scriv` format. The road in is markdown — export from your other tool and import it here. Metadata, fields and the tree all survive that route.
 - **AI beyond continue and proofread.** No rewriting and no summarising, and no back-and-forth conversation — **Prompt…** is one question in and one answer out. AI output always arrives as tracked changes.
 - **More template sets beyond the ones shipped.** You can duplicate and edit the shipped ones, or build your own from scratch; nothing is downloaded.
-- **Cloud sync, collaboration, or a web version.** Lekhak is a single-user desktop app; your files are yours on your disk.
+- **Cloud sync, collaboration, or a web version.** Lekhika is a single-user desktop app; your files are yours on your disk.
 - **Windows and macOS cold runs are proven less.** PDF via LibreOffice, text-to-speech (SAPI / NSSpeech) and the one-click AI install have been exercised on Linux; the code paths exist for the other platforms but have not been run there.
-- **A built-in cover designer.** Lekhak does not draw covers; supply an image and use your own tool for the rest.
+- **A built-in cover designer.** Lekhika does not draw covers; supply an image and use your own tool for the rest.
 - **Reading statistics beyond word counts.** No time-on-task, no chapter-level pacing graphs.
 - **Mobile or tablet.** Desktop only.
 

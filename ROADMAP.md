@@ -1,4 +1,4 @@
-# Lekhak roadmap
+# Lekhika roadmap
 
 Feedback and feature requests, triaged against the current MVP. Ordered by
 foundational importance, not by glamour. Items reference the code they touch.
@@ -40,22 +40,22 @@ selection gets a sibling; nothing is forced to the top level, so parallel
 roots work. Folder items get a directory icon and selecting one flips the
 central view to the corkboard. Per-document compile overrides remain open
 until 1.2/2.1.
-- "Draft" becomes a folder, not a chapter. Existing `.lekhak` projects must
+- "Draft" becomes a folder, not a chapter. Existing `.lekhika` projects must
   migrate without data loss (a kind migration plus a one-time seed rule).
 
 ### 0.2 Desktop launchers (Linux / Windows / macOS) — DONE
 **Request:** easy to launch from the desktop on every platform.
 **Implemented (2026-10-20):** `scripts/install_linux.py` (stdlib only) writes
-`~/.local/share/applications/lekhak.desktop` plus hicolor SVG/PNG icons,
+`~/.local/share/applications/lekhika.desktop` plus hicolor SVG/PNG icons,
 validates with `desktop-file-validate`, refreshes the desktop/icon caches,
 and supports `--check` / `--uninstall`; Exec prefers the checkout's `.venv`
-console script, then PATH, then `python -m lekhak`. `scripts/install_windows.ps1`
+console script, then PATH, then `python -m lekhika`. `scripts/install_windows.ps1`
 creates a Start Menu shortcut (optional `-Desktop`, `-Uninstall`) via
-pythonw + `-m lekhak`, icon from `packaging/lekhak.ico`. `scripts/install_macos.sh`
-builds a minimal `~/Applications/Lekhak.app` bundle with launcher and (when
-iconutil is available) an `.icns`. `packaging/lekhak.svg` is the source of
-truth; `scripts/render_icons.py` bakes PNG/ICO/ICNS. `python -m lekhak`
-works via `src/lekhak/__main__.py`, and `main()` sets the desktop file
+pythonw + `-m lekhika`, icon from `packaging/lekhika.ico`. `scripts/install_macos.sh`
+builds a minimal `~/Applications/Lekhika.app` bundle with launcher and (when
+iconutil is available) an `.icns`. `packaging/lekhika.svg` is the source of
+truth; `scripts/render_icons.py` bakes PNG/ICO/ICNS. `python -m lekhika`
+works via `src/lekhika/__main__.py`, and `main()` sets the desktop file
 name so GNOME/Wayland match the window to the entry.
 
 ## Phase 1 — good software
@@ -93,14 +93,14 @@ iterate in binder order as a result.
 **Request:** default template; users add more; select per chapter/scene;
 metadata tags and formatting can modulate output. Reference: peter88213/yw2html.
 
-**Implemented (2026-10-20):** `lekhak/templates.py` provides named template
+**Implemented (2026-10-20):** `lekhika/templates.py` provides named template
 sets: directories of optional slot files (`project_header`, `project_footer`,
 `chapter`, `chapter_end`, `scene`, `first_scene`, `scene_end`,
 `scene_divider`), `.html` and `.txt` variants, missing slots falling back to
 built-in defaults. Placeholder syntax is yw2html's `${...}` family:
 `${Title}`, `${Content}`, `${Synopsis}`, `${WordCount}`, `${ChapterNumber}`,
 `${SceneNumber}`, `${WordsTotal}`, `${Metadata.Key}`. Sets live under
-`<project>/templates/<name>/` or `~/.config/lekhak/templates/<name>/`; the
+`<project>/templates/<name>/` or `~/.config/lekhika/templates/<name>/`; the
 export dialog offers a dropdown, "New set…" (forks the current one) and
 "Open folder". A compile walks binder order: a chapter unit is its own text
 plus descendant scenes separated by the divider; standalone scenes export on
@@ -155,7 +155,7 @@ text keeps the existing zoom (View → Zoom In/Out, Ctrl+0).
 **Implemented (2026-10-20):** Edit → Preferences… (`Ctrl+,`) opens a dialog
 with a 8–24 pt interface-size picker and a note that the editor keeps its
 own size. The choice persists to `QSettings` (`ui/fontSize`, org/app
-"Lekhak") and is applied in `main()` *before* the window is built, so a
+"Lekhika") and is applied in `main()` *before* the window is built, so a
 fresh launch starts at the right size; the dialog applies it live too.
 
 The two footguns this had to dodge, both confirmed against a running
@@ -181,7 +181,7 @@ document's *default* font. Every stored span carries its own size, so
 nothing visibly zoomed — and the body CSS was rewritten to the zoomed
 number and saved. Auditing the author's real project found seven
 documents already stamped `body … font-size:14pt` by it (repaired to the
-12 pt anchor; originals kept in `~/Writing/LEKHAK/zoom-leak-repair-20261021`).
+12 pt anchor; originals kept in `~/Writing/LEKHIKA/zoom-leak-repair-20261021`).
 The replacement is a display factor (`ZOOM_ANCHOR_PT`,
 `scaled_font_sizes()`): the editor loads stored HTML × zoom, saves ÷ zoom,
 and each place that converts between live formats and stored ones undoes
@@ -1205,7 +1205,7 @@ Both halves are pinned by `test_a_page_printed_alone_takes_its_own_designs_paper
 (captured 2026-10-31, author's direction after the full Format Designer tour)
 
 Scrivener puts nine pages in a per-format designer. Most of what they hold is
-useful; the *panels* are not the feature, and Lekhak should not reproduce them.
+useful; the *panels* are not the feature, and Lekhika should not reproduce them.
 The author's verdict, in order: **page setup is the one handled nicely and it
 already lives as a compact control in the inspector's metadata bar — that is the
 shape to copy; the replacements table does not really work well and is not worth
@@ -1216,7 +1216,7 @@ The rule this settles: **a compile setting appears once, beside the fact it
 changes**, never as a page in a designer. Where each observed panel's
 functionality lands:
 
-| Scrivener panel | What it really holds | Where it goes in Lekhak |
+| Scrivener panel | What it really holds | Where it goes in Lekhika |
 | --- | --- | --- |
 | Page Settings | trim, margins, headers/footers, facing pages | **Already the metadata-bar Page setup control** (2.1's geometry + mirrored heads/folios). Extend that control, don't add a panel. |
 | Transformations | dumb quotes, italics↔underline, ordinals, indent-per-level | **Quotes and dashes already exist** as *Edit → Standardise text* (on the manuscript, once); the rest declined (see below). |
@@ -1261,7 +1261,7 @@ template's manifest — so the two never compete for the same switch.
 **Request:** "only internal links to documents getting published should be
 available to publish; all other internal links stripped."
 **Model:** resolved at compile time, not at write time — the editor keeps
-storing bare `[[wiki]]` markers and its `lekhak://` anchors unchanged, so a
+storing bare `[[wiki]]` markers and its `lekhika://` anchors unchanged, so a
 link's meaning depends on what the current export contains (the same
 manuscript can be whole-project for EPUB and a single chapter for a draft).
 
@@ -1326,14 +1326,14 @@ already proven by the earlier Astray migration audit, 0 warnings), one book
 at a time, structured as chapters/scenes/kinds the way the dump declares.
 The 2026-10 archived exports in `Writing/Scrivener/*.md` are stale and are
 not a source. Serves two purposes at once: the author's real corpus in
-Lekhak for daily writing, and a load fixture for exports/word counts under
+Lekhika for daily writing, and a load fixture for exports/word counts under
 real volume. Further targets: plain Markdown import (pandoc-free), yWriter 7
 `.yw7`, Scrivener `.scriv` XML as stretch. Export already covers txt/html/
 docx/epub; PDF and a clean Markdown export join it.
 **Partial (2026-10-20): Scrivener dump import is done.**
-`lekhak/importer.py` parses the `===DOCUMENT===` format (blank-line header
+`lekhika/importer.py` parses the `===DOCUMENT===` format (blank-line header
 fields, multi-line Synopsis values recognised by a known-key whitelist,
-markdown-ish bodies converted to the rich text Lekhak stores: paragraphs,
+markdown-ish bodies converted to the rich text Lekhika stores: paragraphs,
 `*em*`, `**strong**`, `#` headings) and places documents with an
 ancestor-stack walk — parent-by-title is safe because the dump is
 depth-first binder order, verified against the full 326-document corpus
@@ -1590,7 +1590,7 @@ to built-ins. Whole-folder duplication is unchanged.
 **The `default` slot**: `discover_template_sets` seeds only the shipped
 three, so a project folder named `default` (or `short story`, or `no
 export`, any case) is listed *after* them as a row of its own, under its
-folder name — its files never hidden, the top slot still Lekhak's.
+folder name — its files never hidden, the top slot still Lekhika's.
 `named_template_sets` keeps the *name* `default` meaning the shipped set,
 while the export dialog's picker (which carries the set itself) can still
 pick the folder; the book-template combo dedupes identical names.
@@ -1752,7 +1752,7 @@ Takes out all the guesswork."*; page-count ranges first *"as a config
 comment"*, then retracted — *"You just need the trim size... No need for
 the comment even"*; and the KDP margin table with *"And this is for
 margins"* — both questions later answered as **recommended**: a full
-KDP margin line per band, and **no bleed** variant (Lekhak sets none).
+KDP margin line per band, and **no bleed** variant (Lekhika sets none).
 
 **What stands** (`project.py`, `templates.py`, `app.py`): `PAGE_TRIMS`
 gains `5.06x7.81` so the Amazon list is complete there too;
@@ -1886,7 +1886,7 @@ fixed); every file parses as Python 3.9.
 ### 2.4i EPUB names the author — DONE (2026-10-29)
 
 While exporting *A Fictional Book* as a 6 × 9 book (a new project
-imported from the Scrivener compile in `~/Writing/LEKHAK/`, with a
+imported from the Scrivener compile in `~/Writing/LEKHIKA/`, with a
 simple `6x9 book` template set — `Page size: 6,9` and KDP's 0.625 in
 gutter for a ~430-page novel — in its `print-config.txt`), the
 verification pass found the DOCX title page carrying the project's
@@ -1927,7 +1927,7 @@ search/count caches, the lock. Reasons, in the author's own priorities:
   he refuses to map.
 
 So `docs/STORAGE.md` (decided 2026-10-25) is the target, confirmed:
-folders are directories with `.lekhak/folder.yaml` (id, Type, page
+folders are directories with `.lekhika/folder.yaml` (id, Type, page
 setup, child order), documents are slug-named HTML with frontmatter
 (title, id, type, synopsis, target, metadata keys), SQLite is a
 rebuildable cache. Nothing about titles is stored twice-and-differently:
@@ -1989,7 +1989,7 @@ written, and the writer is told rather than losing the words quietly.
 **Implemented (2026-10-20):** one commit (`4fd24b5`). Speak menu:
 Read Aloud (F8) speaks the selection, else the whole scene; Pause /
 Resume (F9); Stop. Qt's `QTextToSpeech` behind a thin `SpeechReader`
-(`src/lekhak/tts.py`) — the `speechd` engine when the system has it
+(`src/lekhika/tts.py`) — the `speechd` engine when the system has it
 (speech-dispatcher + espeak-ng are installed on the author's machine:
 420 voices), any other engine as fallback, a status-bar message when
 none exists. Built lazily on first use so the speechd handshake never
@@ -2010,7 +2010,7 @@ Anything above that didn't earn a slot gets collected here as it arrives.
 
 **Instructions and GitHub release (captured 2026-10-20, not scheduled).**
 Author: "At some point, we should write instructions for it and release
-it onto github I guess." A README (what Lekhak is, install, first
+it onto github I guess." A README (what Lekhika is, install, first
 project, the export formats and what each is for), a short user guide
 for the menus the roadmap's features created, and a public repo push —
 decide license, repo name and what to do about the test fixtures that
@@ -2038,7 +2038,7 @@ default Letter box export uses. Mirrored books alternate recto/verso
 per sheet with the gutter on the inside; fit-to-window scaling runs
 0.15–1.0×. Dblclick on the paper jumps to the editor at the same
 character offset (both sides share one HTML source, so offsets map).
-**Implemented (2026-10-21):** `src/lekhak/pageview.py` (pure geometry
+**Implemented (2026-10-21):** `src/lekhika/pageview.py` (pure geometry
 helpers, `PageCanvas`, `PageScrollArea`, `PageView`), the Project
 helper, and the second tab between Editor and Corkboard — refresh on
 tab show and selection change, status line reporting pages and trim.
@@ -2075,7 +2075,7 @@ is a decision for when this gets scheduled.
 
 - The project format stays transparent: **the filesystem is the structure** —
   documents are HTML files carrying YAML frontmatter, folders are directories
-  with a hidden `.lekhak/folder.yaml`, and SQLite is a rebuildable cache — all
+  with a hidden `.lekhika/folder.yaml`, and SQLite is a rebuildable cache — all
   per `docs/STORAGE.md`, decided 2026-10-25. That decision supersedes the
   "metadata is SQLite" clause, which was **never the author's**: it arrived in
   `7cbc683` (2026-10-20, an AI-drafted roadmap pass, "Codex's MVP baseline")
@@ -2127,7 +2127,7 @@ is a decision for when this gets scheduled.
   — `Templates` as a reserved folder name is the clearest case — it is said
   once, in one place, and only then.
 - **Platforms are community-found (author, 2026-11-11).** Launchers exist for
-  Linux, Windows and macOS, but Lekhak is free GPL software built by one person
+  Linux, Windows and macOS, but Lekhika is free GPL software built by one person
   on Linux. No pre-release run happens on Windows or macOS: a platform bug is
   found by a writer, reported, and fixed then. Likewise no synthetic
   five-hundred-document project — the author's own projects are the scale that

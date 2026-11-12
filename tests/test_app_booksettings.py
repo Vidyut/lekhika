@@ -17,18 +17,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
-from lekhak.app import (  # noqa: E402
+from lekhika.app import (  # noqa: E402
     ExportOptionsDialog, MainWindow,
 )
-from lekhak.project import Project  # noqa: E402
-from lekhak.templates import (  # noqa: E402
+from lekhika.project import Project  # noqa: E402
+from lekhika.templates import (  # noqa: E402
     create_template_set, discover_template_sets,
 )
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-book-settings-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-book-settings-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -295,7 +295,7 @@ class BookSettingsTests(unittest.TestCase):
         destination = Path(self.temporary.name) / "whole.txt"
         with patch.object(ExportOptionsDialog, "exec",
                           return_value=QDialog.Accepted), \
-                patch("lekhak.app.QFileDialog.getSaveFileName",
+                patch("lekhika.app.QFileDialog.getSaveFileName",
                       return_value=(str(destination), "")):
             self.window.export("text")
 
@@ -315,7 +315,7 @@ class BookSettingsTests(unittest.TestCase):
         destination = Path(self.temporary.name) / "book.txt"
         with patch.object(ExportOptionsDialog, "exec",
                           return_value=QDialog.Accepted), \
-                patch("lekhak.app.QFileDialog.getSaveFileName",
+                patch("lekhika.app.QFileDialog.getSaveFileName",
                       return_value=(str(destination), "")):
             self.window.export("text")
 
@@ -349,7 +349,7 @@ class BookSettingsTests(unittest.TestCase):
         self.assertTrue(self.window.link_policy_label.isHidden())
 
     def test_preferences_offer_the_app_link_default(self):
-        from lekhak.app import PreferencesDialog
+        from lekhika.app import PreferencesDialog
 
         # Preferences edits the app-level default only; the project's
         # own setting (per-book, inspector) must not be touched either

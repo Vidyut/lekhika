@@ -19,13 +19,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyle  # noqa: E402
 
-from lekhak.app import FOLDER_ROLE, MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika.app import FOLDER_ROLE, MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-tree-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-tree-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -33,7 +33,7 @@ class BinderTreeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Project.create(
-            Path(self.temporary.name) / "Novel.lekhak", "Novel")
+            Path(self.temporary.name) / "Novel.lekhika", "Novel")
         self.root = self.project.documents()[0]
         self.chapter = self.project.add_document("A Chapter", self.root.id,
                                                   "chapter")
@@ -186,7 +186,7 @@ class ContentPathTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Project.create(
-            Path(self.temporary.name) / "Novel.lekhak", "Novel")
+            Path(self.temporary.name) / "Novel.lekhika", "Novel")
 
     def tearDown(self):
         self.project.close()

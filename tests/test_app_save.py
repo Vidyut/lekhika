@@ -23,13 +23,13 @@ from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import Project  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-save-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-save-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
 
@@ -76,7 +76,7 @@ class SaveFailureTests(unittest.TestCase):
     # -- the contract -----------------------------------------------------
 
     def test_save_current_reports_failure(self):
-        with patch("lekhak.app.QMessageBox.critical"), self._failing_write():
+        with patch("lekhika.app.QMessageBox.critical"), self._failing_write():
             self.assertFalse(self.window.save_current())
 
     def test_save_current_reports_success_normally(self):
@@ -92,7 +92,7 @@ class SaveFailureTests(unittest.TestCase):
         self.window.editor.setPlainText("unsaved words")
         original = self.window.tree.currentItem()
 
-        with patch("lekhak.app.QMessageBox.critical"), self._failing_write():
+        with patch("lekhika.app.QMessageBox.critical"), self._failing_write():
             self.window.tree.setCurrentItem(
                 _find_item(self.window.tree, self.other.id))
 
@@ -104,7 +104,7 @@ class SaveFailureTests(unittest.TestCase):
     def test_a_failed_save_cancels_a_project_switch(self):
         elsewhere = Project.create(Path(self.temporary.name) / "Second", "Second")
         try:
-            with patch("lekhak.app.QMessageBox.critical"), self._failing_write():
+            with patch("lekhika.app.QMessageBox.critical"), self._failing_write():
                 self.window._switch_project(elsewhere)
             self.assertIs(self.window.project, self.project)
             # the old project stays open rather than being closed under it
@@ -113,7 +113,7 @@ class SaveFailureTests(unittest.TestCase):
             elsewhere.close()
 
     def test_a_failed_save_cancels_the_backup(self):
-        with patch("lekhak.app.QMessageBox.critical"), \
+        with patch("lekhika.app.QMessageBox.critical"), \
                 patch.object(type(self.project), "backup") as backup, \
                 self._failing_write():
             self.window.manual_save()
@@ -122,8 +122,8 @@ class SaveFailureTests(unittest.TestCase):
 
     def test_close_is_refused_when_the_save_fails(self):
         event = QCloseEvent()
-        with patch("lekhak.app.QMessageBox.critical"), \
-                patch("lekhak.app.QMessageBox.warning",
+        with patch("lekhika.app.QMessageBox.critical"), \
+                patch("lekhika.app.QMessageBox.warning",
                       return_value=QMessageBox.No), self._failing_write():
             self.window.closeEvent(event)
 
@@ -132,16 +132,16 @@ class SaveFailureTests(unittest.TestCase):
 
     def test_close_proceeds_when_the_writer_insists(self):
         event = QCloseEvent()
-        with patch("lekhak.app.QMessageBox.critical"), \
-                patch("lekhak.app.QMessageBox.warning",
+        with patch("lekhika.app.QMessageBox.critical"), \
+                patch("lekhika.app.QMessageBox.warning",
                       return_value=QMessageBox.Yes), self._failing_write():
             self.window.closeEvent(event)
 
         self.assertTrue(event.isAccepted())
 
     def test_export_cancels_when_the_save_fails(self):
-        with patch("lekhak.app.QMessageBox.critical"), \
-                patch("lekhak.app.QFileDialog.getSaveFileName") as chooser, \
+        with patch("lekhika.app.QMessageBox.critical"), \
+                patch("lekhika.app.QFileDialog.getSaveFileName") as chooser, \
                 self._failing_write():
             self.window.export("text")
 

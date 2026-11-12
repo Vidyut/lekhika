@@ -11,14 +11,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class LockTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Project.create(
-            Path(self.temporary.name) / "Novel.lekhak", "Novel")
+            Path(self.temporary.name) / "Novel.lekhika", "Novel")
         self.root = self.project.documents()[0]
         self.book = self.project.add_document("Book One", self.root.id,
                                               "folder")

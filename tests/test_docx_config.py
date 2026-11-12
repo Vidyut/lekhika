@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import (
+from lekhika.project import (
     Project,
     TEMPLATE_CONFIG_KEY,
     TEMPLATE_DOC_PREFIX,
@@ -19,7 +19,7 @@ from lekhak.project import (
     config_page_size,
     page_break_value,
 )
-from lekhak.templates import (
+from lekhika.templates import (
     TemplateSet,
     create_template_set,
     parse_docx_config,

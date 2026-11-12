@@ -1,7 +1,7 @@
 """1.11 paragraph styles: seeds, capture, persistence — offscreen GUI.
 
 QSettings is redirected into a temp dir (same contract as the resume and
-paste tests) so the suite never touches the user's real Lekhak
+paste tests) so the suite never touches the user's real Lekhika
 configuration. Windows are never closed() — closeEvent would save into a
 possibly-closed project and hang an offscreen run.
 """
@@ -20,21 +20,21 @@ from PySide6.QtGui import (  # noqa: E402
     QFont, QTextBlockFormat, QTextCharFormat, QTextCursor)
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import (  # noqa: E402
+from lekhika.app import (  # noqa: E402
     DEFAULT_CSS_FILENAME, NEW_STYLE_COMMAND, SEED_STYLES,
     UPDATE_STYLE_COMMAND, MainWindow, capture_paragraph_signature,
     default_style_text, parse_default_style,
 )
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 # The style box's own capture commands trail the styles (2.4h).
 STYLE_COMMAND_TEXTS = ("+ New style from paragraph…",
                        "Update style from paragraph…")
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-style-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-style-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
@@ -377,7 +377,7 @@ class StyleTests(unittest.TestCase):
         self._apply("Title")
         box = self.window.style_box
 
-        with patch("lekhak.app.QInputDialog.getText",
+        with patch("lekhika.app.QInputDialog.getText",
                    return_value=("Shout", True)), \
              patch.object(self.window, "_approve_style_signature",
                           side_effect=lambda name, sig: sig):
@@ -395,7 +395,7 @@ class StyleTests(unittest.TestCase):
         self._apply("Title")
         box = self.window.style_box
 
-        with patch("lekhak.app.QInputDialog.getText",
+        with patch("lekhika.app.QInputDialog.getText",
                    return_value=("", False)):
             box.activated.emit(box.findData(NEW_STYLE_COMMAND))
 

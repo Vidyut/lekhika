@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project, config_geometry
-from lekhak.templates import (
+from lekhika.project import Project, config_geometry
+from lekhika.templates import (
     TemplateSet, copy_template_file, create_template_set,
     discover_template_sets, document_template_stem, parse_docx_config,
     validate_slot, write_config_line,
@@ -234,7 +234,7 @@ class CopyTemplateFileTests(unittest.TestCase):
 
     The author set both halves directly: the copy appears in the
     Templates folder as a *sibling* — "Not Templates > Default" — and it
-    holds just that one file, everything else falling back to Lekhak's
+    holds just that one file, everything else falling back to Lekhika's
     built-ins, which is what lets a set carry a single template and still
     export every format (§1.3).
     """

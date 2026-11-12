@@ -1,11 +1,11 @@
 """A fragment on disk is whatever the editor saved (docs/TEMPLATES.md §1.2).
 
-Files are the truth and any editor may write them — Lekhak's own HTML
+Files are the truth and any editor may write them — Lekhika's own HTML
 editor most of all, which saves a full Qt document (``<html><head>`` with
 a stylesheet, a ``<body>`` with a font, ``<span>`` around touched runs).
 The compile reads a fragment out of all that: body content, no spans. One
 rule, no per-source handling, because writers paste from browsers and word
-processors just as happily as they save from Lekhak.
+processors just as happily as they save from Lekhika.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from lekhak.project import Project
-from lekhak.templates import (
+from lekhika.project import Project
+from lekhika.templates import (
     BUILTIN_HTML,
     TemplateSet,
     create_template_set,

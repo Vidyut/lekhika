@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.layout import has_prose
-from lekhak.project import Project
+from lekhika.layout import has_prose
+from lekhika.project import Project
 
 
 def _flatten(nodes):
@@ -29,7 +29,7 @@ def _flatten(nodes):
 class ProjectTreeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        root = Path(self.temporary.name) / "Series.lekhak"
+        root = Path(self.temporary.name) / "Series.lekhika"
         self.project = Project.create(root, "Series")
         # A book folder -> a chapter with its own prose and two scenes,
         # plus an empty chapter and a loose scene with metadata — the shapes
@@ -159,7 +159,7 @@ class ProjectTreeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "tree"
             self.project.write_tree(destination)
-            manifest = (destination / "Book-One" / ".lekhak" / "folder.yaml"
+            manifest = (destination / "Book-One" / ".lekhika" / "folder.yaml"
                         ).read_text(encoding="utf-8")
             self.assertIn("page_setup:", manifest)
             self.assertNotIn("is_template", manifest)   # the mark is gone
@@ -178,7 +178,7 @@ class ProjectTreeTests(unittest.TestCase):
         """Validation is clean_page_setup's job, not the loader's: junk is
         rejected where everything else rejects it, never dropped on the way
         in (which would hide it from the writer who put it there)."""
-        from lekhak.layout import Node, load_tree, write_tree
+        from lekhika.layout import Node, load_tree, write_tree
         folder = Node(id="f1", title="Book", kind="folder",
                       page_setup={"width": "nonsense"},
                       children=[Node(id="d1", title="Scene", kind="document")])
@@ -187,7 +187,7 @@ class ProjectTreeTests(unittest.TestCase):
             write_tree(root, [folder], title="T")
             nodes = load_tree(root)[0]
             self.assertEqual(nodes[0].page_setup, {"width": "nonsense"})
-            from lekhak.project import clean_page_setup
+            from lekhika.project import clean_page_setup
             self.assertIsNone(clean_page_setup(nodes[0].page_setup))
 
 
@@ -197,7 +197,7 @@ class FlattenPromotedBooksTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Project.create(
-            Path(self.temporary.name) / "Corpus.lekhak", "Corpus")
+            Path(self.temporary.name) / "Corpus.lekhika", "Corpus")
         # The old import's shape: a book folder wrapping a same-named
         # chapter that holds the real chapters, with the title-page prose on
         # the wrapper.
@@ -245,7 +245,7 @@ class UnwrapFolderTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Project.create(
-            Path(self.temporary.name) / "Corpus.lekhak", "Corpus")
+            Path(self.temporary.name) / "Corpus.lekhika", "Corpus")
         self.shelf = self.project.add_document("Manuscript", kind="folder")
         self.book_a = self.project.add_document("Book A", self.shelf.id, "folder")
         self.book_b = self.project.add_document("Book B", self.shelf.id, "folder")

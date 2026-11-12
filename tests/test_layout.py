@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak import layout
-from lekhak.layout import Node
+from lekhika import layout
+from lekhika.layout import Node
 
 
 class SlugTests(unittest.TestCase):
@@ -160,7 +160,7 @@ class ProseTests(unittest.TestCase):
 
     def test_a_title_only_container_gets_no_index_html(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "P.lekhak"
+            root = Path(temporary) / "P.lekhika"
             node = Node(id="x", title="Prologue", kind="folder",
                         content="<p><b>Prologue</b></p>",
                         children=[Node(id="y", title="Scene", content="<p>t</p>")])
@@ -171,7 +171,7 @@ class ProseTests(unittest.TestCase):
 class TreeRoundTripTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name) / "Project.lekhak"
+        self.root = Path(self.temporary.name) / "Project.lekhika"
         # Deliberately *not* in alphabetical order, so a test can prove that
         # nothing sorts by name: these would sort 1, 10, 2.
         self.scenes = [
@@ -250,7 +250,7 @@ class TreeRoundTripTests(unittest.TestCase):
         """Reorder the manifest by hand and the tree follows — proof that
         filenames are not consulted for order."""
         self._write()
-        manifest = self.root / "A-Book/Chapter-One/.lekhak/folder.yaml"
+        manifest = self.root / "A-Book/Chapter-One/.lekhika/folder.yaml"
         text = manifest.read_text(encoding="utf-8")
         text = text.replace("  - 1-One-leaves.html\n", "")
         text = text.replace("children:\n",

@@ -14,9 +14,9 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from lekhak import guide
-from lekhak.project import Project
-from lekhak.templates import SHIPPED_TEMPLATE_SETS, discover_template_sets
+from lekhika import guide
+from lekhika.project import Project
+from lekhika.templates import SHIPPED_TEMPLATE_SETS, discover_template_sets
 
 
 class GuideTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class GuideTests(unittest.TestCase):
         # It is a project: the index, the manifest, and the book itself.
         self.assertTrue((source / "project.sqlite3").is_file())
         self.assertTrue((source / "manifest.json").is_file())
-        self.assertTrue((source / "The Lekhak Guide").is_dir())
+        self.assertTrue((source / "The Lekhika Guide").is_dir())
 
     def test_the_guide_is_not_copied_anywhere(self):
         # A program that leaves files behind is a program people try once.
@@ -76,7 +76,7 @@ class GuideTests(unittest.TestCase):
         # every copy of it — the writer's own copy included — and lock
         # that too. The read-only open is what keeps the guide read-only.
         source = guide.source_project()
-        self.assertFalse((source / "The Lekhak Guide" / ".locked").exists())
+        self.assertFalse((source / "The Lekhika Guide" / ".locked").exists())
         project = Project(source, read_only=True)
         project.open()
         try:
@@ -89,7 +89,7 @@ class GuideTests(unittest.TestCase):
             project.close()
 
     def test_the_guides_own_templates_sit_beside_the_shipped_ones(self):
-        # The guide's set now ships with Lekhak — it is the worked
+        # The guide's set now ships with Lekhika — it is the worked
         # example of a set dressed by a manual's own Types — and the
         # read-only guide still carries a folder copy of it, exactly as
         # it carries a copy of every shipped set. The shipped one comes
@@ -116,13 +116,13 @@ class GuideTests(unittest.TestCase):
         # pages — and the guide's own face — never reach the wheel, where
         # they cannot be read because they are not there at all.
         source = guide.source_project()
-        package = source.parents[1]                  # the lekhak package
+        package = source.parents[1]                  # the lekhika package
         pyproject = package.parent.parent / "pyproject.toml"
         if not pyproject.is_file():
             self.skipTest("no repository around to read it from")
         patterns = tomllib.loads(
             pyproject.read_text(encoding="utf-8")
-        )["tool"]["setuptools"]["package-data"]["lekhak"]
+        )["tool"]["setuptools"]["package-data"]["lekhika"]
         covered = {Path(match) for pattern in patterns
                    for match in glob.glob(str(package / pattern))}
         files = {path for path in source.rglob("*") if path.is_file()}
@@ -140,7 +140,7 @@ class GuideTests(unittest.TestCase):
         project = Project(source, read_only=True)
         project.open()
         try:
-            copy = project.copy_to(self.root / "Mine.lekhak")
+            copy = project.copy_to(self.root / "Mine.lekhika")
         finally:
             project.close()
         copy_project = Project(copy)
@@ -154,7 +154,7 @@ class GuideTests(unittest.TestCase):
 
     def test_the_shipped_copy_can_be_edited_in_the_development_checkout(self):
         # The guide in the repository is a regular project: the author
-        # opens it and writes it in Lekhak, and the build ships it.
+        # opens it and writes it in Lekhika, and the build ships it.
         source = guide.source_project()
         project = Project(source)
         project.open()

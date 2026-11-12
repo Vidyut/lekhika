@@ -13,7 +13,7 @@ from pathlib import Path
 
 from docx import Document as DocxDocument
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class ProseShortcodeTests(unittest.TestCase):

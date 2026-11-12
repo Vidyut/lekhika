@@ -7,9 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.cover import (compute_sizes, estimate_pages, compose_cover_pdf,
+from lekhika.cover import (compute_sizes, estimate_pages, compose_cover_pdf,
                           spine_width_inches)
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 def _project(tmp: str) -> tuple[Project, object]:

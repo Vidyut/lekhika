@@ -20,18 +20,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEvent, QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from lekhak.app import MainWindow  # noqa: E402
-from lekhak.project import (  # noqa: E402
+from lekhika.app import MainWindow  # noqa: E402
+from lekhika.project import (  # noqa: E402
     TEMPLATE_CONFIG_KEY, TEMPLATE_DOC_PREFIX, TEMPLATE_FILE_PREFIX,
     Project,
 )
-from lekhak.templates import BUILTIN_PLACEHOLDERS  # noqa: E402
+from lekhika.templates import BUILTIN_PLACEHOLDERS  # noqa: E402
 from html import escape  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-templates-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-templates-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
@@ -43,7 +43,7 @@ class TemplateDocumentTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "Novel"
         self.project = Project.create(self.root, "Novel")
-        # The project's own root: create() gives it a .lekhak suffix.
+        # The project's own root: create() gives it a .lekhika suffix.
         self.root = self.project.root
         self.folder = self.project.documents()[0]      # Draft, kind "folder"
         self.scene = self.project.add_document(
@@ -144,7 +144,7 @@ class TemplateInspectorTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "Novel"
         self.project = Project.create(self.root, "Novel")
-        # The project's own root: create() gives it a .lekhak suffix.
+        # The project's own root: create() gives it a .lekhika suffix.
         self.root = self.project.root
         self.folder = self.project.documents()[0]      # Draft, kind "folder"
         self.scene = self.project.add_document(
@@ -718,14 +718,14 @@ class TemplateCreationTests(unittest.TestCase):
         self._template_folder()
         self.window.add_chapter()
         self.window.template_config_box.setPlainText(
-            "Head font: Lekhak Test Face, 9\n")
+            "Head font: Lekhika Test Face, 9\n")
 
         self.assertEqual(self.window.head_font_box.currentText(),
-                         "Lekhak Test Face")
+                         "Lekhika Test Face")
 
         self.window.head_size_box.setValue(10)
 
-        self.assertIn("Head font: Lekhak Test Face, 10",
+        self.assertIn("Head font: Lekhika Test Face, 10",
                       self.window.template_config_box.toPlainText())
 
     def test_a_name_from_the_reference_page_lands_in_the_active_box(self):

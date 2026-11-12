@@ -1,12 +1,12 @@
-# Installs a Lekhak shortcut into the current user's Start Menu (and
+# Installs a Lekhika shortcut into the current user's Start Menu (and
 # optionally the Desktop). No admin rights needed.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1 -Desktop
 #   powershell ... -Uninstall
 #
-# The shortcut runs the checkout's .venv interpreter with `-m lekhak`
-# (pythonw.exe, so no console window appears), falling back to a `lekhak`
+# The shortcut runs the checkout's .venv interpreter with `-m lekhika`
+# (pythonw.exe, so no console window appears), falling back to a `lekhika`
 # command already on PATH.
 
 param(
@@ -15,24 +15,24 @@ param(
 )
 
 $repo = Split-Path -Parent $PSScriptRoot
-$icon = Join-Path $repo "packaging\lekhak.ico"
+$icon = Join-Path $repo "packaging\lekhika.ico"
 
 function Find-Launcher {
     $pythonw = Join-Path $repo ".venv\Scripts\pythonw.exe"
     if (Test-Path $pythonw) {
-        return @{ Target = $pythonw; Arguments = "-m lekhak" }
+        return @{ Target = $pythonw; Arguments = "-m lekhika" }
     }
-    $console = Get-Command lekhak -ErrorAction SilentlyContinue
+    $console = Get-Command lekhika -ErrorAction SilentlyContinue
     if ($console) {
         return @{ Target = $console.Source; Arguments = "" }
     }
-    Write-Error ("No Lekhak launcher found. Install it first:`n" +
+    Write-Error ("No Lekhika launcher found. Install it first:`n" +
         "  py -3 -m venv `"$repo\.venv`"`n" +
         "  `"$repo\.venv\Scripts\pip`" install -e `"$repo`"")
     exit 1
 }
 
-function New-LekhakShortcut([string]$path, $launcher) {
+function New-LekhikaShortcut([string]$path, $launcher) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($path)
     $shortcut.TargetPath = $launcher.Target
@@ -46,16 +46,16 @@ function New-LekhakShortcut([string]$path, $launcher) {
 
 $programs = [Environment]::GetFolderPath("Programs")  # Start Menu
 $shortcuts = @(
-    (Join-Path $programs "Lekhak.lnk"),
-    (Join-Path ([Environment]::GetFolderPath("Desktop")) "Lekhak.lnk")
+    (Join-Path $programs "Lekhika.lnk"),
+    (Join-Path ([Environment]::GetFolderPath("Desktop")) "Lekhika.lnk")
 )
 if (-not $Desktop) { $shortcuts = @($shortcuts[0]) }
 
 if ($Uninstall) {
     $found = $false
     foreach ($path in @(
-        (Join-Path $programs "Lekhak.lnk"),
-        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Lekhak.lnk")
+        (Join-Path $programs "Lekhika.lnk"),
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Lekhika.lnk")
     )) {
         if (Test-Path $path) {
             Remove-Item $path
@@ -68,7 +68,7 @@ if ($Uninstall) {
 }
 
 if (-not (Test-Path $icon)) {
-    Write-Warning "packaging\lekhak.ico missing - shortcut will use a generic icon"
+    Write-Warning "packaging\lekhika.ico missing - shortcut will use a generic icon"
 }
 $launcher = Find-Launcher
-foreach ($path in $shortcuts) { New-LekhakShortcut $path $launcher }
+foreach ($path in $shortcuts) { New-LekhikaShortcut $path $launcher }

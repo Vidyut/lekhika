@@ -1,10 +1,10 @@
-# How Lekhak thinks about your project
+# How Lekhika thinks about your project
 
 ## Folders and documents
 
 A project has exactly two kinds of thing in it: **folders** and **documents**. Folders group. Documents hold your words.
 
-Lekhak does not call them anything else. Because writers structure books, series and research differently, we do not ship categories like "chapter" or "note" baked into the structure. A folder is a folder. What it *is* — a book, a chapter, Part One, a pile of research, a wiki of characters and locations — is decided by you, in the panel on the right. The software will format and publish exactly the structure you built.
+Lekhika does not call them anything else. Because writers structure books, series and research differently, we do not ship categories like "chapter" or "note" baked into the structure. A folder is a folder. What it *is* — a book, a chapter, Part One, a pile of research, a wiki of characters and locations — is decided by you, in the panel on the right. The software will format and publish exactly the structure you built.
 
 ## Roles come from Type
 
@@ -31,7 +31,7 @@ Type is free text. The names above are suggestions. Templates and exports use wh
 > Capturing absolute formatting instead would make every character style
 > an accidental copy of its paragraph and drift over time.
 
-**Cardinal sin: a paragraph style never overwrites manually applied italics/bold/underline/colour.** Applying a paragraph touches layout (indent/alignment/spacing) and at most the paragraph's base family/size — it never merges char formats onto runs. Only a *character* style, which the writer explicitly applies to a selection, may change italics/bold/ underline/colour. That's the same deliberate middle path as paste: we drop indents and paragraph skin but cherish the accents writers put there on purpose. Most software either pastes everything or strips everything; Lekhak keeps the middle.
+**Cardinal sin: a paragraph style never overwrites manually applied italics/bold/underline/colour.** Applying a paragraph touches layout (indent/alignment/spacing) and at most the paragraph's base family/size — it never merges char formats onto runs. Only a *character* style, which the writer explicitly applies to a selection, may change italics/bold/ underline/colour. That's the same deliberate middle path as paste: we drop indents and paragraph skin but cherish the accents writers put there on purpose. Most software either pastes everything or strips everything; Lekhika keeps the middle.
 
 ## Keeping something out of the printed book
 

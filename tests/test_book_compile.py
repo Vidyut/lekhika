@@ -6,8 +6,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from lekhak.project import Project
-from lekhak.templates import TemplateSet, create_template_set
+from lekhika.project import Project
+from lekhika.templates import TemplateSet, create_template_set
 
 
 class BookCompileTests(unittest.TestCase):

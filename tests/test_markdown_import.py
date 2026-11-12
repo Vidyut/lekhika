@@ -1,4 +1,4 @@
-"""Markdown import — Lekhak's own export, and Scrivener's, metadata intact.
+"""Markdown import — Lekhika's own export, and Scrivener's, metadata intact.
 
 The point of the importer is that a writer's metadata is data, not
 decoration: every key becomes a field or fills one, and nothing but the
@@ -12,7 +12,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 
 class MarkdownImportTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class MarkdownImportTests(unittest.TestCase):
         project = project or self.project
         return {document.title: document for document in project.documents()}
 
-    def test_lekhak_export_round_trip_keeps_structure_and_metadata(self):
+    def test_lekhika_export_round_trip_keeps_structure_and_metadata(self):
         draft = self.project.documents()[0]
         folder = self.project.add_document("Novel", draft.id, "folder")
         chapter = self.project.add_document("The War", folder.id, "chapter")

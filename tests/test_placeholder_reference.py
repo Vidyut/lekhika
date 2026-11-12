@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lekhak.project import Project, _spelled_position
+from lekhika.project import Project, _spelled_position
 
 
 class PositionPlaceholderTests(unittest.TestCase):

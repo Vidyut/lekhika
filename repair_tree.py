@@ -22,8 +22,8 @@ deleted), the ghost's own prose — if it has any — is kept as the
 container's index when the container has none, and the backup is taken
 before anything moves.
 
-    python repair_tree.py <project.lekhak>           # a report
-    python repair_tree.py <project.lekhak> --apply   # and the repair
+    python repair_tree.py <project.lekhika>           # a report
+    python repair_tree.py <project.lekhika> --apply   # and the repair
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 
 def ghosts(project: Project) -> list[tuple[str, Path]]:
@@ -92,8 +92,8 @@ def main() -> int:
     arguments = parser.parse_args()
 
     root = arguments.project
-    if root.suffix != ".lekhak":
-        root = root.with_suffix(".lekhak")
+    if root.suffix != ".lekhika":
+        root = root.with_suffix(".lekhika")
     project = Project(root)
     project.open()
 

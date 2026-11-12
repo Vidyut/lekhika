@@ -1,0 +1,13 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html><head>
+---
+title: The tree
+kind: scene
+page_break: auto
+---
+</head><body style=" font-family:'Ubuntu Sans'; font-size:12pt; font-weight:400; font-style:normal;">
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Markdown import works best when the file already expresses structure. A single file exported in the correct order is easier to bring in than many separate pieces: Lekhika can read nested headings, split the document into sections, and place those sections into the binder as a tree.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Headings and document structure in the file are used to infer chapters, scenes and containers. When a scene in an export does not state a parent, it may be placed under the chapter before it, in the order the export wrote. The exact result depends on how clearly the source export marks structure, so some rearranging may still be needed after import.</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">If you want metadata to travel with the text, include it in a YAML block where it belongs. For example, to keep per-scene notes from another tool, you can export or add a block like this before the scene text:</p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-family:'monospace';">---<br />Characters: Tom, Dick, Harry<br />Location: Fantasy Land<br />Magical item: wand, unicorn<br />---</span></p>
+<p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">Lekhika can read those keys as metadata fields for the imported document or scene. The key is to make sure the information you care about is actually written into the markdown you export, not only stored inside the original application.</p></body></html>

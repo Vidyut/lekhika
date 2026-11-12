@@ -12,7 +12,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from lekhak.project import Project
+from lekhika.project import Project
 
 
 class ContentsTests(unittest.TestCase):
@@ -64,9 +64,9 @@ class ContentsTests(unittest.TestCase):
                    if d.title == "Chapter Two"][0]
         hidden = self.project.add_document("Colophon", chapter.id, "scene")
         self.project.update_document(hidden.id, doc_template="no-title")
-        self.project.write_content(hidden.id, "<p>Set in Lekhak.</p>")
+        self.project.write_content(hidden.id, "<p>Set in Lekhika.</p>")
         html = self._export("html").read_text()
-        self.assertIn("Set in Lekhak.", html)
+        self.assertIn("Set in Lekhika.", html)
         self.assertNotIn("<li>Colophon", html)
 
     def test_text_lines_are_lines_not_a_literal_backslash_n(self):

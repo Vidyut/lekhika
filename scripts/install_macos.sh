@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Builds a minimal Lekhak.app into ~/Applications (no sudo, no codesigning).
+# Builds a minimal Lekhika.app into ~/Applications (no sudo, no codesigning).
 #
 #   bash scripts/install_macos.sh          # build + install
 #   bash scripts/install_macos.sh --remove # delete the app
 #
 # The bundle's launcher resolves, in order: this checkout's .venv, a
-# `lekhak` command on PATH, then python3 with the checkout on PYTHONPATH.
+# `lekhika` command on PATH, then python3 with the checkout on PYTHONPATH.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-app="$HOME/Applications/Lekhak.app"
+app="$HOME/Applications/Lekhika.app"
 
 if [[ "${1:-}" == "--remove" ]]; then
   rm -rf "$app"
@@ -25,12 +25,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key>            <string>Lekhak</string>
-  <key>CFBundleDisplayName</key>     <string>Lekhak</string>
-  <key>CFBundleIdentifier</key>      <string>net.vidyut.lekhak</string>
+  <key>CFBundleName</key>            <string>Lekhika</string>
+  <key>CFBundleDisplayName</key>     <string>Lekhika</string>
+  <key>CFBundleIdentifier</key>      <string>net.vidyut.lekhika</string>
   <key>CFBundleVersion</key>         <string>0.1.0</string>
   <key>CFBundleShortVersionString</key> <string>0.1.0</string>
-  <key>CFBundleExecutable</key>      <string>Lekhak</string>
+  <key>CFBundleExecutable</key>      <string>Lekhika</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>LSMinimumSystemVersion</key>  <string>12.0</string>
   <key>NSHighResolutionCapable</key> <true/>
@@ -38,25 +38,25 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-cat > "$app/Contents/MacOS/Lekhak" <<LAUNCHER
+cat > "$app/Contents/MacOS/Lekhika" <<LAUNCHER
 #!/bin/bash
 repo="$repo"
 if [[ -x "\$repo/.venv/bin/python" ]]; then
-  exec "\$repo/.venv/bin/python" -m lekhak
-elif command -v lekhak >/dev/null 2>&1; then
-  exec "\$(command -v lekhak)"
+  exec "\$repo/.venv/bin/python" -m lekhika
+elif command -v lekhika >/dev/null 2>&1; then
+  exec "\$(command -v lekhika)"
 else
-  PYTHONPATH="\$repo/src\${PYTHONPATH:+:\$PYTHONPATH}" exec python3 -m lekhak
+  PYTHONPATH="\$repo/src\${PYTHONPATH:+:\$PYTHONPATH}" exec python3 -m lekhika
 fi
 LAUNCHER
-chmod +x "$app/Contents/MacOS/Lekhak"
+chmod +x "$app/Contents/MacOS/Lekhika"
 
 # Icon: render the SVG via this checkout's PySide6 and assemble an .icns.
 if command -v iconutil >/dev/null 2>&1 && [[ -x "$repo/.venv/bin/python" ]]; then
   if "$repo/.venv/bin/python" "$repo/scripts/render_icons.py" \
-       --icns "$app/Contents/Resources/lekhak.icns" >/dev/null 2>&1; then
+       --icns "$app/Contents/Resources/lekhika.icns" >/dev/null 2>&1; then
     /usr/libexec/PlistBuddy -c \
-      "Add :CFBundleIconFile string lekhak" "$app/Contents/Info.plist" 2>/dev/null \
+      "Add :CFBundleIconFile string lekhika" "$app/Contents/Info.plist" 2>/dev/null \
       || true
     echo "icon installed"
   else
@@ -67,4 +67,4 @@ else
 fi
 
 echo "installed $app"
-echo "open '$app'   # or find Lekhak in Launchpad / Spotlight"
+echo "open '$app'   # or find Lekhika in Launchpad / Spotlight"

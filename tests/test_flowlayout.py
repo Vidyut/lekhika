@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
-from lekhak.flowlayout import FlowLayout
+from lekhika.flowlayout import FlowLayout
 
 _application = QApplication.instance() or QApplication([])
 

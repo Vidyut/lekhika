@@ -1,7 +1,7 @@
 """Rebuild the guide's inventory from docs/FEATURES.md.
 
 The guide carries two things: chapters written by hand, and an
-inventory — every feature of Lekhak, one page each — generated from
+inventory — every feature of Lekhika, one page each — generated from
 ``docs/FEATURES.md``. This script rebuilds the second part, so the two
 never drift apart: each section of that file is a folder in the guide,
 and each bullet is a page in it.
@@ -24,9 +24,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
-WORKING = Path.home() / "Documents" / "Lekhak Guide.lekhak"
+WORKING = Path.home() / "Documents" / "Lekhika Guide.lekhika"
 FEATURES = REPO / "docs" / "FEATURES.md"
 CHAPTER = "Every feature"
 
@@ -158,9 +158,9 @@ def main() -> int:
             chapter = project.add_document(CHAPTER, book.id, "chapter")
             project.set_metadata(chapter.id, {"Type": "chapter"})
             project.write_content(chapter.id, html(
-                "Every feature of Lekhak has a page of its own here, one "
+                "Every feature of Lekhika has a page of its own here, one "
                 "line each. The pages are there to be written into: open "
-                "this guide in Lekhak and expand the ones you would know "
+                "this guide in Lekhika and expand the ones you would know "
                 "more about."))
         made = 0
         repaired = 0
@@ -179,7 +179,7 @@ def main() -> int:
                                                "folder")
                 project.set_metadata(folder.id, {"Type": "folder"})
                 project.write_content(folder.id, html(
-                    f"The {folder_title.split(' — ')[0].lower()} of Lekhak."))
+                    f"The {folder_title.split(' — ')[0].lower()} of Lekhika."))
                 # Lines whose names are set: only a folder-scoped page can
             # be another line's cut. A page elsewhere in the guide —
             # the manual's own "Preferences" under Settings/ — is not

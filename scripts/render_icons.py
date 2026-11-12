@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Bake packaging/lekhak.svg into the icon artifacts Lekhak ships.
+"""Bake packaging/lekhika.svg into the icon artifacts Lekhika ships.
 
 Produces:
-  packaging/lekhak.png   — 256 px PNG (hicolor fallback)
-  packaging/lekhak.ico   — Windows ICO (16…256, PNG-packed)
+  packaging/lekhika.png   — 256 px PNG (hicolor fallback)
+  packaging/lekhika.ico   — Windows ICO (16…256, PNG-packed)
   --icns PATH            — macOS .icns (needs iconutil, macOS only)
 
-Requires PySide6 (Lekhak's own dependency). Runs headless.
-Re-run this whenever packaging/lekhak.svg changes.
+Requires PySide6 (Lekhika's own dependency). Runs headless.
+Re-run this whenever packaging/lekhika.svg changes.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from PySide6.QtGui import QImage, QPainter  # noqa: E402
 from PySide6.QtSvg import QSvgRenderer  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SVG = ROOT / "packaging" / "lekhak.svg"
+SVG = ROOT / "packaging" / "lekhika.svg"
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 ICONSET_SIZES = {
     16: ["16x16", "16x16@2x"],
@@ -69,7 +69,7 @@ def write_icns(path: Path, renderer: QSvgRenderer) -> None:
     if os.name != "posix" or sys.platform != "darwin":
         raise SystemExit("--icns requires macOS (iconutil)")
     with tempfile.TemporaryDirectory() as tmp:
-        iconset = Path(tmp) / "Lekhak.iconset"
+        iconset = Path(tmp) / "Lekhika.iconset"
         iconset.mkdir()
         for size, names in ICONSET_SIZES.items():
             data = render_png(renderer, size)
@@ -93,10 +93,10 @@ def main() -> int:
         icns_path = Path(sys.argv[sys.argv.index("--icns") + 1])
 
     png_256 = render_png(renderer, 256)
-    (ROOT / "packaging" / "lekhak.png").write_bytes(png_256)
-    write_ico(ROOT / "packaging" / "lekhak.ico",
+    (ROOT / "packaging" / "lekhika.png").write_bytes(png_256)
+    write_ico(ROOT / "packaging" / "lekhika.ico",
               {size: render_png(renderer, size) for size in ICO_SIZES})
-    print("wrote packaging/lekhak.png and packaging/lekhak.ico")
+    print("wrote packaging/lekhika.png and packaging/lekhika.ico")
 
     if icns_path:
         write_icns(icns_path, renderer)

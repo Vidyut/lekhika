@@ -17,15 +17,15 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QComboBox, QDateEdit,
 )
 
-from lekhak.app import (  # noqa: E402
+from lekhika.app import (  # noqa: E402
     PROJECT_METADATA_TARGET, MainWindow, MetadataDialog,
 )
-from lekhak.project import Project  # noqa: E402
+from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
-_application.setOrganizationName("Lekhak")
-_application.setApplicationName("Lekhak")
-_settings_dir = tempfile.mkdtemp(prefix="lekhak-metadata-settings-")
+_application.setOrganizationName("Lekhika")
+_application.setApplicationName("Lekhika")
+_settings_dir = tempfile.mkdtemp(prefix="lekhika-metadata-settings-")
 # QSettings objects created from now on read/write under _settings_dir.
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
 
@@ -392,7 +392,7 @@ class MetadataBoxesTests(unittest.TestCase):
     def test_the_facts_land_in_their_groups(self):
         # Word goal stands alone (not in a fold); Type/template sit in
         # Formatting below Content; Synopsis + Advanced nest in Content.
-        from lekhak.app import Fold
+        from lekhika.app import Fold
         # Word goal row is outside any fold but in the metadata section.
         self.assertNotIn(self.window.target, self._widgets(self._fold("Content related")))
         self.assertIsNotNone(self.window.word_goal_row.parent())
