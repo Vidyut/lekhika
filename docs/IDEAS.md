@@ -38,6 +38,7 @@ There is no "local-first rule" and no opinion about what anyone else should do. 
 ## Open, needing discussion
 
 - **Quick open (`Ctrl+P`).** The question asked was whether it differs from clicking a title in the binder. Clicking *selects and shows*; quick open *finds*. In a 300-document binder the difference is twenty seconds of scrolling versus three letters — but it is only worth building if the binder feels slow in practice.
+- **“Keep me honest to my story bible”.** A central document (or set of notes) holding character and worldbuilding context — a story bible — that the app can use to flag where the manuscript contradicts that context or doesn’t fit (e.g. with optional LLM assistance). Useful for longer-form work; needs careful design so it helps without being noisy or overreaching.
 - Import UI wording and flow (see `docs/IMPORTS.md`).
 
 ## Ceiling note
