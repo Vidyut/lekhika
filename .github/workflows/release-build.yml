@@ -60,7 +60,8 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python -m PyInstaller --noconfirm --clean --name Lekhika ${{ matrix.pyinstaller_args }} --collect-all lekhika --collect-all PySide6 --collect-all docx --collect-all reportlab src/lekhika/app.py
+          printf "from lekhika.app import main\nmain()\n" > _lekhika_entry.py
+          python -m PyInstaller --noconfirm --clean --name Lekhika ${{ matrix.pyinstaller_args }} --collect-all lekhika --collect-all PySide6 --collect-all docx --collect-all reportlab _lekhika_entry.py
 
       - name: Archive build
         run: ${{ matrix.archive_cmd }}

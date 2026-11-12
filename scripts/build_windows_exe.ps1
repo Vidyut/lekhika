@@ -24,6 +24,11 @@ Write-Host "==> Upgrading pip and installing build dependencies"
 Write-Host "==> Building Lekhika.exe with PyInstaller"
 # --collect-all lekhika includes package data (guide/templates, etc.)
 # Add --console instead of --windowed if you need debug output.
+@"
+from lekhika.app import main
+main()
+"@ | Set-Content -Encoding UTF8 _lekhika_entry.py
+
 & $pyi `
   --noconfirm `
   --clean `
@@ -32,7 +37,7 @@ Write-Host "==> Building Lekhika.exe with PyInstaller"
   --icon packaging\lekhika.ico `
   --collect-all lekhika `
   --collect-all PySide6 `
-  src\lekhika\app.py
+  _lekhika_entry.py
 
 Write-Host ""
 Write-Host "Build complete."
