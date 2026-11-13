@@ -45,28 +45,42 @@ Your book is saved in ordinary files rather than locked into a proprietary forma
 
 ## Getting it running
 
-Lekhika will run on almost any Python you already have (3.9 or newer). If you haven't got Python, download it from [python.org](https://www.python.org/downloads/) — and on Windows, tick "Add python.exe to PATH" while you're installing it.
+### Option 1: Download a release (easiest)
 
-**First, get the code.** In a terminal:
+Prebuilt downloads are on the [Releases page](https://github.com/Vidyut/lekhika/releases):
+
+- **Windows:** download `Lekhika-windows.zip`, extract the whole folder, then run `Lekhika.exe` from inside the extracted folder (not from inside the zip). If Windows blocks it, check SmartScreen/antivirus or run it from a terminal to see any error.
+- **Linux:** download `Lekhika-linux.zip` (extract and run `Lekhika`) or `Lekhika-linux-x86_64.AppImage` (make it executable and run it).
+- **macOS:** download `Lekhika-macos.zip` if a macOS build is available for the release, extract it, and run the app.
+
+The AppImage/zip builds are Linux programs; they do not run natively on Windows (WSL with GUI support can work in some setups, but the Windows zip is the supported option on Windows).
+
+### Option 2: Run from source
+
+This is for people who want to run from the repository (development, latest `main`, or if a prebuilt build is unavailable).
+
+**Requirements:** Python 3.9 or newer. If you need Python, download it from [python.org](https://www.python.org/downloads/) (on Windows, tick “Add python.exe to PATH” during installation).
+
+**1. Get the code** (in a terminal):
 
 ```bash
 git clone https://github.com/Vidyut/lekhika.git   # download it
 cd lekhika                                        # go into that folder
 ```
 
-No Git? On the [GitHub page](https://github.com/Vidyut/lekhika) click **Code → Download ZIP**, unzip it, and open a terminal in the folder you unzipped. Either way, every command below runs from inside that folder.
+No Git? On the [GitHub page](https://github.com/Vidyut/lekhika) click **Code → Download ZIP**, unzip it, and open a terminal in that folder. All commands below run from inside the `lekhika` folder.
 
-**Now set it up.** This keeps Lekhika's bits in a private folder inside the checkout — nothing system-wide, no administrator rights needed.
+**2. Create a local environment and install Lekhika** (nothing system-wide, no administrator rights needed):
 
-On Linux or Mac:
+On Linux or macOS:
 
 ```bash
-python3 -m venv .venv              # make a small private Python for Lekhika
-.venv/bin/pip install --upgrade pip    # installers do the fetching: keep yours current
-.venv/bin/pip install -e .         # install Lekhika into it
+python3 -m venv .venv                  # create a private Python environment for Lekhika
+.venv/bin/pip install --upgrade pip    # keep pip up to date
+.venv/bin/pip install -e .             # install Lekhika into that environment
 ```
 
-On Windows (in PowerShell):
+On Windows (PowerShell):
 
 ```powershell
 py -3 -m venv .venv
@@ -74,29 +88,15 @@ py -3 -m venv .venv
 .venv\Scripts\pip install -e .
 ```
 
-Worth doing once in a while even if you installed long ago: `pip` is the thing that fetches everything else, so its own security updates matter more than most. (Lekhika itself does not use pip, `uv`, or `certifi` while it runs.)
+`pip` fetches dependencies during installation; updating it occasionally is worthwhile. (Lekhika itself does not use pip, `uv`, or `certifi` while it runs.)
 
-**Finally, make it start like a normal app.** One command, and Lekhika will show up in your applications menu.
+**3. Run it:**
 
-On Linux:
-
-```bash
-python3 scripts/install_linux.py
-```
-
-On Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1
-```
-
-On Mac:
-
-```bash
-bash scripts/install_macos.sh
-```
-
-If you'd rather just have a look first, you can start it right away without any of that: `.venv/bin/lekhika` on Linux and Mac, `.venv\Scripts\lekhika` on Windows.
+- **Without adding a menu shortcut:** `.venv/bin/lekhika` on Linux/macOS, or `.venv\Scripts\lekhika` on Windows.
+- **Add an applications-menu shortcut/launcher (optional):**
+  - Linux: `python3 scripts/install_linux.py`
+  - Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1`
+  - macOS: `bash scripts/install_macos.sh`
 
 Screenshots, and the same steps with pictures, are on the [Lekhika page at vidyut.info](https://vidyut.info/downloads/lekhika/).
 
