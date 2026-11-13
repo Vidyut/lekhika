@@ -153,6 +153,53 @@ jobs:
           }
           Write-Host "Smoke test ok (exit $($p.ExitCode))"
 
+      - name: Report and prune bundle
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, shutil
+          from pathlib import Path
+
+          root = Path('dist/Lekhika')
+          def size(p):
+              if p.is_file():
+                  return p.stat().st_size
+              return sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
+
+          def fmt(n):
+              for u in ['B','KB','MB','GB']:
+                  if n < 1024 or u == 'GB':
+                      return f'{n:.1f}{u}'
+                  n /= 1024
+
+          print('== bundle total ==', fmt(size(root)))
+          # Largest top-level entries
+          entries = sorted(((size(p), p) for p in root.iterdir()), reverse=True)
+          for s,p in entries[:20]:
+              print(f'{fmt(s):>10}  {p}')
+          internal = root / '_internal'
+          if internal.exists():
+              print('== top _internal ==')
+              for s,p in sorted(((size(p), p) for p in internal.iterdir()), reverse=True)[:20]:
+                  print(f'{fmt(s):>10}  {p}')
+              qt = None
+              for cand in [internal/'PySide6'/'Qt', internal/'PySide6', root/'PySide6'/'Qt']:
+                  if cand.exists():
+                      qt = cand if cand.name == 'Qt' else cand/'Qt'
+                      break
+              if qt and qt.exists():
+                  print('== Qt subdirs ==')
+                  for s,p in sorted(((size(p), p) for p in qt.iterdir() if p.is_dir()), reverse=True)[:20]:
+                      print(f'{fmt(s):>10}  {p}')
+                  for name in ['translations', 'qml']:
+                      d = qt / name
+                      if d.exists():
+                          s = size(d)
+                          shutil.rmtree(d, ignore_errors=True)
+                          print(f'PRUNED {name}: {fmt(s)}')
+          print('== bundle total after prune ==', fmt(size(root)))
+          PY
+
       - name: Archive build
         run: ${{ matrix.archive_cmd }}
 
