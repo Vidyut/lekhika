@@ -25,8 +25,6 @@ jobs:
             artifact_name: Lekhika-windows-x64
             zip_name: Lekhika-windows-x64.zip
             pyinstaller_args: --windowed --icon packaging/lekhika.ico
-            archive_shell: pwsh
-            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows-x64.zip
             build_appimage: false
           - runner: windows-11-arm
             display_name: windows-arm64
@@ -35,8 +33,6 @@ jobs:
             artifact_name: Lekhika-windows-arm64
             zip_name: Lekhika-windows-arm64.zip
             pyinstaller_args: --windowed --icon packaging/lekhika.ico
-            archive_shell: pwsh
-            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows-arm64.zip
             build_appimage: false
 
           # Linux (free-tier standard runners for public repos)
@@ -47,8 +43,6 @@ jobs:
             artifact_name: Lekhika-linux-x64
             zip_name: Lekhika-linux-x64.zip
             pyinstaller_args: --windowed
-            archive_shell: bash
-            archive_cmd: cd dist && zip -r Lekhika-linux-x64.zip Lekhika
             build_appimage: true
             appimage_arch: x86_64
             appimage_name: Lekhika-linux-x86_64.AppImage
@@ -60,8 +54,6 @@ jobs:
             artifact_name: Lekhika-linux-arm64
             zip_name: Lekhika-linux-arm64.zip
             pyinstaller_args: --windowed
-            archive_shell: bash
-            archive_cmd: cd dist && zip -r Lekhika-linux-arm64.zip Lekhika
             build_appimage: true
             appimage_arch: aarch64
             appimage_name: Lekhika-linux-aarch64.AppImage
@@ -75,8 +67,6 @@ jobs:
             artifact_name: Lekhika-macos-intel
             zip_name: Lekhika-macos-intel.zip
             pyinstaller_args: --windowed
-            archive_shell: bash
-            archive_cmd: cd dist && zip -r Lekhika-macos-intel.zip Lekhika
             build_appimage: false
           - runner: macos-latest
             display_name: macos-arm64
@@ -85,8 +75,6 @@ jobs:
             artifact_name: Lekhika-macos-arm64
             zip_name: Lekhika-macos-arm64.zip
             pyinstaller_args: --windowed
-            archive_shell: bash
-            archive_cmd: cd dist && zip -r Lekhika-macos-arm64.zip Lekhika
             build_appimage: false
 
     steps:
@@ -255,8 +243,22 @@ jobs:
           PY
 
       - name: Archive build
-        shell: ${{ matrix.archive_shell }}
-        run: ${{ matrix.archive_cmd }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          root = Path('dist/Lekhika')
+          out = Path('dist') / os.environ['ZIP_NAME']
+          with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+              for path in root.rglob('*'):
+                  zf.write(path, path.relative_to(root.parent))
+          print(f'Created {out} ({out.stat().st_size} bytes)')
+          PY
+        env:
+          ZIP_NAME: ${{ matrix.zip_name }}
 
       - name: Build AppImage (Linux)
         if: matrix.build_appimage

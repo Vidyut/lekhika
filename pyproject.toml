@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lekhika"
-version = "1.0.3"
+version = "1.0.4"
 description = "A reliable, Linux-first environment for long-form writing"
 # Floor is 3.9 by policy (see ROADMAP working agreements): the code only
 # needs str.removeprefix (3.9), and every module starts with
