@@ -47,13 +47,13 @@ Your book is saved in ordinary files rather than locked into a proprietary forma
 
 ### Option 1: Download a release (easiest)
 
-Prebuilt downloads are on the [Releases page](https://github.com/Vidyut/lekhika/releases):
+Prebuilt downloads are on the [Releases page](https://github.com/Vidyut/lekhika/releases). Pick the file that matches your system:
 
-- **Windows:** download `Lekhika-windows.zip`, extract the whole folder, then run `Lekhika.exe` from inside the extracted folder (not from inside the zip). If Windows blocks it, check SmartScreen/antivirus or run it from a terminal to see any error.
-- **Linux:** download `Lekhika-linux.zip` (extract and run `Lekhika`) or `Lekhika-linux-x86_64.AppImage` (make it executable and run it).
-- **macOS:** download `Lekhika-macos.zip` if a macOS build is available for the release, extract it, and run the app.
+- **Windows:** `Lekhika-windows-x64.zip` (most PCs) or `Lekhika-windows-arm64.zip` (Windows on ARM/Snapdragon, if available for that release). Extract the whole folder, then run `Lekhika.exe` from inside the extracted folder (not from inside the zip). If Windows blocks it, check SmartScreen/antivirus or run it from a terminal to see any error.
+- **Linux:** `Lekhika-linux-x64.zip` / `Lekhika-linux-x86_64.AppImage` for x86_64, or `Lekhika-linux-arm64.zip` / `Lekhika-linux-aarch64.AppImage` for ARM64 (where available). Extract zip builds and run `Lekhika`, or make the AppImage executable and run it.
+- **macOS:** `Lekhika-macos-intel.zip` for Intel Macs or `Lekhika-macos-arm64.zip` for Apple Silicon, if available for that release. Extract and run the app.
 
-The AppImage/zip builds are Linux programs; they do not run natively on Windows (WSL with GUI support can work in some setups, but the Windows zip is the supported option on Windows).
+Older releases may use slightly different file names (for example `Lekhika-windows.zip`, `Lekhika-linux.zip`, `Lekhika-macos.zip`). The AppImage/zip builds are Linux programs and do not run natively on Windows (WSL with GUI support can work in some setups, but the Windows zip is the supported option on Windows).
 
 ### Option 2: Run from source
 

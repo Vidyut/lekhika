@@ -11,31 +11,83 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.display_name }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            artifact_name: Lekhika-windows
+          # Windows (free-tier standard runners for public repos)
+          - runner: windows-latest
+            display_name: windows-x64
+            platform: windows
+            arch: x64
+            artifact_name: Lekhika-windows-x64
+            zip_name: Lekhika-windows-x64.zip
             pyinstaller_args: --windowed --icon packaging/lekhika.ico
-            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows.zip
-            shell: pwsh
-          - os: macos-13
-            artifact_name: Lekhika-macos
-            pyinstaller_args: --windowed
-            archive_cmd: cd dist && zip -r Lekhika-macos.zip Lekhika
-            shell: bash
-          - os: ubuntu-latest
-            artifact_name: Lekhika-linux
-            pyinstaller_args: --windowed
-            archive_cmd: cd dist && zip -r Lekhika-linux.zip Lekhika
-            shell: bash
+            archive_shell: pwsh
+            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows-x64.zip
+            build_appimage: false
+          - runner: windows-11-arm
+            display_name: windows-arm64
+            platform: windows
+            arch: arm64
+            artifact_name: Lekhika-windows-arm64
+            zip_name: Lekhika-windows-arm64.zip
+            pyinstaller_args: --windowed --icon packaging/lekhika.ico
+            archive_shell: pwsh
+            archive_cmd: Compress-Archive -Path dist/Lekhika/* -DestinationPath dist/Lekhika-windows-arm64.zip
+            build_appimage: false
 
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
+          # Linux (free-tier standard runners for public repos)
+          - runner: ubuntu-latest
+            display_name: linux-x64
+            platform: linux
+            arch: x64
+            artifact_name: Lekhika-linux-x64
+            zip_name: Lekhika-linux-x64.zip
+            pyinstaller_args: --windowed
+            archive_shell: bash
+            archive_cmd: cd dist && zip -r Lekhika-linux-x64.zip Lekhika
+            build_appimage: true
+            appimage_arch: x86_64
+            appimage_name: Lekhika-linux-x86_64.AppImage
+            appimage_artifact_name: Lekhika-linux-x86_64-appimage
+          - runner: ubuntu-24.04-arm
+            display_name: linux-arm64
+            platform: linux
+            arch: arm64
+            artifact_name: Lekhika-linux-arm64
+            zip_name: Lekhika-linux-arm64.zip
+            pyinstaller_args: --windowed
+            archive_shell: bash
+            archive_cmd: cd dist && zip -r Lekhika-linux-arm64.zip Lekhika
+            build_appimage: true
+            appimage_arch: aarch64
+            appimage_name: Lekhika-linux-aarch64.AppImage
+            appimage_artifact_name: Lekhika-linux-aarch64-appimage
+
+          # macOS (free-tier standard runners for public repos)
+          - runner: macos-15-intel
+            display_name: macos-intel
+            platform: macos
+            arch: x64
+            artifact_name: Lekhika-macos-intel
+            zip_name: Lekhika-macos-intel.zip
+            pyinstaller_args: --windowed
+            archive_shell: bash
+            archive_cmd: cd dist && zip -r Lekhika-macos-intel.zip Lekhika
+            build_appimage: false
+          - runner: macos-latest
+            display_name: macos-arm64
+            platform: macos
+            arch: arm64
+            artifact_name: Lekhika-macos-arm64
+            zip_name: Lekhika-macos-arm64.zip
+            pyinstaller_args: --windowed
+            archive_shell: bash
+            archive_cmd: cd dist && zip -r Lekhika-macos-arm64.zip Lekhika
+            build_appimage: false
 
     steps:
       - name: Checkout
@@ -47,7 +99,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libfuse2 desktop-file-utils file wget xvfb
@@ -108,15 +160,17 @@ jobs:
             scripts/pyinstaller_entry.py
 
       - name: Smoke test bundle (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         continue-on-error: true
+        shell: bash
         run: |
           set -euo pipefail
           xvfb-run -a bash -c 'timeout 15s ./dist/Lekhika/Lekhika >/tmp/lekhika-smoke.log 2>&1; code=$?; echo "--- smoke log ---"; cat /tmp/lekhika-smoke.log || true; echo "--- end smoke log (exit $code) ---"; if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi'
 
       - name: Smoke test bundle (macOS)
-        if: matrix.os == 'macos-13'
+        if: matrix.platform == 'macos'
         continue-on-error: true
+        shell: bash
         run: |
           set -euo pipefail
           # Best-effort GUI launch check; timeout means it stayed running.
@@ -137,7 +191,7 @@ jobs:
           PY
 
       - name: Smoke test bundle (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         continue-on-error: true
         shell: pwsh
         run: |
@@ -157,7 +211,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import os, shutil
+          import shutil
           from pathlib import Path
 
           root = Path('dist/Lekhika')
@@ -201,10 +255,12 @@ jobs:
           PY
 
       - name: Archive build
+        shell: ${{ matrix.archive_shell }}
         run: ${{ matrix.archive_cmd }}
 
       - name: Build AppImage (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.build_appimage
+        shell: bash
         run: |
           set -euo pipefail
           APP=Lekhika
@@ -230,37 +286,37 @@ jobs:
           exec "$HERE/usr/bin/Lekhika" "$@"
           EOF
           chmod +x "$APPDIR/AppRun"
-          wget -q -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          wget -q -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage"
           chmod +x appimagetool
-          ARCH=x86_64 ./appimagetool "$APPDIR" "dist/Lekhika-linux-x86_64.AppImage"
+          ARCH=${{ matrix.appimage_arch }} ./appimagetool "$APPDIR" "dist/${{ matrix.appimage_name }}"
 
-      - name: Upload artifact
+      - name: Upload artifact (zip)
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.artifact_name }}.zip
+          path: dist/${{ matrix.zip_name }}
           if-no-files-found: error
 
       - name: Upload AppImage artifact (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.build_appimage
         uses: actions/upload-artifact@v7
         with:
-          name: Lekhika-linux-appimage
-          path: dist/Lekhika-linux-x86_64.AppImage
+          name: ${{ matrix.appimage_artifact_name }}
+          path: dist/${{ matrix.appimage_name }}
           if-no-files-found: error
 
       - name: Attach zip to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/${{ matrix.artifact_name }}.zip
+          files: dist/${{ matrix.zip_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attach AppImage to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
+        if: startsWith(github.ref, 'refs/tags/') && matrix.build_appimage
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/Lekhika-linux-x86_64.AppImage
+          files: dist/${{ matrix.appimage_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
