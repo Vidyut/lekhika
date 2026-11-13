@@ -1,16 +1,4 @@
-"""PDF export — a thin wrapper over the DOCX, as 1.6's decision recorded.
-
-The DOCX stays the exact artifact and the single renderer: instead of
-growing a second layout engine inside Lekhika, this module hands the
-compiled DOCX to the writer's own LibreOffice and moves the result into
-place atomically. The handoff goes through LibreOffice's UNO API (a
-worker subprocess in ``uno_pdf.py``) rather than a bare
-``--convert-to``: the CLI loader never refreshes fields, so the 1.7 TOC
-would ship as its cached placeholder, while a UNO ``index.update()``
-puts real page numbers in the contents page. Nothing here parses or
-understands PDF — we shell out, and when the converter or its scripting
-bindings are missing the message says how to fix each.
-"""
+"""PDF export and conversion helpers."""
 
 from __future__ import annotations
 

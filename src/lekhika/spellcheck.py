@@ -1,19 +1,4 @@
-"""Deterministic typo underlining: a dictionary pass, no model (8).
-
-aspell first, hunspell as fallback, both in batch mode — the whole
-document is checked in one process spawn per refresh, and a session
-word cache keeps repeat words free, so ordinary prose costs one process
-at most. Unlike pdf's per-export converter probe, the engine probe runs
-once per process: squiggles refresh every half second while typing.
-
-Ranges come back as UTF-16 code-unit offsets, because that is what a
-QTextDocument cursor position is; a code-point index would drift by one
-per emoji past it.
-
-Failure means "flag nothing", never "flag everything": a checker that
-is missing, crashing or timing out leaves the manuscript clean rather
-than buried in false positives.
-"""
+"""Spell-checking and dictionary helpers."""
 
 from __future__ import annotations
 

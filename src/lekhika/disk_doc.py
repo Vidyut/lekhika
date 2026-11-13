@@ -1,22 +1,4 @@
-"""Reading and writing a document file on disk: prose plus its metadata.
-
-A Lekhika document is one ``.html`` file whose head carries a YAML
-frontmatter block and whose body carries the prose. The file is the
-truth: a writer can read it in any editor, and any tool can produce one.
-Nothing here needs the database.
-
-The metadata block is read from either of two places, because both are
-in the wild:
-
-* at the very top of the file, before ``<html>`` — the form
-  ``lekhika-web`` writes and the form most other tools expect;
-* inside the ``<head>`` element, between ``---`` fences — the form a
-  writer's own editor produces, and the one Lekhika writes.
-
-Whichever it is, writing always puts it at the top of the file, so
-there is one canonical shape and a round trip never moves the writer's
-prose around.
-"""
+"""Read/write document files and split/merge document front matter and content."""
 
 from __future__ import annotations
 

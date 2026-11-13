@@ -198,7 +198,8 @@ class BookCompileTests(unittest.TestCase):
         # ing the others, and present on every section of the export.
         self.project.set_project_metadata(
             {"Author": ("A Writer", "text", []),
-             "Series": ("The Series", "text", [])})
+             "Series": ("The Series", "text", []),
+             "BookTitle": ("Novel", "text", [])})
         set_dir = create_template_set("headed", self.project.root).directory
         (set_dir / "print-config.txt").write_text(
             "Docx\nHeader left: ${Metadata.Series}, ,\n"
@@ -238,6 +239,7 @@ class BookCompileTests(unittest.TestCase):
         # A chapter opener wearing a running head looks wrong (§3.1), so
         # the `first page` pair say what each section's opening page
         # carries: here, no head at all, while every other page keeps one.
+        self.project.set_project_metadata({"BookTitle": ("Novel", "text", [])})
         set_dir = create_template_set("openers", self.project.root).directory
         (set_dir / "print-config.txt").write_text(
             "Docx\nNew Chapter: Recto\nHeader: ,${BookTitle},\n"
@@ -295,6 +297,7 @@ class BookCompileTests(unittest.TestCase):
         # `Header first page: none` belongs to the section it opened,
         # not to the file — the chapters after it keep the book's head
         # and their own opening pages unflagged.
+        self.project.set_project_metadata({"BookTitle": ("Novel", "text", [])})
         set_dir = create_template_set("plain", self.project.root).directory
         (set_dir / "print-config.txt").write_text(
             "Docx\nPage size: A4\nNew Chapter: Recto\nHeader: ,${BookTitle},\n")

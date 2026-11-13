@@ -1,11 +1,4 @@
-"""Tracked-change marks in the editor's QTextDocument (2.4).
-
-Two halves of one pair: the live document carries each mark as a
-QTextCharFormat with change-id properties (this module), and the stored
-HTML carries only the sentinel styles Qt round-trips (project.py).
-Accept/reject works on the live half; reconcile_revisions prunes table
-rows whose marks an undo removed.
-"""
+"""Tracked-change revision storage and document mark helpers."""
 
 from __future__ import annotations
 

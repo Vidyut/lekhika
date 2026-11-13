@@ -1,35 +1,14 @@
-"""The Qt application: one window over one Project.
+"""Qt application window for a Lekhika project.
 
-Everything user-visible lives here. The window owns a Project and a set of
-views onto it; the Project owns storage. Nothing in this module writes
-files or SQL directly — it calls into Project, which is where the storage
-contract is enforced.
+MainWindow owns a Project and its views: binder (left), editor/corkboard/outliner
+(centre), and inspector (right). Storage access goes through Project.
 
-Layout of the window:
+- Edits are saved on a debounce timer via save_current(); views refresh from Project.
+- Display-only formatting (binder numbers, resolved wiki links, interface fonts) is
+  applied for rendering and stripped before writing back.
+- The editor uses a fixed font so interface font changes do not affect document content.
 
-    left   binder tree (QTreeWidget, drag to reorder)
-    center tabbed views: editor / corkboard / outliner
-    right  inspector: synopsis, word target, book/document templates, metadata
-
-Three rules that govern how views and Project interact, and where the
-tricky parts of this file come from:
-
-- Saving is debounced. The editor's textChanged starts a timer; when it
-  fires, save_current() writes through Project. The binder, outliner and
-  corkboard are refreshed from Project after any change, never updated in
-  place — Project is the single source of truth.
-- Display must never leak into storage. Binder numbers, resolved wiki
-  links and interface fonts are all rendered on the way *out* (on load,
-  on paint) and stripped on the way back in (canonicalize_links() before
-  write_content()). Anything that reads a widget's text back into the
-  project has to undo the display layer first.
-- The editor font is pinned, not inherited. Interface font preferences
-  change QApplication's font; the writing editor keeps an explicit 12 pt
-  so preference changes never round-trip into document HTML.
-
-Dialogs at the top of the file are self-contained: each gathers input and
-returns it, with no Project access. MainWindow methods that open them
-apply the result.
+Top-level dialogs collect input only; MainWindow applies the results.
 """
 
 from __future__ import annotations
@@ -91,7 +70,7 @@ from .project import (
 )
 from .preferences import (
     LINK_POLICY_CHOICES, PreferencesDialog, apply_update, newer_release,
-    update_check_due, update_mode)
+    update_check_due, update_mode, git_toplevel)
 from .pageview import PageView
 from .templates import (
     BUILTIN_PLACEHOLDERS, PLACEHOLDER_RE, TEMPLATE_CONFIG_NOTE,
@@ -108,18 +87,7 @@ from .templates import (
 def _destructive_box(parent, title: str, question: str, *, confirm: str,
                      checkbox: str, detail: str = "",
                      gate: str = "I understand what will be lost") -> QDialog:
-    """The confirmation for anything that deletes or overwrites content.
-
-    A Yes/No dialog is clicked through on reflex, so the destructive button
-    starts disabled and only the checkbox unarms it; Cancel is the default
-    button, so Enter (and Escape) are safe. The question names the target,
-    and the checkbox says what is about to be lost — destruction is confirmed,
-    and never by name alone (ROADMAP working agreements).
-
-    Built as an explicit dialog, not QMessageBox.setCheckBox, whose
-    checkbox rendering the writer could not reach (buttons without a gate
-    that can be armed are a confirmation that only looks like one).
-    """
+    """Build a destructive-action confirmation dialog with a gated confirm button and Cancel as the safe default."""
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     layout = QVBoxLayout(dialog)
@@ -1512,12 +1480,7 @@ def _scrub_char_format(source: QTextCharFormat, keep_fonts: bool,
 
 def _scrub_block_format(source: QTextBlockFormat, keep_paragraphs: bool,
                         keep_alignment: bool) -> QTextBlockFormat:
-    """Rebuild one block's format: editor defaults plus only what's kept.
-
-    The fresh format *is* the default policy — a Word document's 72 pt
-    "before paragraph" margin and its line height are what make a paste
-    land at double height, and they all live on the block format.
-    """
+    """Return a block format with editor defaults plus selected properties kept from source."""
     result = QTextBlockFormat()
     if keep_alignment:
         alignment = source.alignment()
@@ -1538,27 +1501,7 @@ def _scrub_block_format(source: QTextBlockFormat, keep_paragraphs: bool,
 
 def sanitize_pasted_html(html: str, *, fonts: bool, paragraphs: bool,
                          inline: bool, alignment: bool) -> QTextDocument:
-    """Turn clipboard HTML into a scratch document that obeys the paste policy.
-
-    Why: clipboard HTML drags its source application along — font families
-    and sizes, indents, line spacing, block margins, blank-paragraph
-    scaffolding — and lands in the manuscript as visual chaos. The pass:
-
-        html ── setHtml ──▶ scratch document
-              ── read ──▶ record every fragment (start, length, scrubbed
-                          format) and every block (start, source format)
-              ── apply ──▶ write the recorded formats back. Read first,
-                          edit second: editing invalidates QTextBlock
-                          handles, so the records hold plain integers and
-                          implicitly-shared format copies.
-              ── collapse ──▶ (unless paragraphs are kept) delete
-                          blank-paragraph runs — leading and trailing runs
-                          vanish, interior runs shrink to one blank line
-
-    Object fragments (images) pass through with their format intact and
-    never count as blank. QMimeData.html() decodes exactly what Qt's own
-    paste path decodes, so there is no charset handling to redo.
-    """
+    """Return a scratch QTextDocument with pasted HTML sanitised according to the paste policy (fonts, paragraphs, inline, alignment)."""
     document = QTextDocument()
     document.setHtml(html)
     character_ops: list[tuple[int, int, QTextCharFormat]] = []
@@ -2323,16 +2266,7 @@ def parse_default_style(text: str) -> dict:
 
 
 def capture_paragraph_signature(cursor: QTextCursor) -> dict:
-    """Snapshot the formatting of the paragraph under the cursor.
-
-    The signature a saved style is: what you see is what a later
-    application reproduces. The character side comes from the format at
-    the caret (a mixed paragraph gives the part you are standing in);
-    underline, family and line-height are recorded only when actually
-    present, so a paragraph wearing none of them compares equal to the
-    built-in seed it matches. Size falls back to the 12 pt the editor
-    writes in when nothing has set one yet.
-    """
+    """Return a formatting signature for the paragraph at cursor."""
     char_format = cursor.charFormat()
     block_format = cursor.blockFormat()
     signature = {
@@ -2359,14 +2293,7 @@ def capture_paragraph_signature(cursor: QTextCursor) -> dict:
 
 
 def block_uniform_flags(cursor: QTextCursor) -> dict[str, bool]:
-    """Which char props are uniform across the whole block under cursor.
-
-    Walks every text fragment in the block, ignoring object fragments
-    and the trailing paragraph separator. If only one distinct value
-    appears, the prop is uniform. Used only to pre-tick the style
-    approval dialog — the writer still sees and approves each tick, so
-    a mixed italic can never slip into a paragraph style unnoticed.
-    """
+    """Return which character properties are uniform across the block at cursor."""
     block = cursor.block()
     italics: set[bool] = set()
     weights: set[int] = set()
@@ -2401,15 +2328,7 @@ def block_uniform_flags(cursor: QTextCursor) -> dict[str, bool]:
 
 
 def style_signature_formats(signature: dict) -> tuple[QTextBlockFormat, QTextCharFormat]:
-    """Rebuild the Qt formats a stored style signature stands for.
-
-    A signature is explicit about what it does NOT touch: keys it doesn't
-    carry are never written. Cardinal sin (MODEL.md): a paragraph style
-    that omits italic/bold/underline leaves the prose exactly as it was —
-    only properties the writer ticked in the approval dialog are written.
-    The built-in seeds carry every reset key explicitly, so they still
-    fully reset size/weight/italic/margins as before.
-    """
+    """Build block and character formats from a stored style signature (only present keys are applied)."""
     char_format = QTextCharFormat()
     if "size" in signature:
         char_format.setFontPointSize(signature["size"])
@@ -2546,6 +2465,8 @@ class MainWindow(QMainWindow):
         # Qt's own right-click menu, extended with the style commands (1.11).
         self.editor.setContextMenuPolicy(Qt.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._editor_context_menu)
+        self.editor.viewport().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.editor.viewport().customContextMenuRequested.connect(self._editor_context_menu_viewport)
         # Pin the writing font so interface-font preferences never leak into
         # document content (toHtml() round-trips the body size); 12 pt is
         # what reset_zoom already assumed.
@@ -3134,21 +3055,23 @@ class MainWindow(QMainWindow):
         # Every control is a QToolButton carrying its own QAction — the
         # action keeps the slot, the checkable state and the tooltip, the
         # flow keeps them all on screen at any width (2.4h).
-        def _format_button(text, slot, *, checkable=False, tip=""):
+        def _format_button(text, slot, *, checkable=False, tip="", shortcut=None):
             action = QAction(text, self)
             action.triggered.connect(slot)
             if checkable:
                 action.setCheckable(True)
             if tip:
                 action.setToolTip(tip)
+            if shortcut is not None:
+                action.setShortcut(shortcut)
             button = QToolButton()
             button.setDefaultAction(action)
             formats.addWidget(button)
             return action
 
-        _format_button("B", self.bold)
-        _format_button("I", self.italic)
-        _format_button("U", self.underline)
+        _format_button("B", self.bold, tip="Bold", shortcut=QKeySequence.StandardKey.Bold)
+        _format_button("I", self.italic, tip="Italic", shortcut=QKeySequence.StandardKey.Italic)
+        _format_button("U", self.underline, tip="Underline", shortcut=QKeySequence.StandardKey.Underline)
         self.style_box = QComboBox()
         self.style_box.activated.connect(self.apply_paragraph_style)
         # The last real pick, so Update re-captures the style the box was
@@ -3197,6 +3120,8 @@ class MainWindow(QMainWindow):
             self._alignment_actions[alignment] = action
         _format_button("Clear", self.clear_formatting,
                        tip="Drop this paragraph back to plain")
+        _format_button("Image", self.insert_image,
+                       tip="Insert an image from a file")
         _format_button("Read aloud", self.speak_aloud,
                        tip="Read the selection aloud — or from the cursor, "
                        "or from the start when the caret is not in the text.")
@@ -3448,15 +3373,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not create project", str(error))
 
     def print_manuscript(self) -> None:
-        """BUILD-NOW 4: print through the PDF path the export already uses.
-
-        No save dialog and no template dialog: the stored template set
-        decides pagination — the same numbers an export would produce —
-        and the scope is whatever the export would take (a binder or
-        outliner selection, else the whole project). The PDF is built in
-        a temp folder that print_via_desktop removes once the handler
-        exits; every failure path removes it immediately.
-        """
+        """Print the current export scope via the PDF export path and system print flow."""
         if not self.project:
             self.statusBar().showMessage("Open a project first", 3000)
             return
@@ -3480,15 +3397,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Handed to the system print flow", 5000)
 
     def insert_page_break(self) -> None:
-        """Insert a manual page break at the caret (1.x).
-
-        A new paragraph whose block format carries
-        page-break-before: always — the editor (and Page preview)
-        paginates there, the stored HTML carries the style, and
-        DOCX/EPUB/HTML exports turn it into a real page turn. No
-        new document, no Type change: a poem can sit inside a scene
-        and still own a page.
-        """
+        """Insert a manual page break at the caret."""
         cursor = self.editor.textCursor()
         if cursor.hasSelection():
             cursor.deleteChar()
@@ -5481,15 +5390,7 @@ class MainWindow(QMainWindow):
             self._refresh_page_preview()
 
     def _refresh_page_preview(self) -> None:
-        """Project the current document onto real pages (3.2).
-
-        Only runs while the Page tab is showing — a refresh rebuilds a
-        whole QTextDocument, and while the tab shows nothing can change
-        underneath (the canvas is read-only), so tab switches are the
-        refresh trigger. Geometry is a page printed on its own (1.18):
-        the nearest book's setup, but a design of this page's own has
-        the last word on its size. The HTML comes from the live editor
-        document, so unsaved edits appear."""
+        """Refresh the page preview for the current document when the Page tab is visible."""
         if self.views.currentWidget() is not self.page_view:
             return
         if not self.project or not self.current_id:
@@ -5528,31 +5429,13 @@ class MainWindow(QMainWindow):
         self.editor.setFocus()
 
     def _refresh_template_choices(self) -> None:
-        """Rebuild the apply-template list when the box opens (1.17).
-
-        What the project knows changes while a document is open — a
-        document marked as a template, a one-file template dropped
-        into templates/ — and the list must not be a snapshot of the
-        moment the document was selected.
-        """
+        """Refresh document template choices from the project."""
         document = self._current_document()
         if document is not None:
             self._refresh_book_widgets(document)
 
     def _doc_template_changed(self, *_args) -> None:
-        """Save the document's template from the box (1.17).
-
-        The dropdown lists every template the project knows — the sets'
-        own slots, the one-file templates and the documents marked as
-        templates — and what is saved is what the pick stands for: the
-        name for a set's slot, a prefixed name for the other two, so
-        the three can never be mistaken for one another.
-
-        The box is editable and wired to editingFinished like the Type
-        box: a typed name reaches the database without the dropdown ever
-        moving. A name no file answers saves just the same; the export
-        falls back where it stands.
-        """
+        """Save the selected/typed document template for the current document."""
         if self.loading or not self.project or not self.current_id:
             return
         line = self.doc_template_box.lineEdit()
@@ -5649,16 +5532,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Contents settings saved.", 2000)
 
     def _populate_metadata_table(self) -> None:
-        """Point the inspector's metadata section at the current selection.
-
-        Silent on its own: set_entries swallows the table's own signals,
-        so a repopulation never reads as an edit. The Type row follows
-        the *document* (folders included, where the table below shows
-        project fields); it is always filled — stored Type, else the
-        derived default — and the dropdown seeds itself with every Type
-        the project already uses, so a typed value is selectable next
-        time.
-        """
+        """Populate the metadata/type UI for the current selection or project metadata."""
         target = self._selection_metadata_target()
         self._metadata_target = target
         current = self._current_document()
@@ -5722,11 +5596,7 @@ class MainWindow(QMainWindow):
         self._refresh_toc_fold()
 
     def _lock_toggled(self, locked: bool) -> None:
-        """Lock or unlock the selected document.
-
-        The tick writes the marker file and takes it away again; the
-        file is the truth, and the binder says so straight away.
-        """
+        """Set or clear the lock marker for the selected document."""
         if self.loading or not self.project or not self._type_target_id:
             return
         self.project.set_locked(self._type_target_id, locked)
@@ -6257,19 +6127,7 @@ class MainWindow(QMainWindow):
         self._resolve_all_changes(accept=False)
 
     def _drop_rows_then_save(self, change_ids: set) -> bool:
-        """Delete the resolved rows, write, and put the rows back on failure.
-
-        The rows have to go *before* the save, not after: save_current()
-        runs reconcile_revisions, which prunes pending rows by counting the
-        marks left in the stored HTML and keeping the first N in sequence
-        order. That count is only right when exactly the resolved rows are
-        already gone — resolving the earlier of two passes would otherwise
-        prune the later one's row instead. And a failed write puts the
-        rows straight back under their own ids: the marks are still on
-        disk, and those rows are the only thing that can ever accept or
-        reject them again (the live document still carries the same ids
-        in its surviving marks).
-        """
+        """Remove resolved revision rows, save, and restore them if the save fails."""
         rows = [revision for revision in self.project.revisions(self.current_id)
                 if revision.id in change_ids]
         self.project.remove_revisions(list(change_ids))
@@ -6279,9 +6137,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _resolve_all_changes(self, accept: bool) -> None:
-        """Accept or reject every pending change in the open document.
-        The editor is mutated first, the rows go, then one save writes
-        the resolved form and its recomputed word count."""
+        """Accept or reject all pending tracked changes in the current document."""
         if not self.project or not self.current_id:
             return
         if not self.save_current():
@@ -6304,7 +6160,7 @@ class MainWindow(QMainWindow):
             f"{len(change_ids)} change(s) {verb}", 3000)
 
     def revision_passes(self) -> None:
-        """Accept or reject one whole revision pass of this section."""
+        """Open the revision-pass dialog for the current document."""
         if not self.project or not self.current_id:
             return
         if not self.save_current():
@@ -6552,16 +6408,7 @@ class MainWindow(QMainWindow):
         self._speech_paused = False
 
     def save_current(self) -> bool:
-        """Write the open document through Project; False means it failed.
-
-        The return value is the contract that keeps a failed write from
-        costing the writer their text: a dialog has already explained the
-        failure, and every caller that would destroy or outlive the
-        in-memory copy — a document switch, a project switch, closing, a
-        backup, an export that reads stored HTML — has to stop rather than
-        carry on against stale disk state. Nothing to save (no project,
-        no document, mid-load) is a success, not a failure.
-        """
+        """Save the current document/template through Project. Returns False on failure so callers can stop before discarding unsaved text."""
         if not self.project or self.loading:
             return True
         if self.current_template_file is not None:
@@ -6621,15 +6468,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _save_template_file(self) -> bool:
-        """Write the open template file back to its own path.
-
-        The file is the truth (§1.1): the editor held a copy of it and
-        this is the copy going home, written whole and in place — no
-        DB, no reconciliation, no canonicalisation of links, because
-        none of that is a fragment's business. The stored text is kept
-        as written: the compile is what strips the editor's furniture
-        (§3.2), so what lands on disk stays readable by any editor.
-        """
+        """Write the open template file back to disk."""
         path = self.current_template_file
         if path is None:
             return True
@@ -6784,13 +6623,9 @@ class MainWindow(QMainWindow):
     def start_update_check(self) -> None:
         """Auto and Check look once a day, on a worker thread.
 
-        Manual (the default) and Nothing never get here: the writer has
-        not consented, so nothing goes online. When they have, nothing on
-        the path blocks the window — the network call and any ``git pull``
-        happen off the UI thread, and the result arrives as one sentence
-        in the status bar. An install that cannot be updated in place
-        (pip, zip, a checkout with local edits, a major version) is told
-        about the release instead of being rewritten.
+        Manual/never modes do not run automatic checks. Checks run off the
+        UI thread and report availability in the status bar; in-place install
+        is only offered for git checkouts.
         """
         if not update_check_due():
             return
@@ -6805,13 +6640,14 @@ class MainWindow(QMainWindow):
             if found is None:
                 return
             latest, current = found["latest"], found["current"]
-            if mode == "auto" and apply_update(current, latest):
+            if git_toplevel() is not None:
                 self.update_news.emit(
-                    f"Lekhika {latest} was installed — restart to use it.")
-                return
-            self.update_news.emit(
-                f"Lekhika {latest} is available (you have {current}) — "
-                "Preferences → Updates installs it.")
+                    f"Lekhika {latest} is available (you have {current}) — "
+                    "Preferences → Updates can install it.")
+            else:
+                self.update_news.emit(
+                    f"Lekhika {latest} is available (you have {current}) — "
+                    "Preferences → Updates has a download link.")
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -6871,15 +6707,7 @@ class MainWindow(QMainWindow):
         )
 
     def _confirm_reserved_name(self, title: str) -> bool:
-        """True when the writer is happy with a reserved name.
-
-        ``index`` is Lekhika's own: in every folder, ``index.html`` holds
-        the folder's own text — its own words — and not a child document.
-        A document with that title is written as ``_index.html``, so
-        nothing collides and nothing is lost; the writer is told what the
-        name means and asked to say they know it. Nothing is created or
-        renamed until they have.
-        """
+        """Confirm use of the reserved name "index" (stored as _index.html for child documents)."""
         if title.strip().casefold() != "index":
             return True
         return confirm_destructive(
@@ -7978,30 +7806,11 @@ class MainWindow(QMainWindow):
         self._update_word_count()
 
     def show_template_sets(self) -> None:
-        """List the template sets in the Outliner (docs/TEMPLATES.md §1.1).
-
-        The sets are folders on disk rather than documents, so they do
-        not clutter the binder — the writer's own tree — and are reached
-        from here instead.
-        """
+        """Show template sets in the outliner."""
         self._open_template_group()
 
     def _open_template_file(self, relative: str) -> None:
-        """Open one file of the chosen set in the regular editor (§1.2).
-
-        A template file is an HTML file — a fragment of markup with a
-        placeholder or two — and this is an HTML editor, so there is
-        nothing between the two: the file loads here and Save (and the
-        debounce, and every switch) writes it back to its own path. A
-        set that ships in code has no folder to write to, so its files
-        say so and offer Duplicate rather than opening an unwritable
-        copy.
-
-        The file splits at its head (§3.1): the head — config lines,
-        the Template flag — goes to the sidebar panel, the fragment to
-        the editor, and Save puts the two back together. The metadata
-        steps aside for the panel while the file is a template.
-        """
+        """Open a template-set file in the editor with its head in the template panel; shipped sets open read-only."""
         if not self.save_current():
             return
         template_set = self.current_template_set
@@ -8500,12 +8309,7 @@ class MainWindow(QMainWindow):
         self._refresh_margin_labels()
 
     def _nearest_template(self, document_id: str | None) -> str | None:
-        """The title of the nearest template at or above a document (1.18).
-
-        A document made inside a template is markup like its neighbours,
-        and a sub-template takes the paper of the template folder it
-        lives in (1.18).
-        """
+        """Return the title of the nearest template at or above document_id, or None."""
         if not self.project or document_id is None:
             return None
         by_id = {document.id: document
@@ -8522,19 +8326,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _template_flag_toggled(self, checked: bool) -> None:
-        """The template switch (§1.2, 1.17).
-
-        On a template file it is the big checkbox in the design panel:
-        untick and the file stops being a template — `Template: no`
-        goes into its head, the metadata comes back, and the file leaves
-        the Templates listing; tick and it all reverses. The write
-        happens here rather than on the debounce because the listing
-        follows it: what is on disk is what the listing says.
-
-        On a document it is the tick beside the Type row: the body
-        becomes markup rather than manuscript, and the sidebar swaps to
-        the design panel.
-        """
+        """Toggle template status for the current template file or document and update the UI accordingly."""
         if self.loading:
             return
         if self.current_template_file is None:
@@ -10082,7 +9874,7 @@ class MainWindow(QMainWindow):
     # is the whole storage; seeds live in code and need no file.
 
     def _load_styles(self) -> None:
-        """Seeds plus this project's saved overrides; box rebuilt to match."""
+        """Load paragraph styles (seeds plus project overrides) and refresh the UI."""
         raw = self.project.get_setting("paragraph_styles") if self.project else ""
         try:
             stored = json.loads(raw) if raw else {}
@@ -10108,19 +9900,11 @@ class MainWindow(QMainWindow):
         self._refresh_styles()
 
     def _default_style(self) -> dict | None:
-        """The signature blank documents open in (PREFERENCES.md, Editor).
-
-        "Default" is always the default: if the writer used some other
-        formatting as the default, its details were copied into Default
-        (the original style untouched). Whatever Default currently
-        carries is what a fresh page wears.
-        """
+        """Return the Default paragraph style signature."""
         return self._styles.get("Default")
 
     def _apply_default_style(self, document, html: str) -> None:
-        """An empty document starts dressed in Default. Non-empty
-        documents are left exactly as they are — a default is a first
-        paragraph, not a reformatting."""
+        """Apply the Default style to an empty document only."""
         if self.project.plain_text(html).strip():
             return
         style = self._default_style()
@@ -10593,6 +10377,10 @@ class MainWindow(QMainWindow):
         menu = self._build_editor_menu()
         menu.exec(self.editor.mapToGlobal(position))
 
+    def _editor_context_menu_viewport(self, position) -> None:
+        menu = self._build_editor_menu()
+        menu.exec(self.editor.viewport().mapToGlobal(position))
+
     def _build_editor_menu(self) -> QMenu:
         """Qt's own right-click menu, extended with the style commands.
 
@@ -10602,6 +10390,16 @@ class MainWindow(QMainWindow):
         instead of driving a dialog.
         """
         menu = self.editor.createStandardContextMenu()
+        menu.addSeparator()
+        bold = menu.addAction("Bold")
+        bold.setShortcut(QKeySequence.StandardKey.Bold)
+        bold.triggered.connect(self.bold)
+        italic = menu.addAction("Italic")
+        italic.setShortcut(QKeySequence.StandardKey.Italic)
+        italic.triggered.connect(self.italic)
+        underline = menu.addAction("Underline")
+        underline.setShortcut(QKeySequence.StandardKey.Underline)
+        underline.triggered.connect(self.underline)
         menu.addSeparator()
         create = menu.addAction("Create Style from Paragraph…")
         update = menu.addAction("Update Style from Paragraph…")

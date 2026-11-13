@@ -1,28 +1,4 @@
-"""Preferences, category by category (docs/PREFERENCES.md; UI-NOTES 4).
-
-A QListWidget of categories beside a QStackedWidget of pages — the
-layout settings-heavy apps converge on, and the one that still works at
-eleven categories where tabs scroll or wrap. Every category that ships
-here has a real backend today; the rest wait rather than ship as dead
-controls:
-
-- Editor — word-list location, default paragraph style (stored per project,
-  applied to blank documents)
-- Files & saving — backup folder / backups to keep (per-project decisions,
-  ``Project.backup``; an app-level default needs a project-side home)
-- Links & export — default template set (template engine, unbuilt)
-- Help — version, install path, settings folder, system details for a bug
-  report, and the GitHub and blog links (docs/PREFERENCES.md)
-- Updates — Auto / Check / Manual / Nothing, and Check now (the mode is
-  read at start; docs/TEMPLATES.md §8)
-- Metadata (this computer) — app-level key/value rows; the §3.1
-  inheritance chain is still the author's decision, not a builder's
-
-Rules the dialog keeps (docs/PREFERENCES.md): one line per control,
-long explanation behind a "?", defaults shown rather than implied, and
-nothing that belongs to a manuscript — per-project values stay in the
-inspector, where they travel with the book.
-"""
+"""Preferences storage, dialogs and related helpers."""
 
 from __future__ import annotations
 
@@ -54,25 +30,27 @@ LINK_POLICY_CHOICES = (
 
 _AUTOSAVE_DEFAULT_MS = 700
 
-# How often Automatic mode may look online (docs/TEMPLATES.md §8).
+# How often automatic checks may look online.
 UPDATE_CHECK_INTERVAL = timedelta(days=1)
 
-# The four settings, in the order the page lists them: Auto takes a
-# release it finds, Check looks and tells, Manual waits for both clicks,
-# Nothing never looks. Manual is the default so a fresh install goes
-# online only when asked.
+# Check automatically (notify when an update is available), only when asked,
+# or never. Older "auto" maps to automatic checking; in-place install remains
+# available only for git checkouts via the update action.
 UPDATE_MODES = (
-    ("Auto", "auto"),
-    ("Check", "check"),
-    ("Manual", "manual"),
-    ("Nothing", "never"),
+    ("Check automatically", "check"),
+    ("Check only when I ask", "manual"),
+    ("Never check", "never"),
 )
 
 
 def update_mode() -> str:
-    """The stored mode, with the older name for Manual folded in."""
+    """Return the stored update-check mode (normalised for older values)."""
     mode = str(QSettings().value("update/mode", "manual", type=str))
-    return "manual" if mode == "ask" else mode
+    if mode == "ask":
+        return "manual"
+    if mode == "auto":
+        return "check"
+    return mode
 
 
 def git_toplevel() -> Path | None:
@@ -125,32 +103,74 @@ def numeric_version(text: str) -> tuple[int, ...]:
                  if part.isdigit())
 
 
+def _preferred_download_asset(assets: list[dict]) -> str | None:
+    """Pick the best release asset download URL for this platform/arch."""
+    import platform
+    plat = sys.platform
+    machine = platform.machine().lower()
+    names = [(str(a.get("name", "")), str(a.get("browser_download_url", "")))
+             for a in assets if isinstance(a, dict)]
+    def pick(*needles):
+        for name, url in names:
+            lname = name.lower()
+            if all(n in lname for n in needles) and url:
+                return url
+        return None
+    if plat == "win32":
+        if machine in ("arm64", "aarch64"):
+            return pick("windows", "arm64") or pick("windows")
+        return pick("windows", "x64") or pick("windows")
+    if plat == "darwin":
+        if machine in ("arm64", "aarch64"):
+            return pick("macos", "arm64") or pick("macos")
+        return pick("macos", "intel") or pick("macos", "x64") or pick("macos")
+    # linux/other
+    if machine in ("aarch64", "arm64"):
+        return (pick("linux", "aarch64", ".appimage") or pick("linux", "arm64", ".appimage")
+                or pick("linux", "arm64", ".zip") or pick("linux", "aarch64"))
+    return (pick("linux", "x86_64", ".appimage") or pick("linux", "x64", ".appimage")
+            or pick("linux", "x64", ".zip") or pick("linux"))
+
+
 def newer_release() -> dict | None:
     """Info for a newer version than this build, else None.
 
-    Read-only: one GET and nothing else. Check now and the automatic
-    check share it, so the two can never disagree. The repository's
-    *tags* are the truth, not its releases — Lekhika tags a version
-    without publishing a release object, and the releases endpoint
-    answers 404 for a tag that exists. Keys: current, latest, page.
+    Read-only API calls. Checks tags for the latest version and tries to
+    resolve a direct download asset for this platform from the matching
+    GitHub release. Keys: current, latest, page, download (optional).
     """
     import json
     import urllib.request
     current = __version__
     repo = release_repo()
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "Lekhika"}
     request = urllib.request.Request(
         f"https://api.github.com/repos/{repo}/tags?per_page=100",
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": "Lekhika"})
+        headers=headers)
     with urllib.request.urlopen(request, timeout=10) as response:
         tags = json.loads(response.read().decode("utf-8"))
     names = [str(tag.get("name", ""))
              for tag in tags if isinstance(tag, dict)]
-    latest = max(names, key=numeric_version, default="").lstrip("v").strip()
-    if latest and numeric_version(latest) > numeric_version(current):
-        return {"current": current, "latest": latest,
-                "page": f"https://github.com/{repo}/tags"}
-    return None
+    latest_name = max(names, key=numeric_version, default="")
+    latest = latest_name.lstrip("v").strip()
+    if not (latest and numeric_version(latest) > numeric_version(current)):
+        return None
+    page = f"https://github.com/{repo}/releases/tag/{latest_name or ('v' + latest)}"
+    download = None
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases/tags/{latest_name}",
+            headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            release = json.loads(response.read().decode("utf-8"))
+        assets = release.get("assets", []) if isinstance(release, dict) else []
+        download = _preferred_download_asset(assets) or str(release.get("html_url") or "") or None
+        if isinstance(release, dict) and release.get("html_url"):
+            page = str(release["html_url"])
+    except Exception:
+        page = f"https://github.com/{repo}/releases"
+    return {"current": current, "latest": latest, "page": page, "download": download}
 
 
 def apply_update(current: str, latest: str) -> bool:
@@ -179,13 +199,8 @@ def apply_update(current: str, latest: str) -> bool:
 
 
 def update_check_due() -> bool:
-    """Whether Auto or Check may look this start: once a day at most.
-
-    "Manual" and "Nothing" never look on their own, and a check already
-    made today does not repeat — an offline machine tries again tomorrow
-    rather than at every start.
-    """
-    if update_mode() not in ("auto", "check"):
+    """Return True if an automatic update check may run now (at most once a day)."""
+    if update_mode() != "check":
         return False
     last = str(QSettings().value("update/lastCheck", "", type=str))
     try:
@@ -999,24 +1014,17 @@ class PreferencesDialog(QDialog):
         updates_layout = QVBoxLayout(updates_page)
         update_form = QFormLayout()
         self.update_mode_box = QComboBox()
-        # Four settings, one of them the default: Manual checks and
-        # installs only when the writer presses the buttons. Auto takes
-        # a release on its own, which is why it is offered but not
-        # chosen for anybody (docs/TEMPLATES.md §8).
         for label, value in UPDATE_MODES:
             self.update_mode_box.addItem(label, value)
         self.update_mode_box.setCurrentIndex(max(
             0, self.update_mode_box.findData(update_mode())))
         update_form.addRow(*_row(
-            "Check for updates", self.update_mode_box,
-            "Auto looks once a day when Lekhika starts and installs what it "
-            "finds — the files that changed between the two versions, and "
-            "only on a git checkout with no local edits. Check looks the "
-            "same way and tells you in the status bar; installing stays "
-            "your click. Another kind of install is told where the release "
-            "is, never rewritten. Manual checks and installs only when you "
-            "press the buttons. Nothing makes no network calls at all: "
-            "update by hand, or not at all."))
+            "Updates", self.update_mode_box,
+            "Check automatically to look for new versions once a day and "
+            "show when an update is available (with a download link for "
+            "packaged installs). Git checkouts can install updates in place "
+            "from this page when possible. Choose manual to check only when "
+            "you ask, or never to make no update checks."))
         self.update_status = QLabel("No check yet.")
         self.update_mode_box.currentIndexChanged.connect(
             self._update_update_controls)
@@ -1032,15 +1040,9 @@ class PreferencesDialog(QDialog):
         row.addWidget(self.update_button)
         row.addStretch()
         updates_layout.addLayout(update_form)
-        # The recommendation the page owes a young project: a newer
-        # version may be the one that fixes the thing that just bit you.
         recommendation = QLabel(
             "Lekhika is young, so a new version can carry a fix you need. "
-            "Auto takes a release before you run into the bug it repairs; "
-            "Check is the cautious half of it — a look once a day and a word "
-            "in the status bar, with installing left to you. We recommend "
-            "one of those two at least: between releases, Manual and "
-            "Nothing leave you on the version you installed.")
+            "Automatic checks let you know when an update is available.")
         recommendation.setWordWrap(True)
         updates_layout.addWidget(recommendation)
         updates_layout.addLayout(row)
@@ -1219,12 +1221,22 @@ class PreferencesDialog(QDialog):
             self.update_status.setText(
                 f"You're up to date (current {__version__}).")
             self.update_button.setEnabled(False)
+            self.update_button.setText("Update now")
             return
-        self.update_status.setText(
-            f"Update available: {found['current']} → {found['latest']}. "
-            "Press Update now.")
+        self._latest_release_page = found["page"]
+        self._latest_download_url = found.get("download") or found["page"]
+        if git_toplevel() is not None:
+            self.update_status.setText(
+                f"Update available: {found['current']} → {found['latest']}. "
+                "Press Update now.")
+            self.update_button.setText("Update now")
+        else:
+            self.update_status.setText(
+                f"Update available: {found['current']} → {found['latest']}. "
+                "Download the latest version.")
+            self.update_button.setText("Download update")
         self.update_button.setEnabled(True)
-        self.update_button.setToolTip(found["page"])
+        self.update_button.setToolTip(self._latest_download_url)
 
     def _update_update_controls(self) -> None:
         """The mode decides whether Lekhika may talk to the network.
@@ -1244,10 +1256,12 @@ class PreferencesDialog(QDialog):
         import subprocess
         toplevel = git_toplevel()
         if toplevel is None:
-            cmd = self._update_install_text()
-            QMessageBox.information(self, "Git not found",
-                f"One-click update needs git. Install it, then reopen Preferences:\n\n{cmd}\n\nManual zip downloads also work from the GitHub Releases page.")
-            subprocess.run(["sh", "-c", cmd], check=False)
+            url = getattr(self, "_latest_download_url", None) or getattr(self, "_latest_release_page", None)
+            if not url or not str(url).startswith("http"):
+                url = f"https://github.com/{release_repo()}/releases"
+            QDesktopServices.openUrl(QUrl(url))
+            self.update_status.setText(
+                "Download and install the latest version.")
             return
         status = subprocess.run(["git", "-C", str(toplevel), "status", "--porcelain"],
                                 capture_output=True, text=True, timeout=10)

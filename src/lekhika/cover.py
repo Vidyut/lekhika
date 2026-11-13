@@ -1,18 +1,4 @@
-"""Wraparound cover composer (KDP print copies, docs/BUILD-NOW.md).
-
-The inner copy is a separate file. This page — the outer sheet's one
-page — is one wide page: back, spine and front, trim plus bleed, with
-a tidy margin grid drawn over it so a writer can see at a glance what
-will survive the trim. The sheet is typeset (reportlab), not carried
-by a word processor: a cover is a placed rectangle, and the geometry
-must be exact to the millimetre.
-
-The spine needs the final page count, and nothing can know it before
-the manuscript exists. What can: the words. The count is estimated
-from the selected text at a fixed words-per-page for the trim the
-book uses (a fair centre of the range; every layout shifts it a
-little, and KDP's own tolerance absorbs a few pages either way).
-"""
+"""Cover image/PDF composition helpers."""
 
 from __future__ import annotations
 

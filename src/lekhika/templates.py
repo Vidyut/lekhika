@@ -1,8 +1,7 @@
-"""Named template sets for manuscript export.
+"""Named template sets and template rendering for manuscript export.
 
-A template set is a directory of slot files, yw2html-style. Each slot is an
-optional file; missing slots fall back to the built-in defaults. Placeholders
-use ``${Name}`` and ``${Metadata.Key}`` syntax.
+A template set is a directory of slot/config files. Missing slots fall back to built-in defaults.
+Placeholders use `${Name}` and `${Metadata.Key}` syntax.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ _BLOCK_ELEMENTS = {
 # document's dress (§3 — a header, footer or contents page is chrome).
 
 def config_key(line: str) -> str | None:
-    """The normalized name of a config line, or None when it is not one."""
+    """Return the normalised config key for a line, or None."""
     match = CONFIG_LINE_RE.match(line)
     if match is None:
         return None
@@ -58,11 +57,7 @@ def config_key(line: str) -> str | None:
 
 
 def parse_docx_config(text: str) -> dict[str, str]:
-    """The `key: value` lines of a config block, by normalized name.
-
-    Comments and blank lines are skipped; a key appearing twice keeps the
-    later value, so a fragment's own block can correct the set's file.
-    """
+    """Parse config `key: value` lines into a dict by normalised key (later values win)."""
     config: dict[str, str] = {}
     for line in text.split("\n"):
         if not line.strip() or line.lstrip().startswith("#"):
@@ -574,14 +569,7 @@ class TemplateSet:
 
     @classmethod
     def builtin(cls, name: str = "default") -> TemplateSet:
-        """The named set that ships with Lekhika (§1.1), file for file.
-
-        No folder, so the Templates view offers it non-editable with
-        Duplicate; the slots and config come from `SHIPPED_FILES`, the
-        very map a duplicate is written from — a writer who duplicates
-        "short story" and opens the folder finds exactly what the
-        shipped entry already was, not a pleasant surprise.
-        """
+        """Return a shipped built-in template set by name."""
         if name not in SHIPPED_TEMPLATE_SETS:
             raise ValueError(f"No shipped template set named {name!r}")
         html_slots, text_slots = _shipped_slots(name)
@@ -591,30 +579,7 @@ class TemplateSet:
 
     @classmethod
     def load(cls, name: str, directory: Path) -> TemplateSet:
-        """Load a set from a directory; missing slots keep built-in defaults.
-
-        Every ``.html``/``.txt`` file in the folder is a fragment (§3) —
-        "one rule tells the files apart". The built-in names are a
-        vocabulary the compile consults by content shape, not a
-        requirement: a set owning only ``short_story.html`` is a complete
-        template the moment a document asks for it. Anything else in the
-        folder (a README, a sample ``.docx``) is support material and is
-        ignored here, as is the ``documents/`` shelf — that one is read
-        per document by document_slot().
-
-        Print handling (§3.1) is resolved here too: a leading config
-        block is stripped from each fragment and merged, the Docx-marker
-        file is read whole (its filename carries no meaning) and wins
-        over fragment blocks, and the first sample-shaped file becomes
-        docx_sample. The stripped config never reaches an export.
-
-        A subfolder named for an export format (§1.3) is read as a second
-        copy of this layout and laid over the root's, one folder per
-        format, so ``pdf/print-config.txt`` says what a printed PDF takes
-        and the root's says what every format without a folder takes. The
-        overlay is pre-merged here so an export has one decision to make —
-        which format it is — and never a cascade of lookups.
-        """
+        """Load a template set from a directory, including per-format overlays and docx/print config."""
         directory = Path(directory)
         html, text, config, sample = _read_folder(directory)
         base = cls(name, directory, {**BUILTIN_HTML, **html},
@@ -785,12 +750,7 @@ class TemplateSet:
 
     @property
     def prints_nothing(self) -> bool:
-        """True when every fragment this set carries is empty — nothing
-        in, nothing out (§3: a template may legitimately produce something
-        far sparser than the baseline, and silence is where that ends).
-        This is what the shipped `no-export` set is: DOCX and text write
-        empty files, HTML and EPUB keep their wrappers with no content
-        inside them."""
+        """Return True if this set produces no content output."""
         if self.own_empty:
             return True
         return all(not text.strip()
@@ -812,22 +772,7 @@ class TemplateSet:
     @staticmethod
     def fill(template: str, values: dict[str, str], *,
              html: bool = True) -> str:
-        """Fill an arbitrary template string. Scalar values are escaped in
-        html mode; ``content``, ``children`` and ``entries`` are raw, as
-        the caller has already decided. $if/$else/$endif blocks (2.2) are
-        evaluated first and the dead branches removed.
-
-        A block placeholder standing alone in an element is filled by
-        replacing that element: the element is the writer's styling proxy,
-        not a real paragraph, and letting the content's own blocks nest
-        inside it would produce ``<p><p>``. Its attributes survive — the
-        same tag when the tag can hold blocks, a ``<div>`` carrying the
-        attributes when it cannot (§3.2).
-
-        The values are put in *after* the placeholders are matched, never
-        before: a value that happens to carry a ``${...}`` of its own is
-        the writer's text, not a second placeholder to be expanded.
-        """
+        """Fill a template string with values, evaluating conditionals and handling block placeholders/escaping."""
         template = TemplateSet.conditionals(template, values)
         raw_keys = {"content", "children", "entries"}
         stashed: dict[str, str] = {}
@@ -931,23 +876,7 @@ class TemplateSet:
         return equal if match.group(2) == "=" else not equal
 
     def document_slot(self, name: str, *, html: bool = True) -> str | None:
-        """A document-level template (§3): the file
-        ``documents/<name>.html|.txt`` of this set, then a root fragment
-        of that name — the writer's own vocabulary, so a set owning only
-        ``short_story.html`` dresses short stories the moment the writer
-        names it — else the built-in ``no-title``; None when the set has
-        no
-        such template, so the caller falls back to the ordinary
-        chapter/scene slot the document's shape would take.
-
-        Only real files count: a name matching a built-in slot the set
-        does not carry is not this document's answer, it is the shape's.
-
-        Format-scoped (§1.3): on a set laid over another for one format,
-        that format's own shelf answers here first and the root's falls
-        through — so a dress can differ per format without the two ever
-        being different sets.
-        """
+        """Return a named document template fragment for this set/format, or None if unavailable."""
         if self.prints_nothing:
             return ""
         name = document_template_stem(name)

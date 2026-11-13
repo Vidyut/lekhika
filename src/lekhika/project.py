@@ -1,33 +1,10 @@
-"""Transparent project storage: the model behind the editor.
+"""Project storage for Lekhika (.lekhika directories).
 
-A project is a ``.lekhika`` directory holding three things, deliberately
-kept separable so a writer can inspect or recover work by hand:
+- `project.sqlite3`: structure and metadata (tree, titles, synopses, counts, snapshots, key/value metadata).
+- Content files on disk: document/folder HTML content.
+- `backups/`: timestamped backup copies.
 
-- ``project.sqlite3`` — structure and metadata: the document tree
-  (parent + position), titles, synopses, word counts, snapshots and
-  per-document key/value metadata. Never prose.
-- ``documents/<id>.html`` — one plain HTML file of prose per document.
-  The manuscript itself; readable without this codebase.
-- ``backups/`` — timestamped copies of both, taken on open and on save.
-
-Flow of a document through the system:
-
-    add_document()   creates the row, then writes an empty content file
-    write_content()  atomically replaces that file (temp + fsync + rename)
-                     and refreshes the cached word_count
-    documents()      walks the tree in binder order (parent, then position)
-    delete_document() removes rows first, then files — so a crash leaves
-                     orphans on disk, never a row pointing at nothing
-
-Structure is split from prose on purpose: read_content()/write_content()
-touch only files, everything else touches only rows, and the two are
-reconciled by the document id.
-
-Export path: compile_units() walks the binder in order, renders each
-document through a TemplateSet, and the export_* methods assemble those
-units into the target format. Snapshots are per-document HTML copies,
-taken before destructive operations (split, merge, restore) so any of
-them can be reversed.
+Project is the storage/source-of-truth API used by the UI and export code.
 """
 
 from __future__ import annotations
@@ -2775,47 +2752,13 @@ class Project:
         return self.LINK_HREF_RE.sub(restore, html)
 
     def _chapter_exact(self, document: Document) -> bool:
-        """Whether a document plays by the Chapter rule (1.13): the
-        exact, case-sensitive match.
-
-        The rule follows the role (docs/MODEL.md): a document whose role
-        is Chapter plays by it, and a chapter keeps playing by it until
-        the writer gives it another role — the two base roles (1.17)
-        would otherwise silently loosen the rule for every chapter.
-        """
+        """Return True if the document's type requires exact, case-sensitive title matching (Chapter rule)."""
         role = self.type_of(document)
         return role == "Chapter" or (
             role == BASE_TYPE["document"] and document.kind == "chapter")
 
     def related_documents(self, document_id: str) -> tuple[list[Document], list[Document]]:
-        """Whole-word title matches around one document (1.13), both ways.
-
-        ``mentions``: other documents whose titles appear in this one's
-        text — the scene's characters and locations. ``mentioned_by``:
-        other documents whose text contains this one's title — the
-        continuity view on a character sheet.
-
-        Computed fresh from titles and prose on every call: nothing is
-        stored, so a retitle or an edit heals itself and no relation can
-        go stale. Whole-word phrase match (word-character boundaries,
-        case-insensitive) so "Rid" never matches inside "Somewhere". Three
-        rules on top of that:
-
-        - **Never itself, and never a duplicate name.** A document is not
-          related to the same document; and two documents sharing one
-          name — a chapter folder and its scene both called "Prologue" —
-          read as one document to the writer, so a title equal to this
-          one's (case aside) is skipped in both directions.
-        - **A Chapter's title must match exactly, case included.** Chapter
-          titles are often common words — the lowercase "prologue" in
-          "the prologue of the letter" is not a reference to the chapter
-          *Prologue*, while writing "Prologue" as it is titled is. The
-          rule keys on whose title is being matched: ``mentions`` matches
-          the other documents' titles, ``mentioned_by`` matches this one's
-          — so a Type of Chapter anywhere earns the strict rule.
-          Everything else keeps the case-insensitive match: names are
-          vocabulary however the writer typed them.
-        """
+        """Return (mentions, mentioned_by) for a document using whole-word title matches in current titles/prose."""
         documents = self.documents()
         target = next((d for d in documents if d.id == document_id), None)
         if target is None:
@@ -2889,26 +2832,7 @@ class Project:
 
     @staticmethod
     def _mentions_phrase(text: str, phrase: str, *, exact: bool = False) -> bool:
-        r"""Whole-word ``phrase`` inside ``text``.
-
-        (?<!\w)/(?!\w) rather than \b so titles that start or end with
-        punctuation still bind correctly, and both sides are casefolded
-        so a match survives every case difference the writer typed —
-        unless ``exact`` is set, which keeps the writer's case: a Chapter
-        is mentioned only when its title appears as it is written, not by
-        a common word in another case ("the prologue of the letter" is no
-        reference to the chapter *Prologue*). See related_documents.
-
-        Two things are deliberately *not* mentions:
-
-        - **A phrase with no letters in it.** A text title matches by
-          meaning; a bare number matches by coincidence — a year, a page
-          number, an index — so a chapter called "2" would be "mentioned" by
-          every "2024" in the book. Meaningless matches are worse than none.
-        - **Anything inside a URL.** A link copied from the internet is not a
-          reference to this project, and URLs are thick with the digits and
-          slashes that make the previous case so noisy.
-        """
+        """Return True if phrase appears as a whole-word match in text (optionally case-exact), excluding URLs and phrases without letters."""
         if not text or not phrase or not any(ch.isalpha() for ch in phrase):
             return False
         haystack = URL_RE.sub(" ", text)
@@ -2919,11 +2843,7 @@ class Project:
         return re.search(pattern, haystack.casefold()) is not None
 
     def search(self, query: str) -> list[Document]:
-        """Documents whose title, synopsis or body text contains ``query``.
-
-        Case-insensitive substring match over stored text. For previews
-        with surrounding context, see search_snippets().
-        """
+        """Return documents whose title, synopsis or body text contains query (case-insensitive)."""
         needle = query.casefold().strip()
         if not needle:
             return []
@@ -3037,15 +2957,7 @@ class Project:
         return {row[0]: row[1] for row in rows}
 
     def metadata_inherited(self, document_id: str) -> dict[str, str]:
-        """The values a document answers with: its own, and what it
-        inherits from the folders above it.
-
-        Nearest first, and the first non-empty value wins: the
-        document's own, then the nearest folder that has one, then the
-        next one up. An empty field means *inherit*, not *blank it* —
-        which is what makes a folder the place to set a field once for
-        everything inside it.
-        """
+        """Return effective metadata for a document, inheriting the first non-empty ancestor values."""
         values: dict[str, str] = {}
         by_id = {document.id: document for document in self.documents()}
         current = by_id.get(document_id)
@@ -3057,12 +2969,7 @@ class Project:
         return values
 
     def metadata_inherited_all(self) -> dict[str, dict[str, str]]:
-        """Every document's effective metadata, in one pass.
-
-        The same rule as :meth:`metadata_inherited` — its own value, then
-        the nearest folder that has one, then the next one up — for the
-        places that need the whole project at once (the outliner).
-        """
+        """Return effective inherited metadata for all documents."""
         entries = self.metadata_entries_all()
         by_id = {document.id: document for document in self.documents()}
         resolved: dict[str, dict[str, str]] = {}
@@ -3098,18 +3005,11 @@ class Project:
         return BASE_TYPE[self.type_group(document)]
 
     def type_group(self, document: Document) -> str:
-        """Which role group a document belongs to (1.17): a folder's
-        roles are the folder's, a document's are the document's, and
-        the two lists never meet."""
+        """Return the document's type group ('folder' or 'document')."""
         return "folder" if document.kind == "folder" else "document"
 
     def container_ids(self) -> set[str]:
-        """Ids that hold children — a container whatever its physical kind.
-
-        The filesystem model (docs/STORAGE.md): anything with children is a
-        folder, so a chapter holding scenes is a container to the interface
-        even though its stored kind is "chapter".
-        """
+        """Return ids of documents/folders that have children."""
         documents = self.documents()
         parents = {document.parent_id for document in documents
                    if document.parent_id}
@@ -3117,21 +3017,7 @@ class Project:
                 if document.kind == "folder" or document.id in parents}
 
     def sync_with_disk(self) -> int:
-        """Bring the database into step with the folder tree on disk.
-
-        The folder tree is the truth (docs/STORAGE.md); the database is
-        the index over it. A folder or file the writer added by hand —
-        in a file manager, in a backup restored onto disk — becomes a
-        row here, so it shows in the binder and can be written in. A row
-        whose file has gone keeps its row but loses its file, which
-        reads as an empty document rather than a mystery.
-
-        A container's own ``index.html`` is its prose, not a document of
-        its own: the row for the container already stands for that file,
-        so the index never grows a second row for it.
-
-        Returns how many rows were added.
-        """
+        """Sync database rows with files/folders on disk. Returns the number of rows added."""
         known = {
             str(row[0]): row[1]
             for row in self.db.execute("SELECT path,id FROM documents")
@@ -4267,21 +4153,7 @@ class Project:
     def template_choices(
             self, selected_ids: set[str] | None = None,
     ) -> tuple[list[TemplateSet], TemplateSet, list[str]]:
-        """What the export chooser offers, ordered (§2, §2.1).
-
-        Applicable templates first — every folder in the export's scope
-        naming one in book_settings, nearest (deepest) first — then the
-        rest of the project's templates, with the default always
-        reachable as the fallback. Returns that list, the pre-selected
-        entry (the most applicable, else the default), and the warnings:
-        assignments naming templates that no longer exist, which fall
-        back rather than exporting empty.
-
-        Nothing here persists (§2.1's one-shot rule): the choice lives in
-        the dialog that consumes this and is gone when it closes. A look
-        that should stick is assigned to the folder, which is what the
-        ordering above is computed from.
-        """
+        """Return available template sets, the default/preselected set for the scope, and warnings."""
         discovered = discover_template_sets(self.root)
         by_name = named_template_sets(self.root)
         default = discovered[0] if discovered else TemplateSet.builtin()
@@ -4312,31 +4184,12 @@ class Project:
     # -- templates as documents, and one-file templates (1.17) --------------
 
     def is_template(self, document_id: str) -> bool:
-        """Whether a document is a template (1.17): its body is markup
-        rather than manuscript, so it stays out of the book and the
-        sidebar shows the template design panel instead."""
+        """Return True if the document is marked as a template."""
         value = self.metadata(document_id).get(TEMPLATE_KEY, "")
         return value.strip().lower() in ("yes", "true", "1")
 
     def set_template(self, document_id: str, on: bool, *, _force: bool = False, confirmed: bool = False) -> None:
-        """Mark a document as a template, or take the mark away.
-
-        The mark is the document's own metadata (and the file's head
-        beside it) and nothing else: it says what the document *is*, and
-        every export asks. The row is written on its own, so replacing
-        the document's metadata elsewhere never unmakes the template.
-
-        Turning the mark ON is allowed only when the document is empty
-        of content and of other metadata: the FIRST metadata of a new
-        folder/document must be Template: yes. A document that already
-        holds prose or any other field is refused (ValueError) — it
-        cannot be converted. The normal way to make templates once per
-        project is to create the templates folder first, with Template:
-        yes as its first field, and put the templates inside it. A
-        folder with children that already hold content is refused for
-        the same reason: a template folder starts empty and its
-        children are templates from birth.
-        """
+        """Set or clear a document's template mark, enforcing empty-template rules unless forced/confirmed."""
         if on:
             if self.is_template(document_id):
                 return
@@ -4409,17 +4262,12 @@ class Project:
         self.db.commit()
 
     def template_documents(self) -> list[Document]:
-        """The documents that are templates (1.17)."""
+        """Return documents marked as templates."""
         return [document for document in self.documents()
                 if self.is_template(document.id)]
 
     def single_file_templates(self) -> list[Path]:
-        """The one-file templates in the project's templates folder (1.17).
-
-        A template is one file with its yaml in the head — no folder of
-        slots beside it — so these sit directly under templates/, where
-        the sets' own folders sit.
-        """
+        """Return single-file templates in the project's templates folder."""
         root = project_template_root(self.root)
         if not root.is_dir():
             return []
@@ -5322,26 +5170,7 @@ class Project:
                       templates: TemplateSet | None = None,
                       *, html: bool = True, fmt: str = "html", _toc: bool = True
                       ) -> list[tuple[str, str]]:
-        """Compile the manuscript into ordered ``(title, body)`` units.
-
-        A unit is one chapter (its own text plus its descendant scenes, in
-        binder order, separated by the scene-divider slot) or one standalone
-        scene that belongs to no chapter. Every body is fully rendered
-        through the template set, with each document's sidebar template
-        overriding its chapter/scene slot when the set provides one.
-
-        ``templates`` is the export's chosen set — the floor under
-        everything (§2). Explicit metadata wins over it at compile time:
-        a folder naming a template in book_settings dresses its own
-        subtree, resolved per document by _template_resolver, so an
-        assignment governs a book even inside a whole-project export.
-
-        ``fmt`` picks the book chrome (2.1): template pages selected by
-        the firing books — by direct folder selection, or by name match on
-        a whole-project compile — are assembled around their books'
-        documents before units are built, and they stay out of the
-        chapter/scene numbering and the running word total.
-        """
+        """Compile the selected manuscript into ordered rendered (title, body) units."""
         templates = (templates or TemplateSet.builtin()).for_format(fmt)
         set_for = self._template_resolver(templates, fmt)
         scope = self._compile_scope(selected_ids, fmt)
@@ -5769,20 +5598,7 @@ class Project:
 
     def import_markdown(self, paths: list[Path],
                         parent_id: str | None = None) -> dict:
-        """Create documents from markdown files (File → Import Markdown).
-
-        Reads Lekhika's own export and Scrivener's, so "export the project,
-        import it here" is a real round trip. Every metadata key the file
-        carries lands in the metadata table: a field the project does not
-        know yet is created, an existing one is filled. Structural keys
-        build the tree (``Parent`` names the document above, when that
-        document came in the same import).
-
-        Returns a summary for the caller to show: how many documents were
-        created, which fields were created, how many values were filled,
-        and which project-level keys were kept as they were because the
-        project already had a value for them.
-        """
+        """Import markdown files as documents, creating/filling metadata and tree structure. Returns an import summary."""
         from .markdown import markdown_to_html
         from .markdown_import import parse_markdown
 
@@ -7164,7 +6980,7 @@ class Project:
                 problems.append("manifest.json is unreadable")
 
         root_items_in_db = {
-            d.path.split("/")[0] if "/" in d.path else d.path
+            Path(d.path).parts[0] if d.path else d.path
             for d in self.documents()
             if not d.parent_id and d.path
         }
@@ -7188,12 +7004,12 @@ class Project:
             # (or a DB reordered without writing). Either way it is a
             # disagreement to ask about, not to smooth over.
             db_root_ordered = [
-                d.path.split("/")[0] if "/" in d.path else d.path
+                Path(d.path).parts[0]
                 for d in sorted(
                     (d for d in self.documents()
                      if not d.parent_id and d.path),
                     key=lambda d: d.position)
-                if d.path.split("/")[0].casefold() not in system_trees
+                if d.path and Path(d.path).parts[0].casefold() not in system_trees
             ]
             if manifest_ordered != db_root_ordered:
                 problems.append(
@@ -7232,14 +7048,14 @@ class Project:
                     (d for d in self.documents() if d.parent_id == parent_id),
                     key=lambda d: d.position)
                 db_ordered = [
-                    d.path.split("/")[-1] if "/" in d.path else d.path
+                    Path(d.path).name
                     for d in siblings
-                    if d.path and d.path.split("/")[-1] not in (".locked", "index.html")
+                    if d.path and Path(d.path).name not in (".locked", "index.html")
                 ]
                 db_children = {
-                    d.path.split("/")[-1] if "/" in d.path else d.path
+                    Path(d.path).name
                     for d in self.documents()
-                    if d.parent_id == parent_id
+                    if d.parent_id == parent_id and d.path
                 }
                 # Filter out system files and index.html
                 db_children = {c for c in db_children if c not in (".locked", "index.html")}

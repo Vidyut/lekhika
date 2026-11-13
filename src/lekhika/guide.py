@@ -1,16 +1,6 @@
-"""The Lekhika guide: the app's own manual, as a project.
+"""Built-in Lekhika guide project shipped with the application.
 
-The guide is a Lekhika project that ships with the software
-(``guide/guide.lekhika``), so it is written in Lekhika and read in Lekhika.
-It is a project like any other: browsable in the binder, and exportable —
-DOCX, EPUB, PDF, HTML, Markdown — for reading without the app at all.
-
-It is the project's example document as well as the user guide: a real
-book, in a real project, that a writer can look at, export, and (with
-*File → Save Project As…*) copy somewhere to work on as their own.
-
-It opens read-only, and a fresh install opens it before asking anyone to
-create a project: the software can be looked at before it is used.
+The guide opens read-only from its installed location and can be exported or saved as a copy.
 """
 
 from __future__ import annotations
@@ -26,14 +16,5 @@ def source_project() -> Path | None:
 
 
 def guide_project() -> Path | None:
-    """The guide, where it ships.
-
-    None when the installation does not carry it: the app then simply has
-    no guide to open.
-
-    It is opened where it lives, read-only. Nothing is copied into the
-    writer's disk — a program that leaves files behind is a program
-    people try once — and nothing is written back into the install
-    folder, whatever the permissions there happen to allow.
-    """
+    """Return the shipped guide project path, or None if unavailable."""
     return source_project()

@@ -1,17 +1,4 @@
-"""A layout that wraps its items onto as many rows as the width allows.
-
-Qt's canonical FlowLayout example, trimmed to what this application
-needs. The Editor tab's format bar needs it (2.4h): a QToolBar cannot
-wrap, so a format bar carrying every control lost its tail past the
-editor's width — alignment was one narrow window away from invisible,
-and the author of the app found the bar cut off at his own window. A
-flowing row keeps every control on screen whatever the window does,
-and costs vertical space only when there really is no room.
-
-Used with the container's height-for-width turned on (see the Editor
-tab's build), so a narrow window makes the bar taller rather than
-clipping anything.
-"""
+"""Wrapping layout for toolbars/controls that must reflow to available width."""
 
 from __future__ import annotations
 
@@ -20,13 +7,7 @@ from PySide6.QtWidgets import QLayout
 
 
 class FlowLayout(QLayout):
-    """Arrange widgets left to right, starting a new row whenever the
-    next item would not fit — text wrapping, for controls.
-
-    A QLayout like any other: add and take items the way the box
-    layouts do, and `hasHeightForWidth` tells the widget holding it
-    that its height depends on the width it is given.
-    """
+    """Layout that arranges items in rows, wrapping to fit the available width."""
 
     def __init__(self, parent=None, margin: int = 0, spacing: int = 4):
         super().__init__(parent)

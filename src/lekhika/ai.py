@@ -1,12 +1,4 @@
-"""Local-LLM client (2.4, layer 2).
-
-Talks to any OpenAI-compatible ``/chat/completions`` endpoint with
-nothing but urllib — Ollama's localhost server is the default, but an
-endpoint/key/model triple in Preferences covers LM Studio, llama.cpp
-server and the rest. Responses land in the editor only through the
-tracked-changes path (apply_tracked_replacement), so a model can never
-rewrite the manuscript behind the writer's back.
-"""
+"""AI provider/configuration and request helpers."""
 
 from __future__ import annotations
 

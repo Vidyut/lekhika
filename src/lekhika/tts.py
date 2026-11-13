@@ -1,27 +1,4 @@
-"""Read prose aloud (3.1).
-
-Three ways out, picked by where they run:
-
-- **System speech** — the system's own engine (Qt's QTextToSpeech:
-  speech-dispatcher and espeak-ng are installed here). The default, and
-  the only source that works with nothing installed.
-- **Piper** — a small, free, offline neural speech program the user
-  downloads (a few dozen megabytes, or lighter), pointed at here with
-  its binary and one voice model. Considerably lighter than the big
-  models, and it never sends text out of the machine. The download
-  lives with Piper's releases; the settings just remember where the
-  binary and voice went.
-- **External API** — a TTS service over HTTP (OpenAI-compatible
-  request shape: JSON in, audio bytes out) the writer has configured
-  themselves, for trying free tiers at low volume, or for providers
-  with voices they already pay for. The key lives in settings, never
-  in the project.
-
-A session reader owns one recorder of that choice: speak plain text
-for the system path, synthesize to a temporary file and play it for
-Piper or the API. Nothing here uploads a manuscript; the API route
-sends the words it speaks, and only those.
-"""
+"""Text-to-speech integration and speech reader helpers."""
 
 from __future__ import annotations
 

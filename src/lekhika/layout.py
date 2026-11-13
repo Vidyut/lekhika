@@ -1,18 +1,4 @@
-"""The filesystem layout: writing a project out as a folder tree, and reading
-it back (docs/STORAGE.md).
-
-This is the storage migration's core, built *beside* the existing database
-rather than replacing it — nothing in the running application calls this yet.
-It exists so the tree can be written, read back, and compared before anything
-real depends on it.
-
-It works on plain :class:`Node` values, not on the database, so it can be
-tested without a project and without Qt.
-
-Frontmatter and manifests use a documented **subset of YAML** — keys, scalars,
-simple lists, and one level of nesting by indentation. No anchors, aliases,
-multi-document streams or tags; no dependency (docs/STORAGE.md).
-"""
+"""On-disk project layout: folder/file tree, order, front matter and metadata helpers."""
 
 from __future__ import annotations
 
@@ -488,37 +474,14 @@ def _string_map(raw) -> dict:
 
 
 def _page_setup(raw) -> dict | None:
-    """Print geometry as a flat map of scalars, or None if it is not one.
-
-    Validation is deliberately *not* here: the range and margin rules
-    belong to ``project.clean_page_setup``, which the dialog and the
-    export already share. This layer only has to hand back exactly what
-    was stored — a folder whose geometry a hand editor broke should load
-    and then fail validation where everything else fails it, not be
-    silently dropped on the way in.
-    """
+    """Return stored page-setup scalars as a dict, or None if absent/invalid shape."""
     if not isinstance(raw, dict) or not raw:
         return None
     return {str(key): value for key, value in raw.items()}
 
 
 def _folder_values(own: dict, index: dict) -> dict:
-    """A folder's fields, the manifest winning over its ``index.html``.
-
-    The manifest is what a *copy* of the folder carries, so it is the
-    authority; ``index.html`` frontmatter only fills what it leaves out
-    (docs/STORAGE.md). "Leaves out" means empty as well as absent — a
-    folder written before these fields lived in the manifest has them only
-    here, and an empty manifest ``synopsis`` is not a deliberate choice.
-
-    **The title is the exception, and it is the one that matters.** An empty
-    title *is* a decision: a writer who left the binder title blank keeps it
-    blank, and it must never be borrowed from the directory name — the name
-    is a slug, carries the disambiguation number when two folders collide,
-    and the writer is not supposed to see it (docs/STORAGE.md). So a keyed
-    title is kept even when it is empty; only a manifest with no title at
-    all falls through to the index.
-    """
+    """Merge folder manifest/index values, preferring manifest data while preserving explicit empty titles."""
     values = dict(index)
     values.update({key: value for key, value in own.items()
                    if value not in (None, "", {}, [])})

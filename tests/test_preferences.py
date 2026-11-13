@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from lekhika import ai  # noqa: E402
 from lekhika.app import MainWindow, PreferencesDialog, load_paste_prefs  # noqa: E402
 from lekhika.preferences import (  # noqa: E402
-    CSS_EDIT, diagnostics, update_check_due)
+    CSS_EDIT, diagnostics, update_check_due, update_mode)
 from lekhika.project import Project  # noqa: E402
 
 _application = QApplication.instance() or QApplication([])
@@ -539,18 +539,18 @@ class UpdateModeTests(unittest.TestCase):
         self.dialog.deleteLater()
         QSettings().remove("update/mode")
 
-    def test_the_modes_are_auto_check_manual_nothing(self):
+    def test_the_modes_are_check_automatically_manual_never(self):
         box = self.dialog.update_mode_box
         self.assertEqual([box.itemText(row) for row in range(box.count())],
-                         ["Auto", "Check", "Manual", "Nothing"])
+                         ["Check automatically", "Check only when I ask", "Never check"])
 
-    def test_the_default_is_the_button_because_that_is_consent(self):
+    def test_the_default_is_manual(self):
         self.assertEqual(self.dialog.update_mode_box.currentData(), "manual")
 
-    def test_the_page_recommends_regular_checks_at_least(self):
+    def test_the_page_recommends_automatic_checks(self):
         texts = [label.text()
                  for label in self.dialog.pages.findChildren(QLabel)]
-        self.assertTrue(any("recommend" in text and "Check" in text
+        self.assertTrue(any("Automatic checks" in text or "new version" in text
                             for text in texts), texts)
 
 
@@ -567,8 +567,8 @@ class UpdateScheduleTests(unittest.TestCase):
             QSettings().setValue("update/mode", mode)
             self.assertFalse(update_check_due(), mode)
 
-    def test_auto_and_check_look_once_a_day(self):
-        for mode in ("auto", "check"):
+    def test_check_looks_once_a_day(self):
+        for mode in ("check", "auto"):
             QSettings().setValue("update/mode", mode)
             QSettings().remove("update/lastCheck")
             self.assertTrue(update_check_due(), mode)
@@ -580,9 +580,11 @@ class UpdateScheduleTests(unittest.TestCase):
                 (datetime.now() - timedelta(days=1, minutes=1)).isoformat())
             self.assertTrue(update_check_due(), mode)
 
-    def test_the_older_name_for_manual_still_reads(self):
+    def test_older_names_still_read(self):
         QSettings().setValue("update/mode", "ask")
         self.assertFalse(update_check_due())
+        QSettings().setValue("update/mode", "auto")
+        self.assertEqual(update_mode(), "check")
 
     def test_a_pre_release_is_not_newer_than_its_version(self):
         from lekhika.preferences import numeric_version
@@ -644,16 +646,10 @@ class StartupUpdateTests(unittest.TestCase):
         self.assertIn("1.0.1 is available", message)
         self.assertFalse(install.called)
 
-    def test_auto_installs_and_says_what_to_do(self):
-        message, _, install = self._start("auto", installed=True)
-        self.assertIn("was installed", message)
-        self.assertIn("restart", message)
-        install.assert_called_once_with("1.0.0", "1.0.1")
-
-    def test_auto_that_cannot_install_only_tells(self):
+    def test_auto_mode_normalises_to_check_and_notifies(self):
         message, _, install = self._start("auto", installed=False)
         self.assertIn("1.0.1 is available", message)
-        install.assert_called_once()
+        self.assertFalse(install.called)
 
 
 if __name__ == "__main__":

@@ -1,21 +1,6 @@
-"""The Page view (3.2): the current document on real, printed pages.
+"""Page preview for the current document.
 
-QTextEdit cannot paginate live — with word wrap on it re-stamps the
-document's pageSize to the viewport on every relayout, so the editing
-widget will never hold a paper size. The projection owns its own
-QTextDocument instead: the editor's HTML laid out at the book's
-text-column size (page setup, 1.15), painted page by page — pasteboard,
-paper, margins, page numbers — the way the export will print it.
-
-Layout coordinates for such a document are page-stacked: page i's
-content lives at y in [i * col_h, (i + 1) * col_h), verified against
-QTextDocumentLayout. Dblclick jumps back to the editor at the same
-character position: both documents are built from the same HTML, so a
-character offset maps.
-
-The geometry helpers at the top are pure functions (canvas pixels only,
-no Qt objects in or out beyond tuples/QRectF) so tests can pin them
-without a widget.
+Renders document HTML into a paginated, read-only canvas using project/page geometry. Provides geometry helpers and a PageView widget.
 """
 
 from __future__ import annotations
