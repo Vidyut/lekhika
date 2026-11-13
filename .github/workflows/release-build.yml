@@ -39,10 +39,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -143,7 +143,7 @@ jobs:
           ARCH=x86_64 ./appimagetool "$APPDIR" "dist/Lekhika-linux-x86_64.AppImage"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/${{ matrix.artifact_name }}.zip
@@ -151,7 +151,7 @@ jobs:
 
       - name: Upload AppImage artifact (Linux)
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lekhika-linux-appimage
           path: dist/Lekhika-linux-x86_64.AppImage
@@ -159,7 +159,7 @@ jobs:
 
       - name: Attach zip to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/${{ matrix.artifact_name }}.zip
         env:
@@ -167,7 +167,7 @@ jobs:
 
       - name: Attach AppImage to GitHub Release
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/Lekhika-linux-x86_64.AppImage
         env:
