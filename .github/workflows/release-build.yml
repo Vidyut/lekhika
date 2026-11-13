@@ -60,7 +60,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python -c "from pathlib import Path; Path('_lekhika_entry.py').write_text('from lekhika.app import main\\nmain()\\n', encoding='utf-8')"
+          python -c "from pathlib import Path; Path('_lekhika_entry.py').write_text('from lekhika.app import main' + chr(10) + 'main()' + chr(10), encoding='utf-8')"
           python -m PyInstaller --noconfirm --clean --name Lekhika ${{ matrix.pyinstaller_args }} --collect-all lekhika --collect-all PySide6 --collect-all docx --collect-all reportlab _lekhika_entry.py
 
       - name: Smoke test bundle (Linux)
