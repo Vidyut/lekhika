@@ -3729,11 +3729,69 @@ class Project:
         return {"depth": depth, "markers": markers}
 
     def _require_metadata_for_export(self, selected_ids: set[str] | None) -> None:
-        missing = self.missing_required_metadata(selected_ids)
+        missing = list(self.missing_required_metadata(selected_ids))
+        # Template-declared required fields: for each exported page, if a
+        # governing template (assigned on an ancestor folder) declares
+        # required fields for that page's Type, the page must provide them.
+        ordered = self.documents()
+        parents = {document.id: document.parent_id for document in ordered}
+        by_id = {document.id: document for document in ordered}
+        template_cache: dict[str, object] = {}
+
+        def governing_template(document: Document):
+            current = document
+            while current is not None:
+                if current.kind == "folder":
+                    name = self.book_settings(current.id).get("template", "").strip()
+                    if name:
+                        if name not in template_cache:
+                            template_cache[name] = self.resolve_template(name)
+                        template = template_cache[name]
+                        if template is not None:
+                            return template
+                parent_id = parents.get(current.id)
+                current = by_id.get(parent_id) if parent_id else None
+            return None
+
+        for document in self._export_documents(selected_ids):
+            template = governing_template(document)
+            if template is None:
+                continue
+            doc_type = self.type_of(document)
+            values = self.metadata_inherited(document.id)
+            for req_type, fields in template.required_fields_by_type().items():
+                if req_type != "*" and req_type.casefold() != doc_type.casefold():
+                    continue
+                for field in fields:
+                    if str(values.get(field, "")).strip():
+                        continue
+                    project_value = self.project_metadata().get(field)
+                    if project_value is not None:
+                        held = (project_value[0]
+                                if isinstance(project_value, tuple)
+                                else str(project_value))
+                        if str(held).strip():
+                            continue
+                    missing.append((document.title, doc_type, field))
+        # Dedupe while preserving order.
+        seen = set()
+        deduped = []
+        for item in missing:
+            key = tuple(item) if isinstance(item, tuple) else (item,)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        missing = deduped
         if not missing:
             return
-        lines = "\n".join(
-            f"- {title}: {field}" for title, field in missing[:20])
+        display = []
+        for item in missing[:20]:
+            if isinstance(item, tuple) and len(item) == 3:
+                display.append(f"- {item[0]} ({item[1]}): {item[2]}")
+            elif isinstance(item, tuple) and len(item) == 2:
+                display.append(f"- {item[0]}: {item[1]}")
+        lines = "\n".join(display)
         more = "" if len(missing) <= 20 else f"\n… and {len(missing) - 20} more"
         raise ValueError(
             "Some fields marked as required are empty:\n"
@@ -4014,6 +4072,36 @@ class Project:
             "book_settings",
             json.dumps(stored, ensure_ascii=False, indent=1),
         )
+        # A template may declare types and required metadata fields.
+        template_name = (cleaned.get("template") or "").strip() if cleaned else ""
+        if template_name:
+            template = self.resolve_template(template_name)
+            if template is not None:
+                for t in template.folder_types():
+                    self.add_type("folder", t)
+                for t in template.document_types():
+                    self.add_type("document", t)
+                doc = next((d for d in self.documents() if d.id == document_id), None)
+                if doc is not None:
+                    doc_type = self.type_of(doc)
+                    for req_type, fields in template.required_fields_by_type().items():
+                        applies_to_folder = (req_type == "*"
+                                             or req_type.casefold() == doc_type.casefold())
+                        for field in fields:
+                            if req_type != "*":
+                                self.set_type_required(req_type, field, True)
+                            elif applies_to_folder:
+                                self.set_type_required(doc_type, field, True)
+                            if applies_to_folder:
+                                entries = self.metadata_entries(document_id)
+                                if field not in entries:
+                                    vals = {k: v[0] for k, v in entries.items()}
+                                    types = {k: v[1] for k, v in entries.items()}
+                                    opts = {k: v[2] for k, v in entries.items()}
+                                    vals[field] = ""
+                                    types[field] = "text"
+                                    opts[field] = []
+                                    self.set_metadata(document_id, vals, types, opts)
 
     def page_setup(self, document_id: str) -> dict | None:
         """Print geometry for one book folder (1.15), or None — no
@@ -5809,18 +5897,20 @@ class Project:
         self._atomic_write(Path(destination), content)
 
     def export_root_titles(self, selected_ids: set[str] | None) -> list[str]:
-        """The *book* an export dresses (Phase 1), for `${BookTitle}`: the
-        selected containers' names, or the project's own title for a
-        whole-project export.
+        """The *book* an export dresses, for `${BookTitle}`.
 
         Only a folder is a book. A lone chapter or document answers
-        nothing rather than wearing its own name as one: an empty
-        `${BookTitle}` prints a blank (or lets the sample's head stand),
-        which is honest, where a document's title masquerading as the
-        book's would not be.
+        nothing rather than wearing its own name as one. `${BookTitle}`
+        comes from the book folder's own `BookTitle` metadata — never
+        invented from folder or project names.
         """
         if not selected_ids:
-            return [self.get_setting("title", "")]
+            # Whole-project export: BookTitle comes from project metadata.
+            entry = self.project_metadata().get("BookTitle")
+            if entry is None:
+                return [""]
+            value = entry[0] if isinstance(entry, tuple) else str(entry)
+            return [str(value).strip()]
         ordered = self.documents()
         parents = {document.id: document.parent_id for document in ordered}
 
@@ -5836,8 +5926,12 @@ class Project:
                  if document.id in selected_ids and not inside_the_selection(document.id)]
         if not roots:
             roots = [document for document in ordered if document.id in selected_ids]
-        return [document.title for document in roots
-                if document.kind == "folder"]
+        titles = []
+        for document in roots:
+            if document.kind != "folder":
+                continue
+            titles.append(self.metadata(document.id).get("BookTitle", "").strip())
+        return titles
 
     def _document_template_is_toc(self, document, templates) -> bool:
         """True when this unit is the contents page (carries ${ToC})."""
@@ -5925,7 +6019,10 @@ class Project:
         titles = self.export_root_titles(selected_ids)
         book = titles[0] if titles else ""
         values["BookTitle"] = book
-        values["Title"] = book
+        # Do not invent Title for print config from export scope; keep any
+        # explicit metadata Title if present, else fall back to book.
+        if "Title" not in values or not str(values.get("Title", "")).strip():
+            values["Title"] = book
         values["Date"] = date.today().isoformat()
         values["Format"] = fmt
         return values

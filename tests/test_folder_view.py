@@ -73,31 +73,39 @@ class FolderViewTests(unittest.TestCase):
         # runs while loading, but setCurrentWidget from here does not.
         self.window.views.setCurrentWidget(widget)
 
+    @property
+    def _corkboard_tab(self):
+        return getattr(self.window, "corkboard_page", self.window.corkboard)
+
+    @property
+    def _outliner_tab(self):
+        return getattr(self.window, "outliner_page", self.window.outliner)
+
     def test_folder_selection_opens_the_outliner_by_default(self):
         self._select(self.folder_a.id)
 
-        self.assertIs(self.window.views.currentWidget(), getattr(self.window, 'outliner_page', self.window.outliner))
+        self.assertIs(self.window.views.currentWidget(), self._outliner_tab)
         self.assertEqual(self.project.get_setting("folder_view"), "")
 
     def test_a_hand_switch_to_the_corkboard_is_remembered(self):
         self._select(self.folder_a.id)
-        self._click_tab(self.window.corkboard)
+        self._click_tab(self._corkboard_tab)
         self.assertEqual(self.project.get_setting("folder_view"), "corkboard")
 
         # Another folder while the corkboard is showing stays put…
         self._select(self.folder_b.id)
-        self.assertIs(self.window.views.currentWidget(), self.window.corkboard)
+        self.assertIs(self.window.views.currentWidget(), self._corkboard_tab)
 
         # …and from the Editor tab the remembered view comes back.
         # (Re-selecting the item that is already current fires no
         # selection signal, so the other folder is chosen first.)
         self._click_tab(self.window.editor_page)
         self._select(self.folder_a.id)
-        self.assertIs(self.window.views.currentWidget(), self.window.corkboard)
+        self.assertIs(self.window.views.currentWidget(), self._corkboard_tab)
 
     def test_reopening_the_project_keeps_the_choice(self):
         self._select(self.folder_a.id)
-        self._click_tab(self.window.corkboard)
+        self._click_tab(self._corkboard_tab)
 
         # A fresh window reopens the same project, as a relaunch would.
         self.window.project = None
@@ -106,7 +114,8 @@ class FolderViewTests(unittest.TestCase):
         reopened._switch_project(self.project)
 
         self.assertEqual(self.project.get_setting("folder_view"), "corkboard")
-        self.assertIs(reopened.views.currentWidget(), reopened.corkboard)
+        self.assertIs(reopened.views.currentWidget(),
+                      getattr(reopened, "corkboard_page", reopened.corkboard))
 
     def test_junk_stored_choice_falls_back_to_the_outliner(self):
         self.project.set_setting("folder_view", "banana")
@@ -117,7 +126,7 @@ class FolderViewTests(unittest.TestCase):
 
     def test_a_document_selection_never_records_the_preference(self):
         self._select(self.folder_a.id)
-        self._click_tab(self.window.corkboard)
+        self._click_tab(self._corkboard_tab)
 
         chapter = self.project.add_document(
             "Chapter One", parent_id=self.draft.id, kind="chapter"

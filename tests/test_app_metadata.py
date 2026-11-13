@@ -100,8 +100,8 @@ class MetadataPanelTests(unittest.TestCase):
 
         self.assertFalse(self.project.is_locked(self.scene.id))
 
-    def test_folder_selection_shows_project_metadata(self):
-        self.project.set_project_metadata({"Series": ("Series", "text", [])})
+    def test_folder_selection_shows_folder_metadata(self):
+        self.project.set_metadata(self.folder.id, {"Series": "Saga"})
         # Select away first: the panel refreshes on a selection CHANGE,
         # and the folder was already selected after the project switch.
         self.window._select_document(self.scene.id)
@@ -109,10 +109,10 @@ class MetadataPanelTests(unittest.TestCase):
         self.window._select_document(self.folder.id)
 
         table = self.window.metadata_table
-        self.assertEqual(self.window._metadata_target, PROJECT_METADATA_TARGET)
-        self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 2).text(), "Series")
-        self.assertEqual(table.item(0, 2).text(), "Series")
+        self.assertEqual(self.window._metadata_target, self.folder.id)
+        row = next(r for r in range(table.rowCount())
+                   if table.item(r, 1) and table.item(r, 1).text() == "Series")
+        self.assertEqual(table.item(row, 2).text(), "Saga")
 
     def test_nothing_selected_targets_the_project(self):
         self.project.set_project_metadata({"Series": ("Series", "text", [])})
@@ -137,7 +137,7 @@ class MetadataPanelTests(unittest.TestCase):
             ("Maya", "text", []),
         )
 
-    def test_live_edit_persists_a_project_field(self):
+    def test_live_edit_persists_a_folder_field(self):
         self.window._select_document(self.folder.id)
 
         self.window.metadata_table.add_field()
@@ -146,7 +146,7 @@ class MetadataPanelTests(unittest.TestCase):
         self.window.metadata_table.item(row, 2).setText("Series")
 
         self.assertEqual(
-            self.project.project_metadata()["Series"],
+            self.project.metadata_entries(self.folder.id)["Series"],
             ("Series", "text", []),
         )
 
@@ -229,7 +229,7 @@ class MetadataPanelTests(unittest.TestCase):
 
     def test_edit_metadata_target_follows_the_selection(self):
         self.assertEqual(self.window._selection_metadata_target(),
-                         PROJECT_METADATA_TARGET)          # Draft folder after switch
+                         self.folder.id)          # Draft folder after switch
         self.window._select_document(self.scene.id)
         self.assertEqual(self.window._selection_metadata_target(), self.scene.id)
         self.window.current_id = None
@@ -241,7 +241,7 @@ class MetadataPanelTests(unittest.TestCase):
 
     def test_editor_tree_selecting_a_folder_switches_the_panel(self):
         self.project.set_metadata(self.scene.id, {"POV": "Maya"})
-        self.project.set_project_metadata({"Series": ("Series", "text", [])})
+        self.project.set_metadata(self.folder.id, {"Series": "Series"})
         self.window._select_document(self.scene.id)
         row = next(r for r in range(self.window.metadata_table.rowCount())
                    if self.window.metadata_table.item(r, 1)
@@ -250,7 +250,7 @@ class MetadataPanelTests(unittest.TestCase):
 
         self.window._select_document(self.folder.id)
 
-        self.assertEqual(self.window._metadata_target, PROJECT_METADATA_TARGET)
+        self.assertEqual(self.window._metadata_target, self.folder.id)
         row = next(r for r in range(self.window.metadata_table.rowCount())
                    if self.window.metadata_table.item(r, 1)
                    and self.window.metadata_table.item(r, 1).text() == "Series")

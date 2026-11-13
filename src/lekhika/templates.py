@@ -678,6 +678,107 @@ class TemplateSet:
         # the duplicate is written from — the copy answers the same bytes.
         return SHIPPED_FILES.get(self.name, {}).get("style.css", "")
 
+    def readme(self) -> str:
+        """This set's own description/instructions (README), if any.
+
+        Read from the set's folder so user-created templates work without
+        custom handling: a README/README.md/README.txt in the set (or the
+        root set for a format overlay) is shown as-is. Shipped sets carry
+        their README in the files map.
+        """
+        if self.directory is not None:
+            for name in ("README", "README.md", "README.txt", "readme.md", "readme.txt"):
+                path = self.directory / name
+                if path.is_file():
+                    try:
+                        return path.read_text(encoding="utf-8").strip()
+                    except (OSError, UnicodeDecodeError):
+                        return ""
+        if self.under is not None:
+            text = self.under.readme()
+            if text:
+                return text
+        return (SHIPPED_FILES.get(self.name, {}).get("README") or "").strip()
+
+    @staticmethod
+    def _split_names(raw: str) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for part in re.split(r"[,\n;]+", str(raw or "")):
+            name = part.strip()
+            if not name:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+        return names
+
+    def folder_types(self) -> list[str]:
+        """Folder Types this template declares as applicable to its children."""
+        return self._split_names(self.docx_config.get("folder types", ""))
+
+    def document_types(self) -> list[str]:
+        """Document Types this template declares as applicable to its children."""
+        return self._split_names(self.docx_config.get("document types", ""))
+
+    def required_fields_by_type(self) -> dict[str, list[str]]:
+        """Required metadata fields by Type, from template config.
+
+        Supports ``Required metadata fields: Book: BookTitle, Author``
+        (and scoped forms like ``Book: BookTitle; Chapter: PoV``).
+        """
+        raw = (self.docx_config.get("required metadata fields")
+               or self.docx_config.get("required fields")
+               or self.docx_config.get("required") or "")
+        result: dict[str, list[str]] = {}
+        if not raw:
+            return result
+        # Scoped form: "Book: BookTitle, Author; Chapter: PoV"
+        if ":" in raw:
+            for clause in re.split(r"[;\n]+", raw):
+                clause = clause.strip()
+                if not clause or ":" not in clause:
+                    continue
+                type_name, fields_raw = clause.split(":", 1)
+                type_name = type_name.strip()
+                if not type_name:
+                    continue
+                fields = [n.strip() for n in re.split(r"[,\s]+", fields_raw)
+                          if n.strip()]
+                if not fields:
+                    continue
+                key = next((k for k in result if k.casefold() == type_name.casefold()),
+                           type_name)
+                existing = result.get(key, [])
+                seen = {n.casefold() for n in existing}
+                for field in fields:
+                    if field.casefold() not in seen:
+                        seen.add(field.casefold())
+                        existing.append(field)
+                result[key] = existing
+            return result
+        # Unscoped legacy/simple form.
+        fields = self._split_names(raw)
+        if fields:
+            result["*"] = fields
+        return result
+
+    def required_fields(self) -> list[str]:
+        """All metadata fields this template declares as required (flat)."""
+        by_type = self.required_fields_by_type()
+        if not by_type:
+            return []
+        flat: list[str] = []
+        seen: set[str] = set()
+        for fields in by_type.values():
+            for field in fields:
+                if field.casefold() not in seen:
+                    seen.add(field.casefold())
+                    flat.append(field)
+        return flat
+
     @property
     def editable(self) -> bool:
         return self.directory is not None
@@ -1397,6 +1498,7 @@ DEFAULT_CONFIG = """Docx
 #   Head font: Georgia, 9           the running heads' own family and size
 #   Font: Georgia, 11pt, 1.15, 1cm  name, size, line spacing, indent
 #   Title style: Book Title         Chapter style / Scene style / Body style
+#   Required: FieldName             metadata fields this template needs
 #
 # Units: inches by default, with mm / cm / in / pt suffixes. Placeholders in
 # a value are the same as in a fragment (${Title}, ${Date}, ${Author}, any
@@ -1414,6 +1516,13 @@ DEFAULT_CONFIG = """Docx
 # changing anything you might want back.
 #
 """
+
+BOOK_CONFIG = DEFAULT_CONFIG + (
+    "Template: Book\n"
+    "Folder types: Chapter\n"
+    "Document types: Scene, frontmatter, backmatter\n"
+    "Required metadata fields: Book: BookTitle, Author\n"
+)
 
 SHORT_STORY_CONFIG = """Docx
 # Short stories print on A4 with a page per document. This one live line
@@ -1745,6 +1854,8 @@ Page setup in the sidebar is where trim and margins live, so this set
 states no paper of its own; print-config.txt is all comments. Uncomment a
 line to try it: the config overrides page setup, and page setup overrides
 the built-in A4.
+
+This template requires the metadata "BookTitle" to be set for the parent folder.
 """
 
 # The children family: `${children}` is every child a container holds,
@@ -1856,7 +1967,7 @@ SHIPPED_FILES: dict[str, dict[str, str]] = {
         "chapter.html": BOOK_CHAPTER_HTML,
         "scene.html": BOOK_SCENE_HTML,
         "title-page.html": BOOK_TITLE_PAGE_HTML,
-        "print-config.txt": DEFAULT_CONFIG,
+        "print-config.txt": BOOK_CONFIG,
         "style.css": BOOK_CSS,
         "README": BOOK_README,
     },

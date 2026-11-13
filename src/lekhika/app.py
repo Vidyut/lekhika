@@ -47,12 +47,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    QDate, QEvent, QItemSelectionModel, QLocale, QMimeData, QSettings, QSize,
+    QDate, QEvent, QItemSelectionModel, QLocale, QMimeData, QRect, QSettings, QSize,
     Qt, QTimer, QTime, QUrl, Signal,
 )
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QDesktopServices, QFont, QFontDatabase,
-    QKeySequence,
+    QKeySequence, QPainter,
     QTextBlockFormat,
     QTextCharFormat, QTextCursor, QTextDocument, QTextDocumentFragment,
     QTextFormat, QTextListFormat, QTextOption, QPixmap,
@@ -223,45 +223,73 @@ def print_via_desktop(path: Path, command: list[str] | None = None):
 
 
 class _SynopsisDelegate(QStyledItemDelegate):
-    """Edit one thing on a corkboard card: its synopsis.
+    """Paint corkboard cards (element bands/highlights) and detect clicks.
 
-    A card shows three things — the title, the synopsis and the count —
-    and only the synopsis is editable here: the title is the document's,
-    and the count is the document's too. The editor is the card's own
-    rectangle, so the typing happens where the card is.
+    Clicking the title toggles a card open/closed; clicking elsewhere
+    selects the card (details are edited in the inspector panel).
     """
 
-    edited = Signal(str, str)            # document id, the new synopsis
+    title_clicked = Signal(object)       # QModelIndex
+    body_clicked = Signal(object)        # QModelIndex
 
-    def createEditor(self, parent, option, index):
-        editor = QPlainTextEdit(parent)
-        editor.setFrameShape(QFrame.Shape.NoFrame)
-        # The card's own colour, so the editor does not flash white in a
-        # dark theme.
-        editor.setStyleSheet("background: transparent;")
-        return editor
-
-    def setEditorData(self, editor, index):
-        editor.setPlainText(index.data(Qt.UserRole + 1) or "")
-
-    def setModelData(self, editor, model, index):
-        text = editor.toPlainText()
-        model.setData(index, text, Qt.UserRole + 1)
-        document_id = index.data(Qt.UserRole)
-        if document_id:
-            self.edited.emit(document_id, text)
-
-    def updateEditorGeometry(self, editor, option, index):
-        editor.setGeometry(option.rect)
-
-    def eventFilter(self, editor, event):
-        if (event.type() == QEvent.Type.KeyPress
-                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
-            # A synopsis is a paragraph: Enter makes a new line, and the
-            # editor closes when the writer clicks away. Letting the
-            # default delegate have the key would commit on every line.
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.Type.MouseButtonDblClick:
             return False
-        return super().eventFilter(editor, event)
+        if (event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.LeftButton):
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            # Title is the top region of the card; body below it.
+            title_h = 28
+            if pos.y() <= option.rect.top() + title_h:
+                self.title_clicked.emit(index)
+            else:
+                self.body_clicked.emit(index)
+            # Return False so double-click detection still works.
+            return False
+        return super().editorEvent(event, model, option, index)
+
+    @staticmethod
+    def _element_color(element: str) -> QColor:
+        digest = abs(hash(element))
+        hue = digest % 360
+        return QColor.fromHsv(hue, 130, 210)
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        elements = index.data(Qt.UserRole + 2) or []
+        state = index.data(Qt.UserRole + 3) or "normal"
+        rect = option.rect
+        if elements:
+            band_h = 3
+            margin = 10
+            y = rect.bottom() - margin - band_h + 1
+            x0 = rect.left() + margin
+            max_w = max(0, rect.width() - margin * 2)
+            if max_w > 0:
+                # A thin multicoloured underline: contiguous segments.
+                painter.save()
+                seg_w = max_w / len(elements)
+                for i, element in enumerate(elements):
+                    left = x0 + round(i * seg_w)
+                    right = x0 + round((i + 1) * seg_w)
+                    if right <= left:
+                        right = left + 1
+                    color = self._element_color(element)
+                    painter.fillRect(QRect(left, y, right - left, band_h), color)
+                painter.restore()
+        if state == "dim":
+            painter.save()
+            painter.fillRect(rect, QColor(128, 128, 128, 90))
+            painter.restore()
+        elif state == "match":
+            painter.save()
+            pen = painter.pen()
+            pen.setColor(QColor(70, 140, 220))
+            pen.setWidth(3)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 6, 6)
+            painter.restore()
 
 
 class FindReplaceDialog(QDialog):
@@ -2486,6 +2514,9 @@ class MainWindow(QMainWindow):
         self.tree.setDragDropMode(QTreeWidget.InternalMove)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemChanged.connect(self._title_changed)
+        self._tree_pressed_was_current = False
+        self.tree.itemPressed.connect(self._tree_item_pressed)
+        self.tree.itemClicked.connect(self._tree_item_clicked)
         # A drop reports itself as a removal plus an insertion, or as a
         # move, depending on how Qt chose to write it (1.18): listening
         # to only one of the three left a real drag unheard, and the
@@ -2527,21 +2558,26 @@ class MainWindow(QMainWindow):
         self.corkboard.setResizeMode(QListWidget.Adjust)
         self.corkboard.setMovement(QListWidget.Static)
         self.corkboard.setWordWrap(True)
-        self.corkboard.setGridSize(QSize(220, 150))
+        self.corkboard.setGridSize(QSize(220, 150))  # adjusted after settings load below
         self.corkboard.itemDoubleClicked.connect(self._open_card)
         # A card is two things: a single click opens its synopsis to be
         # written on, a double click opens the document. Editing is ours
         # rather than Qt's, because Qt would spend the double click on
         # the editor.
-        self.corkboard.itemClicked.connect(self._corkboard_clicked)
         self.corkboard.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._synopsis_delegate = _SynopsisDelegate(self.corkboard)
         self.corkboard.setItemDelegate(self._synopsis_delegate)
-        self._synopsis_delegate.edited.connect(self._save_card_synopsis)
+        self._synopsis_delegate.title_clicked.connect(self._corkboard_title_clicked)
+        self._synopsis_delegate.body_clicked.connect(self._corkboard_body_clicked)
         self._corkboard_click_timer = QTimer(self)
         self._corkboard_click_timer.setSingleShot(True)
-        self._corkboard_click_timer.timeout.connect(self._edit_card_synopsis)
-        self._corkboard_pending_card = None
+        self._corkboard_click_timer.timeout.connect(self._perform_corkboard_click)
+        self._corkboard_pending_click = None  # (action, index)
+        self._corkboard_collapsed = QSettings().value(
+            "ui/corkboardCollapsed", False, type=bool)
+        self._corkboard_highlight = ""
+        self._corkboard_card_open: dict[str, bool] = {}
+        self.corkboard.setGridSize(QSize(220, 56 if self._corkboard_collapsed else 150))
         self._style_corkboard()
 
         self.outliner = QTreeWidget()
@@ -2584,7 +2620,31 @@ class MainWindow(QMainWindow):
         editor_layout.addWidget(self.format_bar)
         editor_layout.addWidget(self.editor, 1)
         self.views.addTab(self.editor_page, "Editor")
-        self.views.addTab(self.corkboard, "Corkboard")
+        # Corkboard page: header bar with collapse and element highlight.
+        self.corkboard_page = QWidget()
+        _cb_layout = QVBoxLayout(self.corkboard_page)
+        _cb_layout.setContentsMargins(0, 0, 0, 0)
+        _cb_layout.setSpacing(0)
+        _cb_header = QHBoxLayout()
+        self.corkboard_collapse_button = QPushButton("Collapse cards")
+        self.corkboard_collapse_button.setCheckable(True)
+        self.corkboard_collapse_button.setChecked(self._corkboard_collapsed)
+        self.corkboard_collapse_button.setToolTip(
+            "Show compact cards (title and element bands)")
+        _cb_header.addWidget(self.corkboard_collapse_button)
+        _cb_header.addWidget(QLabel("Highlight:"))
+        self.corkboard_highlight_box = QComboBox()
+        self.corkboard_highlight_box.addItem("All elements", "")
+        self.corkboard_highlight_box.setToolTip(
+            "Highlight cards containing the selected element")
+        _cb_header.addWidget(self.corkboard_highlight_box)
+        _cb_header.addStretch()
+        _cb_layout.addLayout(_cb_header)
+        _cb_layout.addWidget(self.corkboard, 1)
+        self.views.addTab(self.corkboard_page, "Corkboard")
+        self.corkboard_collapse_button.toggled.connect(self._set_corkboard_collapsed)
+        self.corkboard_highlight_box.currentIndexChanged.connect(
+            self._corkboard_highlight_changed)
         # Outliner page: header bar with expand/collapse + bulk edit
         # visible only when rows are selected (nothing here means
         # nothing to act on, so no dead buttons).
@@ -2666,6 +2726,7 @@ class MainWindow(QMainWindow):
             "one-shot and never remembered (docs/TEMPLATES.md §2.1). A "
             "template set is a folder of template files under the "
             "project's templates folder.")
+
         self.cover_label = QLabel("Cover")
         self.book_cover_edit = QLineEdit()
         self.book_cover_edit.setPlaceholderText("Auto (images/…/cover.*)")
@@ -2843,7 +2904,8 @@ class MainWindow(QMainWindow):
         # (like the synopsis) so longer text can be written comfortably.
         self.metadata_textarea_container = QWidget()
         self._metadata_textarea_layout = QVBoxLayout(self.metadata_textarea_container)
-        self._metadata_textarea_layout.setContentsMargins(0, 0, 0, 0)
+        self._metadata_textarea_layout.setContentsMargins(0, 6, 0, 0)
+        self._metadata_textarea_layout.setSpacing(10)
         self._syncing_metadata_textareas = False
 
         inspector = QWidget()
@@ -2884,18 +2946,15 @@ class MainWindow(QMainWindow):
         # they expect, so a writer is not left guessing.
         self.book_template_help = QLabel("")
         self.book_template_help.setWordWrap(True)
-        self.book_template_help.setStyleSheet("color: gray; font-size: 9pt;")
+        self.book_template_help.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.book_template_help.setStyleSheet("")
+        self.book_template_help.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
         formatting_fold.body_layout.addWidget(self.book_template_help)
         formatting_fold.body_layout.addWidget(self.doc_template_label)
         formatting_fold.body_layout.addWidget(self.doc_template_box)
         formatting_fold.body_layout.addWidget(self.copy_defaults_button)
-        self.book_title_help = QLabel(
-            "Running heads use ${BookTitle}: set a title on this folder "
-            "(metadata or the folder's own) and a book template, and the "
-            "print config names it ${BookTitle}.")
-        self.book_title_help.setWordWrap(True)
-        self.book_title_help.setStyleSheet("color: gray; font-size: 9pt;")
-        formatting_fold.body_layout.addWidget(self.book_title_help)
         formatting_fold.body_layout.addWidget(self.duplicate_template_button)
         formatting_fold.body_layout.addWidget(self.scene_divider_label)
         formatting_fold.body_layout.addWidget(self.scene_divider_edit)
@@ -4784,7 +4843,8 @@ class MainWindow(QMainWindow):
             index = self.views.indexOf(widget)
             if index >= 0:
                 self.views.setTabVisible(index, visible)
-        for widget in (self.corkboard, self.outliner):
+        for widget in (getattr(self, "corkboard_page", self.corkboard),
+                       getattr(self, "outliner_page", self.outliner)):
             index = self.views.indexOf(widget)
             if index >= 0:
                 self.views.setTabVisible(index, not visible)
@@ -4798,7 +4858,9 @@ class MainWindow(QMainWindow):
         for the next open.
         """
         name = self.project.get_setting("folder_view", "") if self.project else ""
-        return self.corkboard if name == "corkboard" else getattr(self, "outliner_page", self.outliner)
+        if name == "corkboard":
+            return getattr(self, "corkboard_page", self.corkboard)
+        return getattr(self, "outliner_page", self.outliner)
 
     def _view_tab_changed(self, index: int) -> None:
         """Remember the folder view the writer actually picked.
@@ -4812,16 +4874,21 @@ class MainWindow(QMainWindow):
         if self.loading or not self.project:
             return
         widget = self.views.widget(index)
-        if widget not in (self.corkboard, self.outliner, getattr(self, "outliner_page", None)):
+        folder_widgets = (
+            getattr(self, "corkboard_page", self.corkboard),
+            getattr(self, "outliner_page", self.outliner),
+        )
+        if widget not in folder_widgets:
             return
         current = next(
             (d for d in self.project.documents() if d.id == self.current_id),
             None,
         )
         if current is not None and current.kind == "folder":
+            corkboard_page = getattr(self, "corkboard_page", self.corkboard)
             self.project.set_setting(
                 "folder_view",
-                "corkboard" if widget is self.corkboard else "outliner",
+                "corkboard" if widget is corkboard_page else "outliner",
             )
 
     def _project_is_read_only(self) -> bool:
@@ -4906,6 +4973,21 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"Saved as {copy.name}", 5000)
         self._open_path(str(copy))
+
+    def _tree_item_pressed(self, item, _column) -> None:
+        self._tree_pressed_was_current = (item is not None
+                                          and item is self.tree.currentItem())
+
+    def _tree_item_clicked(self, item, _column) -> None:
+        # Click the selected item again to deselect it (shows project metadata).
+        if not self._tree_pressed_was_current or item is None:
+            return
+        mods = QApplication.keyboardModifiers()
+        if mods & (Qt.KeyboardModifier.ControlModifier
+                   | Qt.KeyboardModifier.ShiftModifier):
+            return
+        if self.tree.currentItem() is item:
+            self.tree.setCurrentItem(None)
 
     def _selection_changed(self, current, previous) -> None:
         if self.loading:
@@ -5102,21 +5184,13 @@ class MainWindow(QMainWindow):
         self.editor.setExtraSelections(selections)
 
     def _selection_metadata_target(self) -> str | None:
-        """What the metadata section (and Edit Metadata…) acts on: the
-        project's own fields with nothing selected or a folder selected —
-        the outliner root's "overall setup" — and the document's rows on
-        chapters, scenes and notes (1.12)."""
+        """What the metadata section acts on: project fields with nothing
+        selected, otherwise the selected document/folder's own metadata."""
         if not self.project:
             return None
         if not self.current_id:
             return PROJECT_METADATA_TARGET
-        kind = next(
-            (d.kind for d in self.project.documents() if d.id == self.current_id),
-            None,
-        )
-        if kind is None:
-            return None
-        return PROJECT_METADATA_TARGET if kind == "folder" else self.current_id
+        return self.current_id
 
     def _current_document(self):
         if not self.project or not self.current_id:
@@ -5127,49 +5201,20 @@ class MainWindow(QMainWindow):
         )
 
     def _update_book_template_help(self) -> None:
-        """Explain what an advanced template set expects."""
+        """Show the selected template set's own description (README)."""
         if not hasattr(self, "book_template_help"):
             return
-        name = ""
-        if hasattr(self, "book_template_box"):
-            data = self.book_template_box.currentData()
-            name = (data or "").strip().lower()
-        if name == "book":
-            # Nothing here is Lekhika's vocabulary: the *set* names the words
-            # it expects and the fields it reads, and the list below is that
-            # set's own README in brief. A writer's own fields are theirs —
-            # the app never invents one.
-            text = ("Advanced template: the set names the words it expects, "
-                    "and its README is the list. This one, for instance, "
-                    "expects a folder typed 'book' holding 'chapter' and "
-                    "'scene' documents, and reads its own fields if you give "
-                    "them — Quote, Source and Date (an epigraph above the "
-                    "prose), PoV and Location (a line naming who and where), "
-                    "BookTagline and Author for the title page. The spelling "
-                    "must match the set's, and the fields are yours to add or "
-                    "ignore. An image uploaded as 'cover' is used for the EPUB "
-                    "cover; failing that, the first image in the folder is "
-                    "used. (May need updating once image handling is "
-                    "settled.)")
-        elif name == "guide":
-            text = ("Advanced template: folders typed 'section', documents "
-                    "inside them typed 'section'. Each document becomes one "
-                    "section of the guide.")
-        elif name == "short story":
-            text = ("Document-level template that outputs Title, Author and "
-                    "the text of the story. Create a document type "
-                    "'short-story' or assign the template to a document "
-                    "directly. If project preferences or metadata name an "
-                    "author, it is used; if both do, the metadata author wins.")
-        elif name == "default":
-            text = ("Generic document. No special settings required. Also "
-                    "used as a fallback when a template does not match the "
-                    "content.")
-        elif name == "no-export":
-            text = ("Prints nothing: use it to keep a folder out of an "
-                    "export, or to show that silence is a valid answer.")
-        else:
-            text = ""
+        text = ""
+        if self.project and hasattr(self, "book_template_box"):
+            data = (self.book_template_box.currentData() or "").strip()
+            if data:
+                template = named_template_sets(self.project.root).get(data)
+                if template is None:
+                    template = next(
+                        (t for t in discover_template_sets(self.project.root)
+                         if t.name == data), None)
+                if template is not None:
+                    text = template.readme()
         self.book_template_help.setText(text)
         self.book_template_help.setVisible(bool(text))
 
@@ -5640,11 +5685,6 @@ class MainWindow(QMainWindow):
             self.metadata_table.set_required_context([], False)
         elif target == PROJECT_METADATA_TARGET:
             entries = dict(self.project.project_metadata())
-            # A field created for a folder shows, empty, on every folder
-            # (1.17): the catalogue names the fields, the values are the
-            # project's own.
-            for key in self.project.known_fields("folder"):
-                entries.setdefault(key, ("", "text", []))
             self.metadata_table.set_entries(entries)
             self.metadata_table.set_required_context([], False)
         else:
@@ -5914,14 +5954,16 @@ class MainWindow(QMainWindow):
                 section = QWidget()
                 section.setProperty("meta_key", key)
                 layout = QVBoxLayout(section)
-                layout.setContentsMargins(0, 4, 0, 0)
+                layout.setContentsMargins(0, 2, 0, 2)
+                layout.setSpacing(4)
                 label = QLabel(key)
-                label.setStyleSheet("color: gray; font-size: 9pt;")
                 layout.addWidget(label)
                 box = QPlainTextEdit()
                 box.setPlainText(value)
                 box.setMaximumHeight(120)
                 box.setPlaceholderText(key + "…")
+                box.setFrameShape(QFrame.Shape.StyledPanel)
+                box.setStyleSheet("QPlainTextEdit { background: palette(alternate-base); }")
                 box.textChanged.connect(
                     lambda k=key, b=box: self._metadata_textarea_edited(k, b))
                 layout.addWidget(box)
@@ -6099,7 +6141,7 @@ class MainWindow(QMainWindow):
             if document is not None:
                 group = self.project.type_group(document)
         for key in values:
-            if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY):
+            if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY, "BookTitle"):
                 self.project.add_field(group, key)
         if target == PROJECT_METADATA_TARGET:
             self.project.set_project_metadata(
@@ -7227,6 +7269,7 @@ class MainWindow(QMainWindow):
     def _refresh_corkboard(self) -> None:
         self.corkboard.clear()
         if not self.project:
+            self._update_corkboard_highlight_options([])
             return
         documents = self.project.documents()
         selected = next((d for d in documents if d.id == self.current_id), None)
@@ -7235,50 +7278,225 @@ class MainWindow(QMainWindow):
         else:
             parent_id = selected.parent_id if selected else None
             cards = [d for d in documents if d.parent_id == parent_id]
-        for document in sorted(cards, key=lambda item: item.position):
-            card = QListWidgetItem(self._card_text(document))
+        cards = sorted(cards, key=lambda item: item.position)
+        all_elements: list[str] = []
+        for document in cards:
+            elements = self._card_elements(document)
+            for element in elements:
+                if element not in all_elements:
+                    all_elements.append(element)
+            is_open = self._corkboard_card_open.get(
+                document.id, not self._corkboard_collapsed)
+            card = QListWidgetItem(self._card_text(document, elements, is_open=is_open))
             card.setData(Qt.UserRole, document.id)
             # The synopsis is kept beside the id: it is what the card's
             # editor works on.
             card.setData(Qt.UserRole + 1, document.synopsis)
+            card.setData(Qt.UserRole + 2, elements)
+            card.setData(Qt.UserRole + 4, is_open)
+            card.setToolTip(self._card_tooltip(document, elements))
             card.setFlags(card.flags() | Qt.ItemIsEditable)
             card.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
-            card.setSizeHint(QSize(200, 130))
+            card.setSizeHint(self._card_size(elements, is_open=is_open))
             self.corkboard.addItem(card)
+        self._update_corkboard_highlight_options(all_elements)
+        self._apply_corkboard_highlight()
 
-    def _card_text(self, document) -> str:
+    def _card_size(self, elements: list[str] | None = None, is_open: bool | None = None) -> QSize:
+        if is_open is None:
+            is_open = not self._corkboard_collapsed
+        if not is_open:
+            return QSize(200, 44)
+        return QSize(200, 130)
+
+    def _card_text(self, document, elements: list[str] | None = None, is_open: bool | None = None) -> str:
         """What a card says: the title, the synopsis, the count."""
-        synopsis = document.synopsis.strip() or "No synopsis"
+        if is_open is None:
+            is_open = not self._corkboard_collapsed
         progress = ""
         if document.word_target:
             percent = min(100, round(document.word_count * 100 / document.word_target))
             progress = f"\n{document.word_count:,} / {document.word_target:,} ({percent}%)"
         elif document.word_count:
             progress = f"\n{document.word_count:,} words"
-        return f"{document.title}\n\n{synopsis}{progress}"
+        if not is_open:
+            return document.title
+        synopsis = document.synopsis.strip() or "No synopsis"
+        # Keep cards a uniform height: show a short preview; full text is
+        # available on hover and when editing (the editor scrolls).
+        preview = " ".join(synopsis.split())
+        if len(preview) > 120:
+            preview = preview[:117].rstrip() + "…"
+        return f"{document.title}\n\n{preview}{progress}"
 
-    def _corkboard_clicked(self, card: QListWidgetItem) -> None:
-        """A single click on a card opens its synopsis to be written on.
+    def _card_tooltip(self, document, elements: list[str] | None = None) -> str:
+        """Details shown on hover: synopsis, count and elements."""
+        lines = [document.title]
+        synopsis = document.synopsis.strip()
+        if synopsis:
+            lines.append("")
+            lines.append(synopsis)
+        if document.word_target:
+            percent = min(100, round(document.word_count * 100 / document.word_target))
+            lines.append("")
+            lines.append(f"{document.word_count:,} / {document.word_target:,} words ({percent}%)")
+        elif document.word_count:
+            lines.append("")
+            lines.append(f"{document.word_count:,} words")
+        if elements:
+            lines.append("")
+            lines.append("Elements:")
+            lines.extend(f"- {element}" for element in elements)
+        return "\n".join(lines)
 
-        The click waits out the double-click interval first: a double
-        click means "open the document", and a card that opened its
-        editor on the first click would never see the second.
+    def _card_elements(self, document) -> list[str]:
+        """Elements present on a card, derived from metadata values.
+
+        Used for colour bands and filtering. Values are taken from
+        effective (inherited) metadata so folder-level assignments apply.
+        No colour data is stored; colours are derived deterministically.
         """
-        if self._project_is_read_only() or card is None:
+        if not self.project:
+            return []
+        try:
+            metadata = self.project.metadata_inherited(document.id)
+        except Exception:
+            metadata = self.project.metadata(document.id)
+        preferred = [
+            "POV", "Characters", "Character", "Location", "Setting",
+            "Status", "Timeline", "Arc", "Type",
+        ]
+        keys = [key for key in preferred if key in metadata]
+        keys.extend(key for key in sorted(metadata) if key not in keys)
+        elements: list[str] = []
+        for key in keys:
+            raw = (metadata.get(key) or "").strip()
+            if not raw:
+                continue
+            parts = [part.strip() for part in re.split(r"[,\n;]+", raw) if part.strip()]
+            for part in parts:
+                element = f"{key}: {part}"
+                if element not in elements:
+                    elements.append(element)
+        return elements
+
+    def _element_color(self, element: str) -> QColor:
+        """A stable, readable colour for an element value."""
+        digest = abs(hash(element))
+        hue = digest % 360
+        # Muted mid-saturation colours that read on light/dark cards.
+        return QColor.fromHsv(hue, 130, 210)
+
+    def _set_corkboard_collapsed(self, collapsed: bool) -> None:
+        self._corkboard_collapsed = bool(collapsed)
+        QSettings().setValue("ui/corkboardCollapsed", self._corkboard_collapsed)
+        self.corkboard.setGridSize(QSize(220, 56 if self._corkboard_collapsed else 150))
+        # Apply to all cards: collapse -> all closed, expand -> all open.
+        self._corkboard_card_open.clear()
+        if self.corkboard.count() == 0:
             return
-        self._corkboard_pending_card = card
+        for row in range(self.corkboard.count()):
+            card = self.corkboard.item(row)
+            doc_id = card.data(Qt.UserRole)
+            if doc_id:
+                self._corkboard_card_open[doc_id] = not self._corkboard_collapsed
+            self._set_card_open(card, not self._corkboard_collapsed)
+
+    def _set_card_open(self, card: QListWidgetItem, is_open: bool) -> None:
+        if card is None or not self.project:
+            return
+        document_id = card.data(Qt.UserRole)
+        document = next((d for d in self.project.documents() if d.id == document_id), None)
+        if document is None:
+            return
+        if document_id:
+            self._corkboard_card_open[document_id] = bool(is_open)
+        card.setData(Qt.UserRole + 4, bool(is_open))
+        elements = card.data(Qt.UserRole + 2) or []
+        card.setText(self._card_text(document, elements, is_open=bool(is_open)))
+        card.setSizeHint(self._card_size(elements, is_open=bool(is_open)))
+        self.corkboard.viewport().update()
+
+    def _corkboard_title_clicked(self, index) -> None:
+        # Delay so a double click can open the document instead.
+        self._corkboard_pending_click = ("title", index)
         self._corkboard_click_timer.start(QApplication.doubleClickInterval())
 
-    def _edit_card_synopsis(self) -> None:
-        """Put the synopsis of the clicked card in an editor, in place."""
-        card = self._corkboard_pending_card
-        self._corkboard_pending_card = None
+    def _corkboard_body_clicked(self, index) -> None:
+        self._corkboard_pending_click = ("body", index)
+        self._corkboard_click_timer.start(QApplication.doubleClickInterval())
+
+    def _perform_corkboard_click(self) -> None:
+        pending = self._corkboard_pending_click
+        self._corkboard_pending_click = None
+        if not pending:
+            return
+        action, index = pending
+        card = self.corkboard.itemFromIndex(index)
         if card is None:
             return
-        index = self.corkboard.indexFromItem(card)
-        if index.isValid():
-            self.corkboard.setCurrentItem(card)
-            self.corkboard.editItem(card)
+        document_id = card.data(Qt.UserRole)
+        was_open = bool(card.data(Qt.UserRole + 4))
+        # Select the document so its details/synopsis show in the inspector
+        # panel (no in-card editing needed).
+        if document_id:
+            self._select_document(document_id)
+        # Selection/refresh may rebuild corkboard items; find the card again.
+        card = None
+        for row in range(self.corkboard.count()):
+            item = self.corkboard.item(row)
+            if item.data(Qt.UserRole) == document_id:
+                card = item
+                break
+        if card is None:
+            return
+        self.corkboard.setCurrentItem(card)
+        if action == "title":
+            self._set_card_open(card, not was_open)
+            return
+        # Body click: ensure open so details are visible on the card.
+        if not bool(card.data(Qt.UserRole + 4)):
+            self._set_card_open(card, True)
+
+    def _update_corkboard_highlight_options(self, elements: list[str]) -> None:
+        if not hasattr(self, "corkboard_highlight_box"):
+            return
+        current = self._corkboard_highlight
+        box = self.corkboard_highlight_box
+        box.blockSignals(True)
+        box.clear()
+        box.addItem("All elements", "")
+        for element in elements:
+            box.addItem(element, element)
+        index = box.findData(current)
+        if index < 0:
+            index = 0
+            self._corkboard_highlight = ""
+        box.setCurrentIndex(index)
+        box.blockSignals(False)
+
+    def _corkboard_highlight_changed(self) -> None:
+        if not hasattr(self, "corkboard_highlight_box"):
+            return
+        self._corkboard_highlight = self.corkboard_highlight_box.currentData() or ""
+        self._apply_corkboard_highlight()
+
+    def _apply_corkboard_highlight(self) -> None:
+        highlight = self._corkboard_highlight
+        for row in range(self.corkboard.count()):
+            card = self.corkboard.item(row)
+            elements = card.data(Qt.UserRole + 2) or []
+            if not highlight:
+                card.setHidden(False)
+                # Reapply normal styling hint via data role for delegate.
+                card.setData(Qt.UserRole + 3, "normal")
+            elif highlight in elements:
+                card.setHidden(False)
+                card.setData(Qt.UserRole + 3, "match")
+            else:
+                card.setHidden(False)
+                card.setData(Qt.UserRole + 3, "dim")
+        self.corkboard.viewport().update()
 
     def _save_card_synopsis(self, document_id: str, synopsis: str) -> None:
         """A synopsis written on a card is the document's own."""
@@ -7292,7 +7510,10 @@ class MainWindow(QMainWindow):
             if card.data(Qt.UserRole) == document_id:
                 card.setData(Qt.UserRole + 1, synopsis)
                 if document is not None:
-                    card.setText(self._card_text(document))
+                    elements = card.data(Qt.UserRole + 2) or []
+                    is_open = bool(card.data(Qt.UserRole + 4))
+                    card.setText(self._card_text(document, elements, is_open=is_open))
+                    card.setToolTip(self._card_tooltip(document, elements))
                 break
         if document_id == self.current_id:
             # The inspector shows the same document: it must not keep an
@@ -7300,10 +7521,9 @@ class MainWindow(QMainWindow):
             self.synopsis.setPlainText(synopsis)
 
     def _open_card(self, card: QListWidgetItem) -> None:
-        # The double click wins over the pending single click: the
-        # document is what was asked for.
+        # Double-click opens the document in the editor.
         self._corkboard_click_timer.stop()
-        self._corkboard_pending_card = None
+        self._corkboard_pending_click = None
         document_id = card.data(Qt.UserRole)
         for item in self._all_items():
             if item.data(0, Qt.UserRole) == document_id:

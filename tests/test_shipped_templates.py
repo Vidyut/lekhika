@@ -152,8 +152,19 @@ class ShippedSetsTests(unittest.TestCase):
         self.assertIn("cover", page)
         self.assertNotIn("${Content}", page)
         # The set states no paper: page setup in the inspector answers,
-        # which is where the writer sets trim and margins.
-        self.assertEqual(book.docx_config, {})
+        # which is where the writer sets trim and margins. It declares
+        # applicable types and required metadata fields in its config.
+        self.assertEqual(book.docx_config, {
+            "template": "Book",
+            "folder types": "Chapter",
+            "document types": "Scene, frontmatter, backmatter",
+            "required metadata fields": "Book: BookTitle, Author",
+        })
+        self.assertEqual(book.folder_types(), ["Chapter"])
+        self.assertEqual(book.document_types(),
+                         ["Scene", "frontmatter", "backmatter"])
+        self.assertEqual(book.required_fields_by_type(), {"Book": ["BookTitle", "Author"]})
+        self.assertEqual(book.required_fields(), ["BookTitle", "Author"])
         self.assertTrue(book.css().strip())
 
 

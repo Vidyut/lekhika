@@ -407,10 +407,12 @@ class BookCompileTests(unittest.TestCase):
                  if part[1] == "header"]
         self.assertEqual(heads, [])
 
-    def test_a_folder_export_wears_the_folders_name_as_the_book(self):
+    def test_a_folder_export_wears_the_folders_book_title(self):
         set_dir = create_template_set("titled", self.project.root).directory
         (set_dir / "print-config.txt").write_text(
             "Docx\nHeader: , ,${BookTitle}\n", encoding="utf-8")
+        self.project.set_metadata(
+            self.book.id, {"BookTitle": "A Fictional Book"}, {}, {})
         destination = self.root / "titled.docx"
 
         self.project.export_docx(destination, {self.book.id},

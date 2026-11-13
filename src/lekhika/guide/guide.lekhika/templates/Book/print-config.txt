@@ -83,3 +83,8 @@ Docx
 # Nothing here is precious: Duplicate this set in the Templates view before
 # changing anything you might want back.
 #
+Template: Book
+Folder types: Chapter
+Document types: Scene, frontmatter, backmatter
+Required metadata fields: Book: BookTitle, Author
+

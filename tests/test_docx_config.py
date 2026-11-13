@@ -285,8 +285,11 @@ class DocxPrintTests(unittest.TestCase):
             "Header left: {BookTitle}, , {Chapter}",
         ])
         # {Chapter} is not a project value; unknown keys render empty,
-        # exactly as in a fragment.
-        self.project.set_project_metadata({"Author": ("Ada", "text", [])})
+        # exactly as in a fragment. ${BookTitle} comes from metadata.
+        self.project.set_project_metadata({
+            "Author": ("Ada", "text", []),
+            "BookTitle": ("Novel", "text", []),
+        })
         destination = self.root / "book.docx"
         self.project.export_docx(destination, None, self.load())
         with zipfile.ZipFile(destination) as archive:
@@ -382,6 +385,7 @@ class PerPagePrintTests(unittest.TestCase):
 
     def test_a_page_can_say_it_carries_no_running_head(self):
         self.write_config(["Header: ,{BookTitle},", "Footer: {BookTitle} folio"])
+        self.project.set_project_metadata({"BookTitle": ("Novel", "text", [])})
         self.design_a_page(["Header: none"])
 
         document = self.export()

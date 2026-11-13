@@ -88,3 +88,5 @@ Page setup in the sidebar is where trim and margins live, so this set
 states no paper of its own; print-config.txt is all comments. Uncomment a
 line to try it: the config overrides page setup, and page setup overrides
 the built-in A4.
+
+This template requires the metadata "BookTitle" to be set for the parent folder.
