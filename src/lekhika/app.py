@@ -2839,6 +2839,12 @@ class MainWindow(QMainWindow):
         self.metadata_remove_button = QPushButton("Remove selected")
         self.metadata_add_button.clicked.connect(self.metadata_table.add_field)
         self.metadata_remove_button.clicked.connect(self.metadata_table.remove_selected)
+        # Text-area metadata fields also get their own box below the table
+        # (like the synopsis) so longer text can be written comfortably.
+        self.metadata_textarea_container = QWidget()
+        self._metadata_textarea_layout = QVBoxLayout(self.metadata_textarea_container)
+        self._metadata_textarea_layout.setContentsMargins(0, 0, 0, 0)
+        self._syncing_metadata_textareas = False
 
         inspector = QWidget()
         inspector_layout = QVBoxLayout(inspector)
@@ -2920,6 +2926,7 @@ class MainWindow(QMainWindow):
         custom_fold = Fold("Advanced / Custom", expanded=False)
         custom_fold.body_layout.addWidget(self.metadata_table)
         custom_fold.body_layout.addLayout(metadata_buttons)
+        custom_fold.body_layout.addWidget(self.metadata_textarea_container)
         content_fold.body_layout.addWidget(custom_fold)
         metadata_layout.addWidget(content_fold)
         metadata_layout.addWidget(formatting_fold)
@@ -5674,6 +5681,7 @@ class MainWindow(QMainWindow):
             doc_type = self.project.type_of(current) if current else ""
             self.metadata_table.set_required_context(
                 self.project.required_fields_for_type(doc_type), True)
+        self._refresh_metadata_textarea_boxes()
         self._refresh_toc_fold()
 
     def _lock_toggled(self, locked: bool) -> None:
@@ -5862,7 +5870,91 @@ class MainWindow(QMainWindow):
             self._type_snapping = False
 
     def _metadata_table_changed(self) -> None:
+        self._refresh_metadata_textarea_boxes()
         self._save_metadata()
+
+    def _refresh_metadata_textarea_boxes(self) -> None:
+        """Show a text box under the metadata table for each text-area field.
+
+        These mirror the table's textarea values (like the synopsis) so
+        longer text can be written comfortably; edits sync back to the table.
+        """
+        if not hasattr(self, "metadata_textarea_container"):
+            return
+        # Remember focus so a rebuild doesn't steal it mid-edit.
+        focused_key = None
+        for index in range(self._metadata_textarea_layout.count()):
+            item = self._metadata_textarea_layout.itemAt(index)
+            widget = item.widget() if item else None
+            if widget is None:
+                continue
+            editor = widget.findChild(QPlainTextEdit)
+            if editor is not None and editor.hasFocus():
+                focused_key = widget.property("meta_key")
+                break
+
+        # Clear existing boxes.
+        while self._metadata_textarea_layout.count():
+            item = self._metadata_textarea_layout.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                widget.deleteLater()
+
+        table = self.metadata_table
+        self._syncing_metadata_textareas = True
+        try:
+            for row in range(table.rowCount()):
+                key_item = table.item(row, 1)
+                key = key_item.text().strip() if key_item else ""
+                type_box = table.cellWidget(row, 3)
+                value_type = type_box.currentData() if type_box else "text"
+                if value_type != "textarea" or not key:
+                    continue
+                editor_widget = table.cellWidget(row, 2)
+                value = (editor_widget.toPlainText()
+                         if isinstance(editor_widget, QPlainTextEdit)
+                         else table.row_value(row))
+                section = QWidget()
+                section.setProperty("meta_key", key)
+                layout = QVBoxLayout(section)
+                layout.setContentsMargins(0, 4, 0, 0)
+                label = QLabel(key)
+                label.setStyleSheet("color: gray; font-size: 9pt;")
+                layout.addWidget(label)
+                box = QPlainTextEdit()
+                box.setPlainText(value)
+                box.setMaximumHeight(120)
+                box.setPlaceholderText(key + "…")
+                box.textChanged.connect(
+                    lambda k=key, b=box: self._metadata_textarea_edited(k, b))
+                layout.addWidget(box)
+                self._metadata_textarea_layout.addWidget(section)
+                if focused_key == key:
+                    box.setFocus()
+        finally:
+            self._syncing_metadata_textareas = False
+
+    def _metadata_textarea_edited(self, key: str, box: QPlainTextEdit) -> None:
+        if self._syncing_metadata_textareas or self.loading:
+            return
+        table = self.metadata_table
+        for row in range(table.rowCount()):
+            key_item = table.item(row, 1)
+            if (key_item.text().strip() if key_item else "") != key:
+                continue
+            type_widget = table.cellWidget(row, 3)
+            if not type_widget or type_widget.currentData() != "textarea":
+                continue
+            editor_widget = table.cellWidget(row, 2)
+            if isinstance(editor_widget, QPlainTextEdit):
+                if editor_widget.toPlainText() != box.toPlainText():
+                    editor_widget.blockSignals(True)
+                    editor_widget.setPlainText(box.toPlainText())
+                    editor_widget.blockSignals(False)
+            else:
+                table.setItem(row, 2, QTableWidgetItem(box.toPlainText()))
+            self._metadata_changed()
+            return
 
     def _metadata_required_toggled(self, field: str, required: bool) -> None:
         """Mark a field required for every document/folder of this Type.
