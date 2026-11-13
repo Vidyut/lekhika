@@ -5194,16 +5194,13 @@ class MainWindow(QMainWindow):
             widget.setVisible(is_folder)
         self.doc_template_label.setVisible(is_prose)
         self.doc_template_box.setVisible(is_prose)
-        # Copy-defaults works the same for a folder and for a document:
-        # folder → inside it, document → next to it.
-        self.copy_defaults_button.setVisible(bool(document))
-        if document and is_folder:
-            self.copy_defaults_button.setText("Place the default templates here")
-            self.copy_defaults_button.setToolTip(
-                "The templates Lekhika ships with cannot be edited in place. "
-                "This puts an editable copy of the default set inside "
-                "the selected folder, where you can change it.")
-        elif document:
+        # Copy-defaults: only for documents marked as a template
+        # (Template: yes). Content and folders don't need this button.
+        is_template_doc = bool(document and not is_folder
+                               and self.project
+                               and self.project.is_template(document.id))
+        self.copy_defaults_button.setVisible(is_template_doc)
+        if is_template_doc:
             self.copy_defaults_button.setText("Place the default templates next to this file")
             self.copy_defaults_button.setToolTip(
                 "The templates Lekhika ships with cannot be edited in place. "
