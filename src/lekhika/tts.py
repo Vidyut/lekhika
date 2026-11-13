@@ -34,9 +34,19 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+import shutil
+
 from PySide6.QtCore import QObject, QSettings, Signal
-from PySide6.QtMultimedia import QMediaPlayer
-from PySide6.QtTextToSpeech import QTextToSpeech
+
+try:
+    from PySide6.QtMultimedia import QMediaPlayer
+except Exception:  # Missing QtMultimedia module or native audio libs (e.g. libpulse)
+    QMediaPlayer = None  # type: ignore[assignment]
+
+try:
+    from PySide6.QtTextToSpeech import QTextToSpeech
+except Exception:  # Missing QtTextToSpeech module or system speech backend
+    QTextToSpeech = None  # type: ignore[assignment]
 
 DEFAULT_ENGINE = "speechd"
 SOURCES = ("system", "piper", "api")
@@ -97,7 +107,12 @@ def available_system_engines() -> list[str]:
     list is the machine's own — this probes nothing about another
     system: detection has to happen where the app runs, like every
     fallback it decides between from that answer."""
-    return list(QTextToSpeech.availableEngines())
+    if QTextToSpeech is None:
+        return []
+    try:
+        return list(QTextToSpeech.availableEngines())
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -299,15 +314,25 @@ class SpeechReader(QObject):
         """Connect the engine; False when this system has none."""
         if self._engine is not None:
             return True
-        engines = QTextToSpeech.availableEngines()
+        if QTextToSpeech is None:
+            return False
+        try:
+            engines = list(QTextToSpeech.availableEngines())
+        except Exception:
+            return False
         wanted = self._engine_name or load_settings().engine
         name = wanted if wanted in engines else (
             engines[0] if engines else None)
         if name is None:
             return False
-        self._engine = QTextToSpeech(name)
-        self._engine.stateChanged.connect(self._forward_state)
-        self._voices = list(self._engine.availableVoices())
+        try:
+            self._engine = QTextToSpeech(name)
+            self._engine.stateChanged.connect(self._forward_state)
+            self._voices = list(self._engine.availableVoices())
+        except Exception:
+            self._engine = None
+            self._voices = []
+            return False
         return True
 
     def _forward_state(self, state) -> None:
@@ -375,15 +400,20 @@ class SpeechReader(QObject):
     def _play_audio(self, path: Path) -> bool:
         """Play a synthesized audio file; the previous utterance's file
         leaves once the new one is on the air."""
+        if QMediaPlayer is None:
+            return False
         previous = self._audio_file
         if previous is not None:
             previous.unlink(missing_ok=True)
         self._audio_file = path
-        if self._player is None:
-            self._player = QMediaPlayer(self)
-        from PySide6.QtCore import QUrl
-        self._player.setSource(QUrl.fromLocalFile(str(path)))
-        self._player.play()
+        try:
+            if self._player is None:
+                self._player = QMediaPlayer(self)
+            from PySide6.QtCore import QUrl
+            self._player.setSource(QUrl.fromLocalFile(str(path)))
+            self._player.play()
+        except Exception:
+            return False
         return True
 
     def _speak_piper(self, settings: TTSSettings, text: str) -> bool:
