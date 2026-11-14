@@ -2433,8 +2433,12 @@ class MainWindow(QMainWindow):
         self.tree.setDragDropMode(QTreeWidget.InternalMove)
         self.tree.currentItemChanged.connect(self._selection_changed)
         self.tree.itemChanged.connect(self._title_changed)
-        self._tree_pressed_was_current = False
-        self.tree.itemPressed.connect(self._tree_item_pressed)
+        # Snapshot for click-again-to-deselect: Qt moves currentItem
+        # during press handling, before itemClicked can tell a first
+        # click from a re-click (6.12 order: currentItemChanged,
+        # itemPressed, itemClicked).
+        self._tree_press_current = None
+        self.tree.viewport().installEventFilter(self)
         self.tree.itemClicked.connect(self._tree_item_clicked)
         # A drop reports itself as a removal plus an insertion, or as a
         # move, depending on how Qt chose to write it (1.18): listening
@@ -4883,13 +4887,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved as {copy.name}", 5000)
         self._open_path(str(copy))
 
-    def _tree_item_pressed(self, item, _column) -> None:
-        self._tree_pressed_was_current = (item is not None
-                                          and item is self.tree.currentItem())
-
     def _tree_item_clicked(self, item, _column) -> None:
-        # Click the selected item again to deselect it (shows project metadata).
-        if not self._tree_pressed_was_current or item is None:
+        # Click the selected item again to deselect it (shows project
+        # metadata). The press-time snapshot says which item was already
+        # selected when the press began; a click that arrived with the
+        # selection elsewhere is a first click, not a re-click.
+        if item is None or item is not self._tree_press_current:
             return
         mods = QApplication.keyboardModifiers()
         if mods & (Qt.KeyboardModifier.ControlModifier
@@ -7533,6 +7536,11 @@ class MainWindow(QMainWindow):
         """Which head box the last cursor was in (§1.2): the reference
         page inserts into it, and by the time the click arrives the box
         has long lost the focus to the dialog."""
+        if (watched is self.tree.viewport()
+                and event.type() == QEvent.Type.MouseButtonPress):
+            # The binder's current item as it was before this press
+            # moved it — the one fact itemClicked arrives too late to know.
+            self._tree_press_current = self.tree.currentItem()
         if (event.type() == QEvent.Type.FocusIn
                 and watched in self.head_edits.values()):
             self._head_focus = watched

@@ -60,6 +60,28 @@ class MetadataPanelTests(unittest.TestCase):
                    if table.item(r, 1) and table.item(r, 1).text() == "POV")
         self.assertEqual(table.item(row, 2).text(), "Maya")
 
+    def test_a_first_click_on_another_item_is_not_a_deselect(self):
+        # Qt moves currentItem before itemClicked arrives (6.12 order:
+        # currentItemChanged, itemPressed, itemClicked), so a first click
+        # must not read as click-again-to-deselect and flash the project view.
+        self.window.show()
+        tree = self.window.tree
+        tree.expandAll()
+        scene_item = next(item for item in self.window._all_items()
+                          if item.data(0, Qt.UserRole) == self.scene.id)
+        centre = tree.visualItemRect(scene_item).center()
+
+        QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier, centre)
+
+        self.assertIs(tree.currentItem(), scene_item)
+        self.assertEqual(self.window.current_id, self.scene.id)
+
+        # A re-click on the selected item deselects it (project metadata).
+        QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier, centre)
+
+        self.assertIsNone(tree.currentItem())
+        self.assertIsNone(self.window.current_id)
+
     def test_the_lock_is_a_tick_of_its_own_not_a_custom_field(self):
         # The lock is a marker file in the tree (docs/STORAGE.md), not one
         # of the writer's fields: the table's rows are the writer's own,
