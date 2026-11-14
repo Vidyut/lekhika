@@ -65,6 +65,7 @@ from .project import (
     KDP_MARGIN_BANDS, KDP_MARGIN_MIN,
     PAGE_TRIMS, TEMPLATE_CONFIG_KEY, TEMPLATE_DOC_PREFIX,
     TEMPLATE_FILE_PREFIX, TEMPLATE_KEY, DeleteError, Project,
+    TRASH_FOLDER,
     NO_RUNNING_HEAD, clean_page_setup, config_headings, config_length_list,
     config_page_size, config_points, reading_time, trim_id_for,
 )
@@ -3809,7 +3810,6 @@ class MainWindow(QMainWindow):
         """
         problems = [problem for problem in project.validate_alignment()
                     if problem != INSIDE_BACKUPS_PROBLEM]
-        print('DRIFT_PROBLEMS:', repr(problems), flush=True)
         if problems:
             try:
                 project.backup()
@@ -3931,15 +3931,15 @@ class MainWindow(QMainWindow):
         choices: dict[tuple[str, str], QComboBox] = {}
         for doc_id, fields in by_doc.items():
             title = fields[0][0]
-            group = QGroupBox(title)
+            group = QGroupBox(escape(title))
             g_layout = QVBoxLayout(group)
             for _title, key, file_val, proj_val in fields:
                 row = QHBoxLayout()
-                row.addWidget(QLabel(f"<b>{key}</b>"))
-                file_label = QLabel(f"File: {file_val}")
+                row.addWidget(QLabel(f"<b>{escape(key)}</b>"))
+                file_label = QLabel(f"File: {escape(file_val)}")
                 file_label.setWordWrap(True)
                 file_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-                proj_label = QLabel(f"Project: {proj_val}")
+                proj_label = QLabel(f"Project: {escape(proj_val)}")
                 proj_label.setWordWrap(True)
                 proj_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 row.addWidget(file_label, 1)
@@ -4040,12 +4040,12 @@ class MainWindow(QMainWindow):
         # entries: (doc_id, file_title, proj_title, choice_box, update_links_cb)
         entries = []
         for doc_id, file_title, proj_title in drift:
-            group = QGroupBox(proj_title or file_title or doc_id)
+            group = QGroupBox(escape(proj_title or file_title or doc_id))
             g = QVBoxLayout(group)
             row = QHBoxLayout()
-            f_lbl = QLabel(f"<b>File title:</b> {file_title}")
+            f_lbl = QLabel(f"<b>File title:</b> {escape(file_title)}")
             f_lbl.setWordWrap(True)
-            p_lbl = QLabel(f"<b>Project title:</b> {proj_title}")
+            p_lbl = QLabel(f"<b>Project title:</b> {escape(proj_title)}")
             p_lbl.setWordWrap(True)
             row.addWidget(f_lbl, 1)
             row.addWidget(p_lbl, 1)
@@ -9384,6 +9384,7 @@ class MainWindow(QMainWindow):
             return
         if item.data(0, Qt.UserRole) != self.current_id:
             self.tree.setCurrentItem(item)
+        doc_id = item.data(0, Qt.UserRole)
         menu = QMenu(self)
         # The binder is a file manager (docs/STORAGE.md): a folder makes
         # folders and files, a file is a file. Split and merge are the
@@ -9457,12 +9458,52 @@ class MainWindow(QMainWindow):
         self._reload_tree()
 
     def _restore_selected(self) -> None:
+        """Put the selected trashed item back where it came from.
+
+        Restore is the same move a drag out of the trash makes
+        (reorder): file, rows and the vacated mirror folders together,
+        so nothing comes back half-restored.
+        """
         if not self.project or not self.current_id:
             return
+        documents = self.project.documents()
+        document = next((d for d in documents if d.id == self.current_id),
+                        None)
+        if document is None or not document.path:
+            return
+        # The trash mirrors the original path, so the original home is
+        # the same path without the trash/ in front of it.
+        relative = document.path.removeprefix(f"{TRASH_FOLDER}/")
+        parent_rel = str(Path(relative).parent)
+        if parent_rel == ".":
+            parent_id = None
+            position = len([d for d in documents if not d.parent_id])
+        else:
+            parent = next((d for d in documents if d.path == parent_rel),
+                          None)
+            if parent is None:
+                # Its home is in the trash too: restoring the folder
+                # first is the honest order — nothing is silently
+                # rehomed somewhere the writer did not choose.
+                QMessageBox.warning(
+                    self, "Could not restore",
+                    "Its folder is still in the trash. "
+                    "Restore the folder first.")
+                return
+            parent_id = parent.id
+            position = len([d for d in documents
+                            if d.parent_id == parent.id])
         try:
-            self.project.restore_from_trash(self.current_id)
+            restored = self.project.reorder(
+                self.current_id, parent_id, position)
         except Exception as error:
             QMessageBox.critical(self, "Could not restore", str(error))
+            return
+        if not restored:
+            QMessageBox.warning(
+                self, "Could not restore",
+                "The file could not be moved back — a file with that "
+                "name may already be there.")
             return
         self._reload_tree(self.current_id)
 

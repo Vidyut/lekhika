@@ -69,6 +69,15 @@ class ContentsTests(unittest.TestCase):
         self.assertIn("Set in Lekhika.", html)
         self.assertNotIn("<li>Colophon", html)
 
+    def test_an_ampersand_in_a_heading_is_escaped_in_the_entries(self):
+        # Entries hold the heading's raw words (unescaped on the way
+        # out of the body), so the markup must escape them again —
+        # "Cats & Dogs" unescaped is invalid HTML, "<" worse.
+        book = self.project.documents()[0]
+        self.project.add_document("Cats & Dogs", book.id, "chapter")
+        html = self._export("html").read_text()
+        self.assertIn("<li>Cats &amp; Dogs</li>", html)
+
     def test_text_lines_are_lines_not_a_literal_backslash_n(self):
         text = self._export("txt").read_text()
         # All default headings are the same level, so the contents lists

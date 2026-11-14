@@ -808,6 +808,10 @@ class PreferencesDialog(QDialog):
         self.ai_key_edit = QLineEdit(active_ai.key)
         self.ai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.ai_key_edit.setPlaceholderText("empty for local servers")
+        self.ai_key_edit.setToolTip(
+            "Stored in your OS settings file for this user "
+            "(~/.config on Linux), in plain text — like most desktop "
+            "apps. Local Ollama needs no key at all.")
         ai_form.addRow("API key:", self.ai_key_edit)
         ai_layout.addLayout(ai_form)
         detect_row = QHBoxLayout()
@@ -1479,7 +1483,8 @@ class PreferencesDialog(QDialog):
         if endpoint == ai.DEFAULT_ENDPOINT:
             models = _ai.detect_local_models()
         elif endpoint:
-            models = _ai.detect_remote_models(endpoint)
+            models = _ai.detect_remote_models(
+                endpoint, self.ai_key_edit.text().strip())
         combo = self.ai_model_box
         combo.clear()
         current = combo.lineEdit().text()

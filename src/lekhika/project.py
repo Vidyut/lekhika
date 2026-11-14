@@ -401,8 +401,9 @@ def _toc_marker(style: str, number: int) -> str:
 
 
 def _toc_label(text: str, unit: int, *, links: bool) -> str:
-    return (f"<a href='section-{unit}.xhtml'>{text}</a>"
-            if links else text)
+    label = escape(text)
+    return (f"<a href='section-{unit}.xhtml'>{label}</a>"
+            if links else label)
 
 
 def _toc_markup(entries, *, links: bool, markers=None) -> str:
@@ -1147,8 +1148,9 @@ class Project:
     def create(cls, root: Path, title: str = "Untitled Project") -> "Project":
         """Make a new project directory and seed it with an empty Draft folder."""
         root = Path(root)
-        if root.suffix != ".lekhika":
-            root = root.with_suffix(".lekhika")
+        # Append, never with_suffix: "Book 1.5" must not become "Book 1.lekhika".
+        if not root.name.endswith(".lekhika"):
+            root = root.with_name(root.name + ".lekhika")
         if root.exists() and any(root.iterdir()):
             raise FileExistsError(f"Project directory is not empty: {root}")
         root.mkdir(parents=True, exist_ok=True)
@@ -1177,12 +1179,20 @@ class Project:
         about how a project was opened and not about its files.
         """
         destination = Path(destination)
-        if destination.suffix != ".lekhika":
-            destination = destination.with_suffix(".lekhika")
+        if not destination.name.endswith(".lekhika"):
+            destination = destination.with_name(destination.name + ".lekhika")
         if destination.exists() and any(destination.iterdir()):
             raise FileExistsError(
                 f"Project directory is not empty: {destination}")
         destination.mkdir(parents=True, exist_ok=True)
+        # The copy must be self-contained: fold this project's WAL into
+        # the main file first, so nothing is mid-transaction in a -wal
+        # the copy would carry (or lose) beside it.
+        if self.connection is not None and not self.read_only:
+            try:
+                self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
         for path in self.root.iterdir():
             if path.name == "trash":
                 continue
@@ -1209,7 +1219,7 @@ class Project:
             raise FileNotFoundError(f"Not a Lekhika project: {self.root}")
         if self.read_only:
             self.connection = sqlite3.connect(
-                f"file:{self.db_path}?immutable=1", uri=True)
+                f"{self.db_path.resolve().as_uri()}?immutable=1", uri=True)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys = ON")
             return
@@ -2384,36 +2394,6 @@ class Project:
                       if path.is_file()
                       and not path.name.endswith(".deleted.json")
                       and path.name != ".order.json")
-
-    def restore_from_trash(self, relative: str | Path) -> bool:
-        """Move a trashed file/folder back to its original path.
-
-        Returns True when something was restored. Rows remembered
-        beside the trashed files are re-inserted along with it.
-        """
-        relative = Path(relative)
-        trashed = self.trash_dir() / relative
-        if not trashed.exists():
-            return False
-        original = self.root / relative
-        original.parent.mkdir(parents=True, exist_ok=True)
-        if original.exists():
-            stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            original = original.with_name(f"{original.name}.{stamp}")
-        shutil.move(str(trashed), str(original))
-        # Re-insert the rows beside the restored files.
-        meta_path = self.trash_dir() / (str(relative) + ".deleted.json")
-        if meta_path.is_file():
-            try:
-                data = json.loads(meta_path.read_text(encoding="utf-8"))
-                rows = [tuple(row) for row in data.get("rows", [])]
-                if rows:
-                    self._restore_rows(rows)  # type: ignore[arg-type]
-                meta_path.unlink()
-            except (OSError, ValueError):
-                pass
-        self.write_order_files()
-        return True
 
     def empty_trash(self) -> None:
         """Permanently delete everything in trash.
@@ -3681,19 +3661,6 @@ class Project:
                 missing.append((document.title, doc_type, name))
         return missing
 
-    def _require_metadata_for_export(self, selected_ids: set[str] | None) -> None:
-        missing = self.missing_required_metadata(selected_ids)
-        if not missing:
-            return
-        lines = "\n".join(
-            f"- {title} ({dtype}): {field}"
-            for title, dtype, field in missing[:20])
-        more = "" if len(missing) <= 20 else f"\n… and {len(missing) - 20} more"
-        raise ValueError(
-            "Some fields marked as required are empty:\n"
-            f"{lines}{more}\n\n"
-            "Fill them, or mark the fields as not required, then export again.")
-
     def _toc_config(self, document_id: str) -> dict:
         """Contents settings for the document that holds ${ToC}.
 
@@ -4609,7 +4576,11 @@ class Project:
         if raw:
             path = Path(raw)
             if not path.is_absolute():
-                path = self.root / path
+                # A relative cover lives inside the project: resolve it
+                # and refuse to climb out ("../../etc/...").
+                path = (self.root / path).resolve()
+                if self.root.resolve() not in path.parents:
+                    return None
             return path if path.is_file() else None
         directory = self.root / "images" / document_id
         if directory.is_dir():
@@ -7364,64 +7335,71 @@ class Project:
 
             order_path = folder_path / ".order.json"
 
-            # Get children from DB
+            # Children in DB position order, the same names
+            # _write_order_for() writes (Path, not string splitting).
             children = [
-                d.path.split("/")[-1] if "/" in d.path else d.path
+                Path(d.path).name
                 for d in self.documents()
-                if d.parent_id == container.id
+                if d.parent_id == container.id and d.path
             ]
+            # A folder's own prose leads its order — mirror
+            # _write_order_for() exactly, or reconcile un-writes it.
+            if (folder_path / "index.html").is_file():
+                children.insert(0, "index.html")
 
-            # Read existing order
+            # Read existing order: as a list, so a reordering (same
+            # members, different sequence) counts as a change too.
             try:
                 existing = json.loads(order_path.read_text(encoding="utf-8"))
-                old_children = set(existing.get("children", []))
-            except (json.JSONDecodeError, OSError):
-                old_children = set()
+                old_children = existing.get("children")
+            except (json.JSONDecodeError, OSError, AttributeError):
+                old_children = None
 
-            new_children = set(children)
-
-            if old_children != new_children and not dry_run:
-                order_path.write_text(
-                    json.dumps({"children": children}, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8")
+            if old_children != children:
+                if not dry_run:
+                    order_path.write_text(
+                        json.dumps({"children": children}, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
                 changes["order_files"] += 1
-            elif old_children != new_children:
-                changes["order_files"] += 1  # Would change
 
         # Root children, excluding system trees (matched on the first
         # path component). Templates and trash are normal folders and
         # appear in the manifest like any other.
         _system = {"backups", "images", ".lekhika"}
         root_children = [
-            d.path.split("/")[-1] if "/" in d.path else d.path
+            Path(d.path).name
             for d in self.documents()
             if not d.parent_id
             and d.path
-            and d.path.split("/")[0].casefold() not in _system
+            and Path(d.path).parts[0].casefold() not in _system
         ]
 
         manifest_path = self.root / "manifest.json"
-        old_manifest = {}
+        old_manifest: dict = {}
         try:
-            old_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                old_manifest = loaded
         except (json.JSONDecodeError, OSError):
             pass
 
-        old_children = set(old_manifest.get("children", []))
-        new_children = set(root_children)
-
-        if (old_children != new_children or
-                old_manifest.get("title") != self.get_setting("title")) and not dry_run:
+        old_children = old_manifest.get("children")
+        title = self.get_setting("title") or self.root.stem
+        if (old_children != root_children
+                or old_manifest.get("title") != title) and not dry_run:
+            # Keep every other key the manifest carries, the way
+            # _write_order_for() does — reconcile reorders, never strips.
+            written = dict(old_manifest)
+            written["title"] = title
+            written["version"] = 1
+            written["children"] = root_children
             manifest_path.write_text(
-                json.dumps({
-                    "title": self.get_setting("title") or self.root.stem,
-                    "version": 1,
-                    "children": root_children
-                }, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(written, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8")
             changes["manifest"] = 1
-        elif old_children != new_children or old_manifest.get("title") != self.get_setting("title"):
-            changes["manifest"] = 1  # Would change
+        elif (old_children != root_children
+              or old_manifest.get("title") != title):
+            changes["manifest"] = 1  # Would change (dry run)
 
         return changes
 

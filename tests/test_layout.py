@@ -213,6 +213,32 @@ class TreeRoundTripTests(unittest.TestCase):
         self.assertEqual([child.title for child in book.children],
                          ["Chapter One", "Research notes"])
 
+    def test_a_hand_edited_word_target_does_not_break_the_load(self):
+        # "word_target: abc" in a file someone edited by hand must not
+        # raise out of load_tree — it reads as no target (0).
+        self.chapter.children[0].word_target = 500
+        self._write()
+        edited = False
+        for path in self.root.rglob("*.html"):
+            text = path.read_text(encoding="utf-8")
+            if "word_target: 500" in text:
+                path.write_text(
+                    text.replace("word_target: 500", "word_target: abc"),
+                    encoding="utf-8")
+                edited = True
+        self.assertTrue(edited)
+
+        nodes, _project = layout.load_tree(self.root)
+
+        def walk(items):
+            for node in items:
+                yield node
+                yield from walk(node.children)
+
+        targets = [node.word_target for node in walk(nodes)]
+        self.assertTrue(all(isinstance(value, int) for value in targets))
+        self.assertIn(0, targets)
+
     def test_order_is_preserved_not_alphabetical(self):
         self._write()
         book = layout.load_tree(self.root)[0][0]

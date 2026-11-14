@@ -77,18 +77,26 @@ def load_servers() -> list[tuple[str, str]]:
     servers: list[tuple[str, str]] = []
     if isinstance(stored, list):
         for entry in stored:
+            # Dicts are the stored form; a 2-element list is what an
+            # older build wrote, and those entries still count.
             if (isinstance(entry, dict)
                     and isinstance(entry.get("name"), str)
                     and isinstance(entry.get("endpoint"), str)):
                 servers.append((entry["name"], entry["endpoint"]))
+            elif (isinstance(entry, (list, tuple)) and len(entry) == 2
+                    and all(isinstance(part, str) for part in entry)):
+                servers.append((entry[0], entry[1]))
     if not any(name == "Ollama (local)" for name, _ in servers):
         servers.insert(0, ("Ollama (local)", DEFAULT_ENDPOINT))
     return servers
 
 
 def save_servers(servers: list[tuple[str, str]]) -> None:
-    """Replace the stored server list (the seeded local stays)."""
-    kept = [[name, endpoint] for name, endpoint in servers
+    """Replace the stored server list (the seeded local stays).
+
+    Stored as dicts — the shape ``load_servers`` reads."""
+    kept = [{"name": name, "endpoint": endpoint}
+            for name, endpoint in servers
             if name != "Ollama (local)"]
     QSettings().setValue("ai/servers", json.dumps(kept))
 
@@ -175,6 +183,9 @@ def install_ollama(silent: bool = False) -> bool:
                  "curl -fsSL https://ollama.com/install.sh | sh"],
                 check=True, capture_output=True, text=True, timeout=1800)
         except (OSError, subprocess.SubprocessError):
+            # The script didn't run — show the page rather than
+            # reporting failure with no way forward.
+            webbrowser.open("https://ollama.com/download")
             return False
     try:
         subprocess.run(["ollama", "pull", "phi4-mini"], check=False,
@@ -184,12 +195,18 @@ def install_ollama(silent: bool = False) -> bool:
     return True
 
 
-def detect_remote_models(endpoint: str) -> list[str]:
+def detect_remote_models(endpoint: str, key: str = "") -> list[str]:
     """Model names an API endpoint offers (OpenAI-shaped ``/models`` —
     tried with and without a ``/v1`` tail). A dead endpoint answers
     with silence, not an error — anyone saving APIs tried at this
-    moment keeps the typed model either way."""
+    moment keeps the typed model either way. A key rides along when
+    the server needs one (many hosted endpoints answer 401 without
+    it)."""
     if not endpoint.strip():
+        return []
+    if urllib.parse.urlsplit(endpoint).scheme not in ("http", "https"):
+        return []
+    if key and _sends_key_in_the_clear(endpoint):
         return []
     base = endpoint.rstrip("/")
     candidates = [base + "/models"] if base.endswith("/v1") else [
@@ -197,7 +214,10 @@ def detect_remote_models(endpoint: str) -> list[str]:
     body = None
     for url in candidates:
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            request = urllib.request.Request(url)
+            if key:
+                request.add_header("Authorization", "Bearer " + key)
+            with urllib.request.urlopen(request, timeout=5) as response:
                 body = json.loads(response.read().decode("utf-8"))
             break
         except (urllib.error.URLError, OSError, json.JSONDecodeError):
@@ -254,6 +274,12 @@ def complete(system: str, user: str,
     comes back as AIError and the caller decides what to tell the writer.
     """
     settings = settings or load_settings()
+    if urllib.parse.urlsplit(settings.endpoint).scheme not in ("http",
+                                                               "https"):
+        raise AIError(
+            f"AI endpoint must be an http:// or https:// URL, not "
+            f"{settings.endpoint!r}."
+        )
     if not settings.model.strip():
         raise AIError(NO_MODEL_MESSAGE)
     if settings.key and _sends_key_in_the_clear(settings.endpoint):

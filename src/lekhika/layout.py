@@ -8,9 +8,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Nothing on the three target filesystems will take these; Windows also
-# reserves a handful of device names, and a file called NUL.txt is a headache.
-ILLEGAL_EXTRA = set('<>:"/\\|?*')
+# Windows reserves a handful of device names, and a file called
+# NUL.txt is a headache.
 RESERVED_NAMES = {"con", "prn", "aux", "nul",
                   *(f"com{n}" for n in range(1, 10)),
                   *(f"lpt{n}" for n in range(1, 10))}
@@ -378,6 +377,15 @@ def load_tree(root: Path) -> tuple[list[Node], dict]:
     return _load_level(root, top_order), project
 
 
+def _safe_int(value) -> int:
+    """A frontmatter number, or 0 for anything else — a hand-edited
+    ``word_target: abc`` must not take the whole tree load down."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _load_level(folder: Path, order: list[str] | None = None) -> list[Node]:
     """One folder: the manifest's order first, then anything new on disk
     (appended, in name order), because the manifest is the order and files may
@@ -427,7 +435,7 @@ def _load_level(folder: Path, order: list[str] | None = None) -> list[Node]:
                 type=str(values.get("type") or ""),
                 content=content,
                 synopsis=str(values.get("synopsis") or ""),
-                word_target=int(values.get("word_target") or 0),
+                word_target=_safe_int(values.get("word_target")),
                 metadata=_string_map(values.get("metadata")),
                 page_setup=_page_setup(values.get("page_setup")),
                 children=children,
@@ -441,7 +449,7 @@ def _load_level(folder: Path, order: list[str] | None = None) -> list[Node]:
                 type=str(values.get("type") or ""),
                 content=content,
                 synopsis=str(values.get("synopsis") or ""),
-                word_target=int(values.get("word_target") or 0),
+                word_target=_safe_int(values.get("word_target")),
                 metadata=_string_map(values.get("metadata")),
             ))
     return nodes

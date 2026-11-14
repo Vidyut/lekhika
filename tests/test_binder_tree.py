@@ -13,6 +13,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -180,6 +181,54 @@ class BinderTreeTests(unittest.TestCase):
         self.assertEqual(nested.path, f"{outer.path}/Nested.html")
         self.assertTrue((self.project.root / nested.path).is_file())
         self.assertFalse((self.project.root / f"{outer.path}.html").exists())
+
+    def test_right_click_builds_its_menu_from_the_clicked_row(self):
+        # Regression: the menu read a doc_id that was never bound, so
+        # every right-click raised NameError before the menu appeared.
+        # QMenu is swapped for a recorder at the call site — a real
+        # menu is modal and would hang offscreen (patching QMenu.exec
+        # does not intercept PySide6's builtin instance method).
+        tree = self.window.tree
+        item = tree.topLevelItem(0)
+        recorded: list[str] = []
+
+        class Menu:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def addAction(self, text, *args):
+                recorded.append(str(text))
+
+            def addSeparator(self):
+                pass
+
+            def exec(self, *args):
+                return None
+
+        with mock.patch("lekhika.app.QMenu", Menu):
+            self.window._tree_context_menu(
+                tree.visualItemRect(item).center())
+
+        self.assertIn("New Folder", recorded)
+        self.assertIn("New Document", recorded)
+
+    def test_restore_puts_the_trashed_file_back(self):
+        # Restore is a reorder out of the trash: the file goes back to
+        # its original path, the row with it, and the mirror folders
+        # it leaves behind are pruned (the old call passed the row's
+        # id where a path was wanted and restored nothing).
+        self.project.delete_document(self.scene.id)
+        self.window._reload_tree()
+        self.window.current_id = self.scene.id
+
+        self.window._restore_selected()
+
+        by_id = {d.id: d for d in self.project.documents()}
+        self.assertEqual(by_id[self.scene.id].path, self.scene.path)
+        self.assertTrue((self.project.root / self.scene.path).is_file())
+        self.assertFalse(
+            (self.project.root / "trash" / self.scene.path).exists())
+        self.assertEqual(self.project.validate_alignment(), [])
 
 
 class ContentPathTests(unittest.TestCase):

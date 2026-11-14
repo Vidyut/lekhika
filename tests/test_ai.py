@@ -222,5 +222,44 @@ class AIWindowTests(unittest.TestCase):
         self.assertEqual(self.project.revisions(self.scene.id), [])
 
 
+class ServerListTests(unittest.TestCase):
+    """save_servers and load_servers must agree on one stored shape —
+    a mismatch silently wiped every saved server on the next load."""
+
+    def tearDown(self):
+        QSettings().remove("ai/servers")
+
+    def test_saved_servers_round_trip_as_dicts(self):
+        ai.save_servers([("Hosted", "https://api.example.com/v1")])
+        raw = json.loads(str(QSettings().value("ai/servers")))
+        self.assertEqual(raw, [{"name": "Hosted",
+                                "endpoint": "https://api.example.com/v1"}])
+        self.assertEqual(
+            ai.load_servers(),
+            [("Ollama (local)", ai.DEFAULT_ENDPOINT),
+             ("Hosted", "https://api.example.com/v1")])
+
+    def test_servers_saved_by_an_older_build_still_load(self):
+        QSettings().setValue(
+            "ai/servers", json.dumps([["Hosted",
+                                       "https://api.example.com/v1"]]))
+        self.assertEqual(
+            ai.load_servers(),
+            [("Ollama (local)", ai.DEFAULT_ENDPOINT),
+             ("Hosted", "https://api.example.com/v1")])
+
+
+class EndpointGuardTests(unittest.TestCase):
+    """Only http(s) endpoints reach the network, key or no key."""
+
+    def test_a_non_http_endpoint_is_refused_before_any_request(self):
+        settings = ai.AISettings(endpoint="file:///etc/passwd", model="m")
+        with self.assertRaises(ai.AIError):
+            ai.complete("system", "user", settings)
+
+    def test_detect_remote_models_ignores_a_non_http_endpoint(self):
+        self.assertEqual(ai.detect_remote_models("ftp://example.com"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
