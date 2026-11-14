@@ -27,7 +27,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import (
     QDate, QEvent, QItemSelectionModel, QLocale, QMimeData, QRect, QSettings, QSize,
-    Qt, QTimer, QTime, QUrl, Signal,
+    Qt, QTimer, QTime, QThread, QUrl, Signal,
 )
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QDesktopServices, QFont, QFontDatabase,
@@ -2408,6 +2408,31 @@ def style_signature_formats(signature: dict) -> tuple[QTextBlockFormat, QTextCha
     return block_format, char_format
 
 
+class _AiRequest(QThread):
+    """One AI request, off the UI thread.
+
+    The answer comes back as a signal, so it lands on the UI thread: a
+    plain Python thread would run the receiver there as well, and the
+    editor does not live in a worker.
+    """
+
+    reply = Signal(object)
+
+    def __init__(self, system: str, user: str, parent=None) -> None:
+        super().__init__(parent)
+        self._system = system
+        self._user = user
+
+    def run(self) -> None:
+        try:
+            text = ai.complete(self._system, self._user)
+        except Exception as error:
+            payload = (None, str(error))
+        else:
+            payload = (text, None)
+        self.reply.emit(payload)
+
+
 class MainWindow(QMainWindow):
     # The daily update check runs off the UI thread; the one sentence it
     # produces crosses back through this signal (docs/TEMPLATES.md §8).
@@ -2416,6 +2441,12 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.update_news.connect(self._say_update_news)
+        # The AI request runs off the UI thread (2.4): one at a time,
+        # with the callback that puts the answer into the editor.
+        self._ai_worker: _AiRequest | None = None
+        self._ai_on_reply = None
+        self._ai_busy = False
+        self._ai_popup = None
         self.project: Project | None = None
         self.current_id: str | None = None
         # What the binder selection is, when it is not a document: a
@@ -6379,6 +6410,49 @@ class MainWindow(QMainWindow):
 
     # --- AI (2.4, layer 2) --------------------------------------------------
 
+    def _ask_ai(self, system: str, user: str, on_reply) -> None:
+        """Ask the model without freezing the app.
+
+        The request runs on a worker thread; ``on_reply(text, error)``
+        is called on the UI thread when the answer comes back. Only the
+        request leaves the UI thread — the reply is applied here, where
+        the editor is. One request at a time: a second one is refused
+        rather than interleaved with the first.
+        """
+        if self._ai_busy:
+            self.statusBar().showMessage(
+                "An AI request is already running", 3000)
+            return
+        self._ai_busy = True
+        self._ai_on_reply = on_reply
+        worker = _AiRequest(system, user, self)
+        worker.reply.connect(self._ai_reply)
+        self._ai_worker = worker
+        worker.start()
+        self.statusBar().showMessage("Asking the AI…", 4000)
+
+    def _ai_reply(self, payload) -> None:
+        """The answer, back on the UI thread."""
+        self._ai_busy = False
+        worker, self._ai_worker = self._ai_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        callback, self._ai_on_reply = self._ai_on_reply, None
+        if callback is not None:
+            text, error = payload
+            callback(text, error)
+
+    def _ai_reply_elsewhere(self, text: str) -> None:
+        """The answer came back for a scene the writer has left.
+
+        It is not inserted — the caret it was asked about is gone — but
+        it is not lost either: it goes to the clipboard, ready to paste.
+        """
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(
+            "The scene changed while the answer was coming — the reply "
+            "is on the clipboard", 6000)
+
     def _ai_continue_scene(self) -> None:
         """Ask the model to continue the section at the caret. The
         answer lands as a tracked insertion with its own session and the
@@ -6390,31 +6464,35 @@ class MainWindow(QMainWindow):
         # Tail, not head: what matters for a continuation is the prose
         # just before the caret, not the chapter opening.
         context = Project.plain_text(self.editor.toHtml())[-4000:]
-        cursor = self.editor.textCursor()
-        position = cursor.position()
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                text = ai.complete(
-                    "You are a co-author continuing a novel scene. Keep "
-                    "the established voice, tense and point of view. "
-                    "Return only the continuation prose — no preamble, no "
-                    "quotation marks, no commentary.",
-                    context,
-                )
-            finally:
-                QApplication.restoreOverrideCursor()
-        except ai.AIError as error:
-            QMessageBox.warning(self, "AI request failed", str(error))
-            return
-        if not text:
-            self.statusBar().showMessage("AI returned nothing", 3000)
-            return
-        self.editor.apply_tracked_replacement(position, position, text,
-                                              uuid4().hex, "AI")
-        self._content_changed()
-        self.statusBar().showMessage(
-            "AI continuation inserted as a tracked change", 4000)
+        document_id = self.current_id
+
+        def got_reply(text, error):
+            if error:
+                QMessageBox.warning(self, "AI request failed", error)
+                return
+            if not text:
+                self.statusBar().showMessage("AI returned nothing", 3000)
+                return
+            if self.current_id != document_id:
+                self._ai_reply_elsewhere(text)
+                return
+            # The caret, not the offset captured before the request:
+            # the writer may have typed while the answer was coming.
+            position = self.editor.textCursor().position()
+            self.editor.apply_tracked_replacement(position, position, text,
+                                                  uuid4().hex, "AI")
+            self._content_changed()
+            self.statusBar().showMessage(
+                "AI continuation inserted as a tracked change", 4000)
+
+        self._ask_ai(
+            "You are a co-author continuing a novel scene. Keep "
+            "the established voice, tense and point of view. "
+            "Return only the continuation prose — no preamble, no "
+            "quotation marks, no commentary.",
+            context,
+            got_reply,
+        )
 
     def _ai_prompt(self) -> None:
         """Ask the AI whatever is on the writer's mind: a small popup,
@@ -6440,43 +6518,51 @@ class MainWindow(QMainWindow):
         status = QLabel()
         layout.addWidget(status)
         buttons = QHBoxLayout()
-        ask = QPushButton("Ask")
+        ask_button = QPushButton("Ask")
         insert = QPushButton("Insert at caret")
         insert.setEnabled(False)
         close = QPushButton("Close")
         close.clicked.connect(popup.accept)
-        buttons.addWidget(ask)
+        buttons.addWidget(ask_button)
         buttons.addWidget(insert)
         buttons.addWidget(close)
         layout.addLayout(buttons)
         latest: dict[str, str] = {}
+        # The popup is kept here so it outlives the wait: a reply that
+        # arrives after it was closed is dropped, not written into a
+        # dialog that is no longer there.
+        self._ai_popup = popup
 
         def ask() -> None:
             prompt = prompt_area.toPlainText().strip()
             if not prompt:
                 return
             context = Project.plain_text(self.editor.toHtml())[-4000:]
-            try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                try:
-                    text = ai.complete(
-                        "You are a co-author helping with a novel scene. "
-                        "Keep the established voice, tense and point of "
-                        "view of the context that follows.\n\n"
-                        "Context (the scene so far):\n" + context,
-                        prompt,
-                    )
-                finally:
-                    QApplication.restoreOverrideCursor()
-            except ai.AIError as error:
-                status.setText(str(error))
-                return
-            latest["text"] = text
-            reply_area.setPlainText(text)
-            insert.setEnabled(True)
-            status.setText("Ready to insert as a tracked change.")
+            ask_button.setEnabled(False)
+            status.setText("Asking…")
 
-        ask.clicked.connect(ask)
+            def got_reply(text, error):
+                ask_button.setEnabled(True)
+                if self._ai_popup is not popup:
+                    return              # the popup was closed meanwhile
+                if error:
+                    status.setText(error)
+                    return
+                latest["text"] = text
+                reply_area.setPlainText(text)
+                insert.setEnabled(True)
+                status.setText("Ready to insert as a tracked change.")
+
+            self._ask_ai(
+                "You are a co-author helping with a novel scene. "
+                "Keep the established voice, tense and point of view "
+                "of the context that follows.\n\n"
+                "Context (the scene so far):\n" + context,
+                prompt,
+                got_reply,
+            )
+
+        ask_button.clicked.connect(ask)
         insert.clicked.connect(
             lambda: (self.editor.apply_tracked_replacement(
                 self.editor.textCursor().position(),
@@ -6484,6 +6570,8 @@ class MainWindow(QMainWindow):
                 latest.get("text", ""), uuid4().hex, "AI"),
                 self._content_changed(),
                 popup.accept()))
+        popup.finished.connect(
+            lambda _: setattr(self, "_ai_popup", None))
         popup.exec()
 
     def _ai_proofread_selection(self) -> None:
@@ -6507,28 +6595,30 @@ class MainWindow(QMainWindow):
                 "This scene is empty", 3000)
             return
         self.save_current()
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                text = ai.complete(
-                    ai.proofread_system(),
-                    text,
-                )
-            finally:
-                QApplication.restoreOverrideCursor()
-        except ai.AIError as error:
-            QMessageBox.warning(self, "AI request failed", str(error))
-            return
-        if not text:
-            self.statusBar().showMessage("AI returned nothing", 3000)
-            return
-        # save_current never moves the live document, so the captured
-        # selection offsets still hold.
-        self.editor.apply_tracked_replacement(start, end, text,
-                                              uuid4().hex, "AI")
-        self._content_changed()
-        self.statusBar().showMessage(
-            "Proofread text applied as a tracked change", 4000)
+        document_id = self.current_id
+        # The offsets only mean something while the text is still the
+        # text that was sent; if the writer edited in the meantime, the
+        # replacement would land in the wrong place.
+        before = document.toPlainText()
+
+        def got_reply(reply, error):
+            if error:
+                QMessageBox.warning(self, "AI request failed", error)
+                return
+            if not reply:
+                self.statusBar().showMessage("AI returned nothing", 3000)
+                return
+            if self.current_id != document_id or \
+                    self.editor.document().toPlainText() != before:
+                self._ai_reply_elsewhere(reply)
+                return
+            self.editor.apply_tracked_replacement(start, end, reply,
+                                                  uuid4().hex, "AI")
+            self._content_changed()
+            self.statusBar().showMessage(
+                "Proofread text applied as a tracked change", 4000)
+
+        self._ask_ai(ai.proofread_system(), text, got_reply)
 
     # --- read aloud (3.1) ----------------------------------------------------
 
@@ -11156,6 +11246,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.stop_speech()
+        request = self._ai_worker
+        if request is not None and request.isRunning():
+            # A thread still running when its QThread is destroyed takes
+            # Qt down with it; the reply is not wanted any more anyway.
+            request.terminate()
+            request.wait(1000)
+            self._ai_worker = None
         if not self.save_current():
             answer = QMessageBox.warning(
                 self, "Save failed",

@@ -9,6 +9,7 @@ as the rest of the tests.
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +30,15 @@ _application.setOrganizationName("Lekhika")
 _application.setApplicationName("Lekhika")
 _settings_dir = tempfile.mkdtemp(prefix="lekhika-ai-local-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
+
+
+def wait_for_ai(window, timeout=5.0):
+    """Spin the event loop until the AI reply lands on the UI thread."""
+    deadline = time.monotonic() + timeout
+    while window._ai_busy and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    QApplication.processEvents()
 
 
 class _FakeResponse:
@@ -154,6 +164,7 @@ class LocalModelWindowTests(unittest.TestCase):
                     wraps=self.window.editor.apply_tracked_replacement,
                 ) as apply:
             self.window._ai_proofread_selection()
+            wait_for_ai(self.window)
 
         # ... one ask carrying the shipped prompt, ...
         self.assertEqual(call.call_count, 1)
@@ -173,6 +184,7 @@ class LocalModelWindowTests(unittest.TestCase):
 
         with patch.object(QMessageBox, "warning") as warning:
             self.window._ai_proofread_selection()   # real client, no network
+            wait_for_ai(self.window)
 
         warning.assert_called_once()
         message = warning.call_args.args[2]
@@ -185,6 +197,7 @@ class LocalModelWindowTests(unittest.TestCase):
 
         with patch.object(QMessageBox, "warning") as warning:
             self.window._ai_continue_scene()
+            wait_for_ai(self.window)
 
         warning.assert_called_once()
         self.assertIn("ollama pull", warning.call_args.args[2])

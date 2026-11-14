@@ -9,6 +9,7 @@ direct write, tracking toggle or not.
 import json
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,9 +18,11 @@ from unittest.mock import patch
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QSettings, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QTextCursor  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication, QDialog, QMessageBox, QPlainTextEdit, QPushButton,
+)
 
 from lekhika import ai  # noqa: E402
 from lekhika.app import MainWindow  # noqa: E402
@@ -30,6 +33,15 @@ _application.setOrganizationName("Lekhika")
 _application.setApplicationName("Lekhika")
 _settings_dir = tempfile.mkdtemp(prefix="lekhika-ai-settings-")
 QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, _settings_dir)
+
+
+def wait_for_ai(window, timeout=5.0):
+    """Spin the event loop until the AI reply lands on the UI thread."""
+    deadline = time.monotonic() + timeout
+    while window._ai_busy and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    QApplication.processEvents()
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -176,6 +188,7 @@ class AIWindowTests(unittest.TestCase):
 
         with patch("lekhika.ai.complete", return_value=" The wind rose.") as call:
             self.window._ai_continue_scene()
+            wait_for_ai(self.window)
 
         self.assertTrue(call.called)
         self.assertIn("The wind rose.", self.window.editor.toPlainText())
@@ -189,6 +202,7 @@ class AIWindowTests(unittest.TestCase):
 
         with patch("lekhika.ai.complete", return_value="Light"):
             self.window._ai_proofread_selection()
+            wait_for_ai(self.window)
 
         # New words in front, old words struck behind — nothing lost.
         self.assertEqual(self.window.editor.toPlainText(),
@@ -206,6 +220,7 @@ class AIWindowTests(unittest.TestCase):
         with patch("lekhika.ai.complete",
                    return_value="First Light!") as call:
             self.window._ai_proofread_selection()
+            wait_for_ai(self.window)
 
         call.assert_called_once()
         self.assertEqual(call.call_args[0][1], "First light prose.")
@@ -217,9 +232,164 @@ class AIWindowTests(unittest.TestCase):
                    side_effect=ai.AIError("no model")), \
                 patch.object(QMessageBox, "warning") as warning:
             self.window._ai_continue_scene()
+            wait_for_ai(self.window)
 
         warning.assert_called_once()
         self.assertEqual(self.project.revisions(self.scene.id), [])
+
+
+class AIThreadTests(unittest.TestCase):
+    """The request runs off the UI thread; the answer lands on it.
+
+    A model can take a minute or two, and the app must not sit frozen
+    for every one of them — but the editor does not live in a worker,
+    so the reply comes back through a signal and is applied here.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project = Project.create(
+            Path(self.temporary.name) / "Novel", "Novel"
+        )
+        draft = self.project.documents()[0]
+        chapter = self.project.add_document("Chapter One", draft.id, "chapter")
+        self.scene = self.project.add_document("First Light", chapter.id,
+                                               "scene")
+        self.other = chapter
+        self.project.write_content(self.scene.id,
+                                   "<p>First light prose.</p>")
+        self.window = MainWindow()
+        self.window._switch_project(self.project)
+        self.window._select_document(self.scene.id)
+
+    def tearDown(self):
+        self.window.project = None
+        self.project.close()
+        self.temporary.cleanup()
+
+    def _slow(self, reply="Answer."):
+        """A complete() that blocks until the test lets it through."""
+        release = threading.Event()
+        started = threading.Event()
+
+        def slow(system, user):
+            started.set()
+            release.wait(5)
+            return reply
+
+        return slow, release, started
+
+    def test_the_request_runs_off_the_ui_thread(self):
+        seen = {}
+
+        def fake(system, user):
+            seen["request"] = threading.current_thread()
+            return "Answer."
+
+        with patch("lekhika.ai.complete", side_effect=fake):
+            self.window._ai_continue_scene()
+            wait_for_ai(self.window)
+
+        self.assertIsNot(seen["request"], threading.main_thread())
+        self.assertIn("Answer.", self.window.editor.toPlainText())
+
+    def test_the_answer_is_applied_on_the_ui_thread(self):
+        seen = {}
+        real = self.window.editor.apply_tracked_replacement
+
+        def spy(*args, **kwargs):
+            seen["applied"] = threading.current_thread()
+            return real(*args, **kwargs)
+
+        with patch("lekhika.ai.complete", return_value="Answer."), \
+                patch.object(self.window.editor,
+                             "apply_tracked_replacement", side_effect=spy):
+            self.window._ai_continue_scene()
+            wait_for_ai(self.window)
+
+        self.assertEqual(seen["applied"], threading.main_thread())
+
+    def test_the_app_stays_responsive_while_the_request_runs(self):
+        slow, release, started = self._slow()
+        ran = []
+
+        with patch("lekhika.ai.complete", side_effect=slow):
+            self.window._ai_continue_scene()
+            self.assertTrue(started.wait(5))
+            QTimer.singleShot(0, lambda: ran.append(True))
+            QApplication.processEvents()
+            self.assertEqual(ran, [True])      # the UI thread was not blocked
+            release.set()
+            wait_for_ai(self.window)
+
+        self.assertIn("Answer.", self.window.editor.toPlainText())
+
+    def test_a_second_request_while_one_is_running_is_refused(self):
+        slow, release, started = self._slow()
+
+        with patch("lekhika.ai.complete", side_effect=slow) as call:
+            self.window._ai_continue_scene()
+            self.assertTrue(started.wait(5))
+            self.window._ai_continue_scene()
+            release.set()
+            wait_for_ai(self.window)
+
+        self.assertEqual(call.call_count, 1)
+
+    def test_an_answer_for_a_scene_the_writer_left_goes_to_the_clipboard(self):
+        slow, release, started = self._slow()
+
+        with patch("lekhika.ai.complete", side_effect=slow):
+            self.window._ai_continue_scene()
+            self.assertTrue(started.wait(5))
+            self.window._select_document(self.other.id)
+            release.set()
+            wait_for_ai(self.window)
+
+        self.assertEqual(self.project.revisions(self.scene.id), [])
+        self.assertEqual(QApplication.clipboard().text(), "Answer.")
+
+    def test_a_proofread_answer_is_not_dropped_into_changed_text(self):
+        slow, release, started = self._slow()
+        cursor = self.window.editor.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.window.editor.setTextCursor(cursor)
+
+        with patch("lekhika.ai.complete", side_effect=slow):
+            self.window._ai_proofread_selection()
+            self.assertTrue(started.wait(5))
+            self.window.editor.insertPlainText(" More prose.")
+            release.set()
+            wait_for_ai(self.window)
+
+        self.assertEqual(self.project.revisions(self.scene.id), [])
+        self.assertEqual(QApplication.clipboard().text(), "Answer.")
+
+    def test_the_ask_popup_asks_and_inserts(self):
+        class _NoExecDialog(QDialog):
+            """The popup without the modal wait — the test drives it."""
+
+            def exec(self):
+                return 0
+
+        with patch("lekhika.app.QDialog", _NoExecDialog), \
+                patch("lekhika.ai.complete", return_value="An answer."):
+            self.window._ai_prompt()
+            popup = self.window._ai_popup
+            areas = popup.findChildren(QPlainTextEdit)
+            buttons = {button.text(): button
+                       for button in popup.findChildren(QPushButton)}
+            areas[0].setPlainText("What happens next?")
+            buttons["Ask"].click()
+            wait_for_ai(self.window)
+
+            self.assertEqual(areas[1].toPlainText(), "An answer.")
+            buttons["Insert at caret"].click()
+
+        self.assertIn("An answer.", self.window.editor.toPlainText())
+        rows = self.project.revisions(self.scene.id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].author, "AI")
 
 
 class ServerListTests(unittest.TestCase):
