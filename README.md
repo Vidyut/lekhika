@@ -43,6 +43,8 @@ Those are goals, not promises about what already works.
 
 Your book is saved in ordinary files rather than locked into a proprietary format — you can open the folder and read it. Lekhika also makes backups and lets you restore earlier versions, and it asks before it deletes or overwrites anything. Ever.
 
+The code has been through an independent [audit](AUDIT.md) — read it if you want the details.
+
 ## Getting it running
 
 ### Option 1: Download a release (easiest)
