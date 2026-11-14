@@ -70,7 +70,7 @@ from .project import (
     config_page_size, config_points, reading_time, trim_id_for,
 )
 from .preferences import (
-    LINK_POLICY_CHOICES, PreferencesDialog, apply_update, newer_release,
+    LINK_POLICY_CHOICES, PreferencesDialog, newer_release,
     update_check_due, update_mode, git_toplevel)
 from .pageview import PageView
 from .templates import (

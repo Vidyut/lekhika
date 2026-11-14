@@ -591,6 +591,26 @@ class UpdateScheduleTests(unittest.TestCase):
         self.assertEqual(numeric_version("v1.0.0"), numeric_version("1.0.0"))
         self.assertFalse(numeric_version("1.1.0-rc1") > numeric_version("1.1.0"))
 
+    def test_a_release_asset_is_picked_for_this_platform(self):
+        # Regression: sys was never imported in
+        # _preferred_download_asset, so it raised NameError and every
+        # check fell back to the generic releases page with no
+        # download URL (the raise was swallowed by newer_release).
+        from lekhika.preferences import _preferred_download_asset
+        assets = [
+            {"name": "lekhika-windows-x64.zip",
+             "browser_download_url": "https://example/win"},
+            {"name": "lekhika-macos-intel.zip",
+             "browser_download_url": "https://example/mac"},
+            {"name": "lekhika-linux-x86_64.AppImage",
+             "browser_download_url": "https://example/linux-x86"},
+            {"name": "lekhika-linux-aarch64.AppImage",
+             "browser_download_url": "https://example/linux-arm"},
+        ]
+        url = _preferred_download_asset(assets)
+        self.assertIsNotNone(url)
+        self.assertTrue(str(url).startswith("http"))
+
     def test_the_version_the_check_compares_is_the_packaged_one(self):
         from lekhika import __version__
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -598,7 +618,8 @@ class UpdateScheduleTests(unittest.TestCase):
 
 
 class StartupUpdateTests(unittest.TestCase):
-    """Auto installs, Check only tells, and Manual does not even look."""
+    """Check tells, Manual does not even look, and the old Auto maps
+    to Check: a startup check never installs anything by itself."""
 
     FOUND = {"current": "1.0.0", "latest": "1.0.1", "page": ""}
 
@@ -614,7 +635,7 @@ class StartupUpdateTests(unittest.TestCase):
         QSettings().remove("update/mode")
         QSettings().remove("update/lastCheck")
 
-    def _start(self, mode, installed=False):
+    def _start(self, mode):
         QSettings().setValue("update/mode", mode)
         QSettings().remove("update/lastCheck")
 
@@ -629,27 +650,22 @@ class StartupUpdateTests(unittest.TestCase):
 
         with patch("lekhika.app.threading.Thread", Immediate), \
                 patch("lekhika.app.newer_release",
-                      return_value=self.FOUND) as probe, \
-                patch("lekhika.app.apply_update",
-                      return_value=installed) as install:
+                      return_value=self.FOUND) as probe:
             self.window.start_update_check()
-        return self.window.statusBar().currentMessage(), probe, install
+        return self.window.statusBar().currentMessage(), probe
 
     def test_manual_does_not_look_at_the_network(self):
-        message, probe, install = self._start("manual")
+        message, probe = self._start("manual")
         self.assertEqual(message, "")
         self.assertFalse(probe.called)
-        self.assertFalse(install.called)
 
     def test_check_tells_without_installing(self):
-        message, _, install = self._start("check")
+        message, _ = self._start("check")
         self.assertIn("1.0.1 is available", message)
-        self.assertFalse(install.called)
 
     def test_auto_mode_normalises_to_check_and_notifies(self):
-        message, _, install = self._start("auto", installed=False)
+        message, _ = self._start("auto")
         self.assertIn("1.0.1 is available", message)
-        self.assertFalse(install.called)
 
 
 if __name__ == "__main__":

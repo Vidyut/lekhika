@@ -106,6 +106,7 @@ def numeric_version(text: str) -> tuple[int, ...]:
 def _preferred_download_asset(assets: list[dict]) -> str | None:
     """Pick the best release asset download URL for this platform/arch."""
     import platform
+    import sys
     plat = sys.platform
     machine = platform.machine().lower()
     names = [(str(a.get("name", "")), str(a.get("browser_download_url", "")))
@@ -171,31 +172,6 @@ def newer_release() -> dict | None:
     except Exception:
         page = f"https://github.com/{repo}/releases"
     return {"current": current, "latest": latest, "page": page, "download": download}
-
-
-def apply_update(current: str, latest: str) -> bool:
-    """Take a newer release for the writer who chose Automatic.
-
-    Only a clean git checkout, and never across a major version: a new
-    major may change the shape of project files, so that one waits for
-    the writer's click (docs/TEMPLATES.md §8). Anything else — pip, zip,
-    local edits, a failed pull — is hands off.
-    """
-    import subprocess
-    if numeric_version(latest)[:1] != numeric_version(current)[:1]:
-        return False
-    toplevel = git_toplevel()
-    if toplevel is None:
-        return False
-    state = subprocess.run(
-        ["git", "-C", str(toplevel), "status", "--porcelain"],
-        capture_output=True, text=True, timeout=10)
-    if state.stdout.strip():
-        return False
-    pulled = subprocess.run(
-        ["git", "-C", str(toplevel), "pull", "--ff-only"],
-        capture_output=True, text=True, timeout=60)
-    return pulled.returncode == 0
 
 
 def update_check_due() -> bool:
@@ -1633,9 +1609,10 @@ class PreferencesDialog(QDialog):
         worker = Worker()
         thread = QThread(self)
         worker.moveToThread(thread)
-        worker.updated.connect(
-            lambda done, total: (progress.setMaximum(max(1, total)),
-                                 progress.setValue(done)))
+        # on_progress, not a fresh lambda: it guards the late updates a
+        # cancel can still see, and shows an unknown size (total 0)
+        # as the busy indicator instead of a bar pinned full.
+        worker.updated.connect(on_progress)
         worker.finished.connect(
             lambda: (thread.quit(), thread.wait(),
                      self._piper_install_done(worker.result)))
