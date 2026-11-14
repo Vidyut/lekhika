@@ -59,8 +59,15 @@ def write_document(path: Path, metadata: dict, prose: str) -> None:
     """
     head = dump_frontmatter(metadata) if metadata else ""
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(head + prose, encoding="utf-8")
-    temporary.replace(path)
+    try:
+        temporary.write_text(head + prose, encoding="utf-8")
+        temporary.replace(path)
+    except BaseException:
+        # A failed write or rename must not leave the .tmp behind —
+        # the binder would read it as a document (same shape as
+        # Project._atomic_write).
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def merge_metadata(path: Path, changes: dict) -> dict:

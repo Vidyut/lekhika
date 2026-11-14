@@ -185,7 +185,20 @@ def install_piper(directory: Path, progress=None, cancelled=None) -> tuple[Path,
     import tarfile
     try:
         with tarfile.open(tarball) as archive:
-            archive.extractall(directory)
+            if hasattr(tarfile, "data_filter"):
+                # 3.12+: the data filter refuses members that would
+                # write outside the directory (tarfile B202).
+                archive.extractall(directory, filter="data")
+            else:
+                # shortcut: before 3.12 there are no filters, so only
+                # names are checked, not symlink targets — raise
+                # requires-python to >=3.12 to drop this branch
+                for member in archive.getmembers():
+                    member_path = Path(member.name)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        raise tarfile.TarError(
+                            "member escapes the extraction directory")
+                archive.extractall(directory)
     except (tarfile.TarError, OSError):
         tarball.unlink(missing_ok=True)
         return None
@@ -416,6 +429,17 @@ class SpeechReader(QObject):
 
     def _speak_api(self, settings: TTSSettings, text: str) -> bool:
         if not settings.api_endpoint:
+            return False
+        # The chat client's rule (ai._sends_key_in_the_clear), for the
+        # same reasons: a key and the spoken text never go out over a
+        # cleartext remote connection, and only http(s) is an endpoint.
+        import urllib.parse
+        from .ai import _sends_key_in_the_clear
+        if urllib.parse.urlsplit(settings.api_endpoint).scheme not in (
+                "http", "https"):
+            return False
+        if settings.api_key and _sends_key_in_the_clear(
+                settings.api_endpoint):
             return False
         payload = json.dumps({
             "model": settings.api_model or "tts-1",

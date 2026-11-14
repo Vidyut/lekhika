@@ -1063,6 +1063,26 @@ class MetadataInTheHeadTests(unittest.TestCase):
         self.assertNotIn("Template:", head)
 
 
+class DocumentWriteTests(unittest.TestCase):
+    """Writing a document is atomic, and a failed write leaves nothing
+    behind — a leftover .tmp would be read as a document of its own."""
+
+    def test_a_failed_rename_leaves_no_tmp_file(self):
+        from lekhika import disk_doc
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "A Scene.html"
+            path.write_text("<p>Before.</p>", encoding="utf-8")
+
+            with mock.patch.object(Path, "replace",
+                                   side_effect=OSError("rename refused")):
+                with self.assertRaises(OSError):
+                    disk_doc.write_document(path, {}, "<p>After.</p>")
+
+            self.assertEqual(path.read_text(encoding="utf-8"),
+                             "<p>Before.</p>")
+            self.assertFalse(path.with_name(path.name + ".tmp").exists())
+
+
 class MetadataDriftTests(unittest.TestCase):
     """A file edited outside Lekhika disagrees — and says so.
 

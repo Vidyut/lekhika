@@ -257,6 +257,55 @@ class ApiTTSPlaybackTests(unittest.TestCase):
         finally:
             tts.save_settings(original)
 
+    def test_a_key_is_never_sent_in_the_clear_or_to_a_bad_scheme(self):
+        # The chat client's rule, for the same reasons: no key and no
+        # spoken text over a cleartext remote connection, and only
+        # http(s) is an endpoint at all.
+        from unittest.mock import patch
+        original = tts.load_settings()
+        try:
+            for endpoint in ("http://api.example/v1/audio/speech",
+                             "file:///etc/passwd"):
+                tts.save_settings(tts.TTSSettings(
+                    source="api", api_endpoint=endpoint, api_key="secret"))
+                with patch("urllib.request.urlopen", self._fake_urlopen):
+                    self.assertFalse(tts.SpeechReader().speak("Hello API."))
+        finally:
+            tts.save_settings(original)
+        self.assertEqual(self.calls, [])
+
+
+class PiperInstallTests(unittest.TestCase):
+    """The download-and-unpack route: the tarball is opened, but a
+    member that would write outside the folder is refused."""
+
+    def test_a_tarball_that_escapes_the_folder_is_refused(self):
+        import io
+        import tarfile
+        from unittest.mock import patch
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            info = tarfile.TarInfo("../escape.txt")
+            data = b"evil"
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+        payload = buffer.getvalue()
+
+        def fake_download(url, destination, progress=None, cancelled=None):
+            Path(destination).write_bytes(payload)
+            return True
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "piper"
+            directory.mkdir()
+            with patch.object(tts, "piper_download",
+                              return_value=("piper.tgz",
+                                            "https://example/piper.tgz")), \
+                    patch.object(tts, "_download", side_effect=fake_download):
+                result = tts.install_piper(directory)
+            self.assertIsNone(result)
+            self.assertFalse((Path(temporary) / "escape.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
