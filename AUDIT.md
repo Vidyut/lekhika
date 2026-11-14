@@ -16,7 +16,7 @@ Reviewed on 14 November 2026, against the source at v1.0.5 plus the six audit co
 | Subprocesses | No `shell=True` anywhere; every external program is started with an argument list |
 | Updates | No automatic download or execution of binaries; installing is a click, and only a git checkout is ever pulled |
 | Diagnostics | Carries no manuscript text, no project path and no document title |
-| Release pipeline | Six targets built from public tags and smoke-tested; macOS packaging fixed, one re-tag outstanding |
+| Release pipeline | Six targets built from public tags and smoke-tested; v1.0.7 publishes all six, macOS included |
 
 ## What Lekhika is
 
@@ -75,11 +75,11 @@ The modes are "check automatically", "check only when I ask" (the default) and "
 - **Table of contents and reconciliation** (`project.py`) — ToC labels are escaped for strict XHTML; the shadowed duplicate export check is gone; the read-only SQLite URI is URI-encoded; a `.lekhika` suffix is appended rather than replacing a dotted suffix; `reconcile()` now writes the order exactly as the binder does, including a leading `index.html` and list order; `effective_cover()` cannot climb out of the project; `copy_to()` checkpoints the WAL first.
 - **Update review** (`preferences.py`) — `_preferred_download_asset()` raised `NameError` for every release with assets, so the check always fell back to the generic releases page with no download link; the Piper progress handler is the one that was written rather than a fresh lambda; the dead `apply_update()` is gone (v1.0.5 removed the Auto mode that called it).
 - **External runners** (`tts.py`, `disk_doc.py`) — the Piper tarball is unpacked with a data filter (3.12+) or, before that, a name check, so a member cannot write outside the folder it belongs in; the TTS API route follows the chat client's rule — http(s) endpoints only, and no key (nor the text being read) over a cleartext remote connection; a failed write or rename no longer leaves a `.tmp` file behind that the binder would read as a document.
-- **Release build** (`.github/workflows/release-build.yml`) — the smoke test no longer continues on error, so a bundle that crashes on start stops the release instead of publishing green; the bundle is found by what PyInstaller actually produced (macOS makes a `.app`, Linux and Windows a folder — the prune step died on macOS, where `dist/Lekhika` does not exist); archives use `zip -ry` so the symlinks a macOS bundle needs survive.
+- **Release build** (`.github/workflows/release-build.yml`) — the smoke test no longer continues on error, so a bundle that crashes on start stops the release instead of publishing green; the bundle is found by what PyInstaller actually produced (macOS makes a `.app`, Linux and Windows a folder — the prune step died on macOS, where `dist/Lekhika` does not exist); archives use `zip -ry` so the symlinks a macOS bundle needs survive; the Linux job installs the X libraries the bundled xcb plugin links against, and prints the plugin's `ldd` and runs with the plugin loader in debug mode, so a missing library is named rather than guessed at.
 - **Scripts** (`scripts/`) — the Linux launcher parses its `Exec=` line with `shlex`, so a path with spaces is read as one path; the macOS installer takes its version from `pyproject.toml` (it was hardcoded at 0.1.0); the blog uploader accepts only http(s) sites and says so plainly for a non-numeric category or tag id; the icon renderer explains `--icns` without a path instead of raising `IndexError`.
 - **Covers, preview, templates and imports** (`cover.py`, `pageview.py`, `uno_pdf.py`, `templates.py`, `project.py`, `markdown_import.py`) — the writer's cover art is flattened to an RGB PNG before ReportLab draws it (a CMYK JPEG fails and an RGBA PNG inverts); the page preview resolves relative image paths from the project folder, and a bottom margin too small to hold the page number no longer draws one into the page's own edge; LibreOffice's profile log is read with `errors="replace"`, so a Windows codepage log cannot hide the real conversion error; the writer's own template sets live where the platform keeps user settings (Windows app-data, macOS Application Support, XDG on Linux), with the old Linux folder still used where it is the only one; imported Markdown is read as `utf-8-sig`, so a file with a UTF-8 BOM keeps its frontmatter fence and document header.
 
-Six commits carry these changes: `6e54ca8`, `0458954`, `a87a83d`, `9f4ccd6`, `2799f4b`, `99c2c3a`. The test suite went from 1068 to 1092 tests, all passing.
+Six commits carry these changes: `6e54ca8`, `0458954`, `a87a83d`, `9f4ccd6`, `2799f4b`, `99c2c3a`. The test suite went from 1068 to 1093 tests, all passing.
 
 ## Corrections
 
@@ -98,7 +98,7 @@ Honest things this review did not settle:
 - **Model detection in Preferences still waits.** Choosing a server in the AI preferences asks it what models it has, on the UI thread — a few seconds at most, not the two minutes a completion could take, but it is a wait.
 - **Stored paths are not normalised to POSIX separators on Windows.** Deferred; see Corrections.
 - **No dependency vulnerability scan.** The four runtime dependencies (PySide6, python-docx, Pillow, reportlab) were not checked against known CVEs.
-- **No dynamic testing.** Everything here is source reading and the unit suite. The release pipeline itself was not run from a tag; the macOS packaging fix has not yet been proved by a real release, so one re-tag is outstanding.
+- **No dynamic testing.** Everything here is source reading and the unit suite. The release pipeline has since been run from a tag: v1.0.6 published five of six targets — including both macOS builds, which had never shipped before — and its Linux x64 job failed a smoke test because the runner lacked X libraries the bundled xcb plugin links against. The runner now installs them; the app starts under a real X server with the plugin loaded, and v1.0.7 publishes all six targets. What has not been done is testing the app on a writer's own desktop.
 - **Per-field date display formats** are not yet configurable; dates are stored canonically as ISO and shown in one chosen format.
 
 ## Checking this yourself
