@@ -316,12 +316,18 @@ class AIThreadTests(unittest.TestCase):
         with patch("lekhika.ai.complete", side_effect=slow):
             self.window._ai_continue_scene()
             self.assertTrue(started.wait(5))
+            # The status bar says the request is out for as long as it
+            # is — not for four seconds and then silence.
+            self.assertEqual(self.window.statusBar().currentMessage(),
+                             "Asking the AI…")
             QTimer.singleShot(0, lambda: ran.append(True))
             QApplication.processEvents()
             self.assertEqual(ran, [True])      # the UI thread was not blocked
             release.set()
             wait_for_ai(self.window)
 
+        self.assertNotEqual(self.window.statusBar().currentMessage(),
+                            "Asking the AI…")
         self.assertIn("Answer.", self.window.editor.toPlainText())
 
     def test_a_second_request_while_one_is_running_is_refused(self):

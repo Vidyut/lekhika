@@ -6436,7 +6436,9 @@ class MainWindow(QMainWindow):
         worker.reply.connect(self._ai_reply)
         self._ai_worker = worker
         worker.start()
-        self.statusBar().showMessage("Asking the AI…", 4000)
+        # No timeout: the message says the request is out for as long
+        # as it is, and the reply clears it.
+        self.statusBar().showMessage("Asking the AI…")
 
     def _ai_reply(self, payload) -> None:
         """The answer, back on the UI thread."""
@@ -6444,6 +6446,7 @@ class MainWindow(QMainWindow):
         worker, self._ai_worker = self._ai_worker, None
         if worker is not None:
             worker.deleteLater()
+        self.statusBar().clearMessage()
         callback, self._ai_on_reply = self._ai_on_reply, None
         if callback is not None:
             text, error = payload
