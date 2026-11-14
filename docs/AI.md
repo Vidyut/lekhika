@@ -43,6 +43,19 @@ accept or reject, per change (2.4). The model cannot alter your prose behind you
 - **Small models rewrite.** They smooth voice, "tidy" deliberate fragments and restructure sentences. The proofreading prompt therefore asks for minimal edits only, and the UI should say *bloopers, not prose*.
 - **Keep selections short.** A few paragraphs, not a chapter: context is small and long selections drift.
 
+## While the model is thinking
+
+The request runs off the interface, so Lekhika stays usable while the model works: the writer can keep writing or move to something else, and the status bar says **Asking the AI…** until the answer lands. One request at a time — a second one while the first is still out is refused rather than interleaved with it.
+
+The answer comes back on the interface's own thread — the one the editor lives on — and is applied there, so the manuscript is never touched from anywhere else. It lands as a tracked change **at the caret as it stands when the answer arrives**, not where the caret was when the request went out.
+
+Two cases where the answer is not inserted, because inserting it would put words in the wrong place:
+
+- **The writer left the scene.** The answer is not inserted anywhere. It goes to the **clipboard**, and the status bar says so — nothing is lost, and nothing lands in the wrong document.
+- **The writer changed the text being proofread.** The answer is not dropped into text that has moved on. It goes to the clipboard, the same way.
+
+The **Ask the AI** popup stays open while the answer is coming: the reply appears in it first, and **Insert at caret** puts it into the manuscript as a tracked change. The writer sees the words before they touch the book.
+
 ## What each tool is actually good at
 
 | Task | Right tool |
