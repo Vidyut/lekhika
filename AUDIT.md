@@ -4,7 +4,7 @@ An independent static review of the Lekhika source, run by an AI auditor that ha
 
 This is a code review, not a penetration test and not a security certification. Nothing was run against a live install, no dependency was checked against known CVEs, and no dynamic or fuzz testing was done. It says what was read and what was fixed — not that no bug can exist.
 
-Reviewed on 14 November 2026, against the source at v1.0.5 plus the five audit commits named below. Scope: `src/lekhika/` (app, project, layout, disk_doc, ai, preferences, pdf, uno_pdf, tts, spellcheck, templates, revisions, cover, pageview, markdown, markdown_import, flowlayout, guide), `scripts/`, `pyproject.toml` and `.github/workflows/release-build.yml`. `revisions.py`, `markdown.py`, `flowlayout.py` and `guide.py` were read and came back clean.
+Reviewed on 14 November 2026, against the source at v1.0.5 plus the six audit commits named below. Scope: `src/lekhika/` (app, project, layout, disk_doc, ai, preferences, pdf, uno_pdf, tts, spellcheck, templates, revisions, cover, pageview, markdown, markdown_import, flowlayout, guide), `scripts/`, `pyproject.toml` and `.github/workflows/release-build.yml`. `revisions.py`, `markdown.py`, `flowlayout.py` and `guide.py` were read and came back clean.
 
 ## Summary
 
@@ -70,6 +70,7 @@ The modes are "check automatically", "check only when I ask" (the default) and "
 - **Drift-dialog labels** (`app.py`) — text taken from the project was interpolated into the dialog unescaped; it is escaped now.
 - **Debug print in the save path** (`app.py`) — removed.
 - **AI server settings** (`ai.py`) — save and load now agree on one stored shape (dictionaries, with the older list form still readable), remote-model detection takes the API key, both endpoints refuse a scheme that is not http(s), and the Ollama installer opens the download page when the script cannot run.
+- **The AI request no longer freezes the app** (`app.py`) — the request runs on a worker thread and the answer comes back through a signal, so it lands on the UI thread where the editor is; the writer can keep writing while the model thinks. The reply is inserted as a tracked change at the caret as it stands when the answer arrives; a reply for a scene the writer has left is not inserted anywhere but goes to the clipboard; one request at a time. The "Ask the AI" popup, which raised `AttributeError` on every use, works again.
 - **Word target** (`layout.py`) — a hand-edited value now reads as 0 instead of failing; an unused constant is gone.
 - **Table of contents and reconciliation** (`project.py`) — ToC labels are escaped for strict XHTML; the shadowed duplicate export check is gone; the read-only SQLite URI is URI-encoded; a `.lekhika` suffix is appended rather than replacing a dotted suffix; `reconcile()` now writes the order exactly as the binder does, including a leading `index.html` and list order; `effective_cover()` cannot climb out of the project; `copy_to()` checkpoints the WAL first.
 - **Update review** (`preferences.py`) — `_preferred_download_asset()` raised `NameError` for every release with assets, so the check always fell back to the generic releases page with no download link; the Piper progress handler is the one that was written rather than a fresh lambda; the dead `apply_update()` is gone (v1.0.5 removed the Auto mode that called it).
@@ -78,7 +79,7 @@ The modes are "check automatically", "check only when I ask" (the default) and "
 - **Scripts** (`scripts/`) — the Linux launcher parses its `Exec=` line with `shlex`, so a path with spaces is read as one path; the macOS installer takes its version from `pyproject.toml` (it was hardcoded at 0.1.0); the blog uploader accepts only http(s) sites and says so plainly for a non-numeric category or tag id; the icon renderer explains `--icns` without a path instead of raising `IndexError`.
 - **Covers, preview, templates and imports** (`cover.py`, `pageview.py`, `uno_pdf.py`, `templates.py`, `project.py`, `markdown_import.py`) — the writer's cover art is flattened to an RGB PNG before ReportLab draws it (a CMYK JPEG fails and an RGBA PNG inverts); the page preview resolves relative image paths from the project folder, and a bottom margin too small to hold the page number no longer draws one into the page's own edge; LibreOffice's profile log is read with `errors="replace"`, so a Windows codepage log cannot hide the real conversion error; the writer's own template sets live where the platform keeps user settings (Windows app-data, macOS Application Support, XDG on Linux), with the old Linux folder still used where it is the only one; imported Markdown is read as `utf-8-sig`, so a file with a UTF-8 BOM keeps its frontmatter fence and document header.
 
-Five commits carry these changes: `6e54ca8`, `0458954`, `a87a83d`, `9f4ccd6`, `2799f4b`. The test suite went from 1068 to 1085 tests, all passing.
+Six commits carry these changes: `6e54ca8`, `0458954`, `a87a83d`, `9f4ccd6`, `2799f4b`, `99c2c3a`. The test suite went from 1068 to 1092 tests, all passing.
 
 ## Corrections
 
@@ -94,7 +95,7 @@ Two claims were checked and rejected outright: the README's PowerShell flags are
 
 Honest things this review did not settle:
 
-- **A long AI completion freezes the interface.** The request runs on the UI thread and can take up to two minutes. Moving it to a worker touches the tracked-changes flow, so it has not been done in a hurry; it is a known risk, not a hidden one.
+- **Model detection in Preferences still waits.** Choosing a server in the AI preferences asks it what models it has, on the UI thread — a few seconds at most, not the two minutes a completion could take, but it is a wait.
 - **Stored paths are not normalised to POSIX separators on Windows.** Deferred; see Corrections.
 - **No dependency vulnerability scan.** The four runtime dependencies (PySide6, python-docx, Pillow, reportlab) were not checked against known CVEs.
 - **No dynamic testing.** Everything here is source reading and the unit suite. The release pipeline itself was not run from a tag; the macOS packaging fix has not yet been proved by a real release, so one re-tag is outstanding.
