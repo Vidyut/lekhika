@@ -147,24 +147,35 @@ jobs:
             --collect-all reportlab \
             scripts/pyinstaller_entry.py
 
+      - name: Find the bundle
+        shell: bash
+        run: |
+          # macOS builds a .app bundle; Linux and Windows build a folder.
+          if [ -d "dist/Lekhika.app" ]; then
+            echo "BUNDLE=dist/Lekhika.app" >> "$GITHUB_ENV"
+            echo "BINARY=dist/Lekhika.app/Contents/MacOS/Lekhika" >> "$GITHUB_ENV"
+          else
+            echo "BUNDLE=dist/Lekhika" >> "$GITHUB_ENV"
+            echo "BINARY=dist/Lekhika/Lekhika" >> "$GITHUB_ENV"
+          fi
+
       - name: Smoke test bundle (Linux)
         if: matrix.platform == 'linux'
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          xvfb-run -a bash -c 'timeout 15s ./dist/Lekhika/Lekhika >/tmp/lekhika-smoke.log 2>&1; code=$?; echo "--- smoke log ---"; cat /tmp/lekhika-smoke.log || true; echo "--- end smoke log (exit $code) ---"; if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi'
+          xvfb-run -a bash -c 'timeout 15s "$BINARY" >/tmp/lekhika-smoke.log 2>&1; code=$?; echo "--- smoke log ---"; cat /tmp/lekhika-smoke.log || true; echo "--- end smoke log (exit $code) ---"; if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi'
 
       - name: Smoke test bundle (macOS)
         if: matrix.platform == 'macos'
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           # Best-effort GUI launch check; timeout means it stayed running.
           python3 - <<'PY'
+          import os
           import subprocess, sys
-          p = subprocess.Popen(['./dist/Lekhika/Lekhika'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          p = subprocess.Popen([os.environ['BINARY']], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
           try:
               out, _ = p.communicate(timeout=15)
               print(out or '')
@@ -180,7 +191,6 @@ jobs:
 
       - name: Smoke test bundle (Windows)
         if: matrix.platform == 'windows'
-        continue-on-error: true
         shell: pwsh
         run: |
           $p = Start-Process -FilePath ".\dist\Lekhika\Lekhika.exe" -PassThru
@@ -199,10 +209,11 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import os
           import shutil
           from pathlib import Path
 
-          root = Path('dist/Lekhika')
+          root = Path(os.environ.get('BUNDLE', 'dist/Lekhika'))
           def size(p):
               if p.is_file():
                   return p.stat().st_size
@@ -245,18 +256,26 @@ jobs:
       - name: Archive build
         shell: bash
         run: |
-          python - <<'PY'
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            # zip -y keeps the symlinks a macOS .app bundle needs;
+            # Python's zipfile would dereference them into copies.
+            name="$(basename "$BUNDLE")"
+            (cd dist && zip -ry "$ZIP_NAME" "$name")
+            echo "Created dist/$ZIP_NAME"
+          else
+            python - <<'PY'
           import os
           import zipfile
           from pathlib import Path
 
-          root = Path('dist/Lekhika')
+          root = Path(os.environ.get('BUNDLE', 'dist/Lekhika'))
           out = Path('dist') / os.environ['ZIP_NAME']
           with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
               for path in root.rglob('*'):
                   zf.write(path, path.relative_to(root.parent))
           print(f'Created {out} ({out.stat().st_size} bytes)')
           PY
+          fi
         env:
           ZIP_NAME: ${{ matrix.zip_name }}
 

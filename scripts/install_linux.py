@@ -15,6 +15,7 @@ Usage:  python3 scripts/install_linux.py [--uninstall] [--check]
 from __future__ import annotations
 
 import argparse
+import shlex
 import shutil
 import subprocess
 import sys
@@ -125,9 +126,13 @@ def check() -> None:
     else:
         line = next((l for l in DESKTOP_FILE.read_text().splitlines()
                      if l.startswith("Exec=")), "")
-        target = line.removeprefix("Exec=").strip().strip('"').split(" ")[0]
-        if not Path(target).exists():
-            problems.append(f"Exec target gone: {target}")
+        # shlex, not split(" "): the launcher path may be quoted and may
+        # itself contain spaces ("/opt/My Apps/lekhika").
+        parts = shlex.split(line.removeprefix("Exec=").strip())
+        if not parts:
+            problems.append("desktop file has no Exec line")
+        elif not Path(parts[0]).exists():
+            problems.append(f"Exec target gone: {parts[0]}")
     if not (HICOLOR / "scalable" / "apps" / "lekhika.svg").exists():
         problems.append("scalable icon missing")
     if problems:

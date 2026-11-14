@@ -11,6 +11,11 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 app="$HOME/Applications/Lekhika.app"
 
+# The bundle's version is the project's version, read from pyproject.toml
+# so it cannot drift from the release (it used to be hardcoded at 0.1.0).
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$repo/pyproject.toml" | head -1)"
+version="${version:-0.0.0}"
+
 if [[ "${1:-}" == "--remove" ]]; then
   rm -rf "$app"
   echo "removed $app"
@@ -28,8 +33,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key>            <string>Lekhika</string>
   <key>CFBundleDisplayName</key>     <string>Lekhika</string>
   <key>CFBundleIdentifier</key>      <string>net.vidyut.lekhika</string>
-  <key>CFBundleVersion</key>         <string>0.1.0</string>
-  <key>CFBundleShortVersionString</key> <string>0.1.0</string>
+  <key>CFBundleVersion</key>         <string>$version</string>
+  <key>CFBundleShortVersionString</key> <string>$version</string>
   <key>CFBundleExecutable</key>      <string>Lekhika</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>LSMinimumSystemVersion</key>  <string>12.0</string>

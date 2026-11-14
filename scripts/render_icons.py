@@ -90,7 +90,10 @@ def main() -> int:
 
     icns_path = None
     if "--icns" in sys.argv:
-        icns_path = Path(sys.argv[sys.argv.index("--icns") + 1])
+        index = sys.argv.index("--icns")
+        if index + 1 >= len(sys.argv):
+            raise SystemExit("--icns needs a path to write")
+        icns_path = Path(sys.argv[index + 1])
 
     png_256 = render_png(renderer, 256)
     (ROOT / "packaging" / "lekhika.png").write_bytes(png_256)

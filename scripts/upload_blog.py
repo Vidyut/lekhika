@@ -39,6 +39,10 @@ def auth_header(creds: dict) -> str:
 
 def api_request(site: str, endpoint: str, creds: dict, payload: dict | None = None,
                 method: str = "POST") -> dict:
+    # Only http(s): a site URL is a web address, and the credentials
+    # below go out with it (never file:// or ftp://).
+    if not site.startswith(("http://", "https://")):
+        raise SystemExit(f"site must be an http(s) URL, not {site!r}")
     url = site.rstrip("/") + endpoint
     data = None
     headers = {
@@ -106,10 +110,14 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.excerpt:
         payload["excerpt"] = args.excerpt
-    if args.categories:
-        payload["categories"] = [int(x.strip()) for x in args.categories.split(",") if x.strip()]
-    if args.tags:
-        payload["tags"] = [int(x.strip()) for x in args.tags.split(",") if x.strip()]
+    try:
+        if args.categories:
+            payload["categories"] = [int(x.strip()) for x in args.categories.split(",") if x.strip()]
+        if args.tags:
+            payload["tags"] = [int(x.strip()) for x in args.tags.split(",") if x.strip()]
+    except ValueError as error:
+        raise SystemExit(
+            f"category and tag IDs must be numbers: {error}") from error
 
     result = api_request(site, "/wp-json/wp/v2/posts", creds, payload=payload)
     link = result.get("link") or result.get("guid", {}).get("rendered") or ""
