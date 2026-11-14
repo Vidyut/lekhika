@@ -971,10 +971,31 @@ class TemplateSet:
 
 
 def user_template_root() -> Path:
+    """Where the writer's own template sets live.
+
+    Each platform keeps user settings where it keeps them: the Windows
+    app-data folder, the macOS Application Support folder, the XDG
+    config folder on Linux. A folder left at the old Linux path is
+    still used where it exists, so a writer who moved machines keeps
+    their templates."""
+    import sys
     from os import environ
 
-    base = environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    return Path(base) / "lekhika" / "templates"
+    home = Path.home()
+    if sys.platform == "win32":
+        base = environ.get("APPDATA") or str(home / "AppData" / "Roaming")
+        root = Path(base) / "lekhika" / "templates"
+    elif sys.platform == "darwin":
+        root = home / "Library" / "Application Support" / "lekhika" / "templates"
+    else:
+        base = environ.get("XDG_CONFIG_HOME", str(home / ".config"))
+        root = Path(base) / "lekhika" / "templates"
+    # A writer who moved machines keeps their templates: the old
+    # Linux-style folder is still used where it is the only one there is.
+    legacy = home / ".config" / "lekhika" / "templates"
+    if root != legacy and not root.exists() and legacy.is_dir():
+        return legacy
+    return root
 
 
 def project_template_root(project_root: Path) -> Path:
@@ -1218,10 +1239,7 @@ def _write_shipped_files(name: str, directory: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
     if name in SHIPPED_EXAMPLE_SAMPLE:
-        try:
-            write_example_sample(directory / "examples" / "formatting.docx")
-        except ImportError:          # no python-docx: the set still ships
-            pass
+        write_example_sample(directory / "examples" / "formatting.docx")
 
 
 def _shipped_text(templates: TemplateSet, relative: str) -> str:

@@ -77,12 +77,14 @@ def main() -> None:
                 if process.poll() is not None:
                     raise SystemExit(
                         "LibreOffice exited before it was ready: "
-                        + log_path.read_text(encoding="utf-8")[-1000:])
+                        + log_path.read_text(encoding="utf-8",
+                                            errors="replace")[-1000:])
                 time.sleep(0.2)
         if context is None:
             raise SystemExit(
                 "could not reach LibreOffice over the socket within 20s; "
-                "profile log: " + log_path.read_text(encoding="utf-8")[-1000:])
+                "profile log: " + log_path.read_text(
+                    encoding="utf-8", errors="replace")[-1000:])
 
         def property_value(name, value):
             item = PropertyValue()

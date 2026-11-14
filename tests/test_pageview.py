@@ -171,6 +171,13 @@ class PageCanvasTests(unittest.TestCase):
         self.assertEqual(self.view.geometry["width"], 8.27)
         self.assertEqual(self.view.geometry["height"], 11.69)
 
+    def test_a_base_url_makes_relative_images_resolve(self):
+        from PySide6.QtCore import QUrl
+        self.view.set_page("<p>x</p>", _six_by_nine(), None,
+                           QUrl.fromLocalFile("/tmp/project/"))
+        self.assertEqual(self.view._canvas._document.baseUrl(),
+                         QUrl.fromLocalFile("/tmp/project/"))
+
     def test_hit_test_maps_the_first_page_and_rejects_off_paper(self):
         self.view.set_page(_paragraphs(40), _six_by_nine())
         _application.processEvents()

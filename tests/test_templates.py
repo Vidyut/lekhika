@@ -10,6 +10,30 @@ from lekhika.templates import (
 )
 
 
+class UserTemplateRootTests(unittest.TestCase):
+    """The writer's own template sets live where the platform keeps
+    user settings, not in one hardcoded Linux folder."""
+
+    def test_each_platform_keeps_them_where_it_belongs(self):
+        import os
+        from unittest import mock
+        from lekhika import templates
+
+        with mock.patch.object(Path, "home", return_value=Path("/home/w")):
+            with mock.patch("sys.platform", "win32"), \
+                    mock.patch.dict(os.environ, {"APPDATA": "/appdata"}):
+                self.assertEqual(templates.user_template_root(),
+                                 Path("/appdata/lekhika/templates"))
+            with mock.patch("sys.platform", "darwin"):
+                self.assertEqual(
+                    templates.user_template_root(),
+                    Path("/home/w/Library/Application Support/lekhika/templates"))
+            with mock.patch("sys.platform", "linux"), \
+                    mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "/xdg"}):
+                self.assertEqual(templates.user_template_root(),
+                                 Path("/xdg/lekhika/templates"))
+
+
 class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

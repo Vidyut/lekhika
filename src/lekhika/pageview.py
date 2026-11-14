@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, QSize, QSizeF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, QSizeF, Qt, Signal, QUrl
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QTextDocument
 from PySide6.QtGui import QAbstractTextDocumentLayout
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
@@ -144,10 +144,18 @@ class PageCanvas(QWidget):
                                MAX_USER_SCALE)
 
     def set_page(self, html: str, geometry: dict | None,
-                 font: QFont | None = None) -> None:
+                 font: QFont | None = None,
+                 base_url: QUrl | None = None) -> None:
         """Rebuild the projection. geometry None (or junk) means no
-        setup — the default Letter box applies, same as export."""
+        setup — the default Letter box applies, same as export.
+
+        ``base_url`` is where relative image paths resolve from — the
+        project folder, so ``<img src="images/...">`` shows in the
+        preview as it does in the export."""
         from .project import DEFAULT_PAGE_SETUP, clean_page_setup
+
+        if base_url is not None:
+            self._document.setBaseUrl(base_url)
 
         cleaned = clean_page_setup(geometry) if geometry else None
         self._geometry = cleaned or dict(DEFAULT_PAGE_SETUP)
@@ -222,12 +230,15 @@ class PageCanvas(QWidget):
         number_font.setPixelSize(11)
         painter.setFont(number_font)
         bottom_margin = geometry["bottom"] * DPI
-        painter.drawText(
-            QRectF(paper.x(), paper.bottom() - bottom_margin * 0.8,
-                   paper.width(), bottom_margin * 0.6),
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            str(index + 1),
-        )
+        if bottom_margin >= 14:
+            # A margin too small to hold the number has no number: a
+            # zero-height rect would draw into the page's own edge.
+            painter.drawText(
+                QRectF(paper.x(), paper.bottom() - bottom_margin * 0.8,
+                       paper.width(), bottom_margin * 0.6),
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                str(index + 1),
+            )
 
     # -- hit-testing ------------------------------------------------
     def char_position(self, x: float, y: float) -> int:
@@ -337,8 +348,9 @@ class PageView(QWidget):
         return self._canvas.geometry
 
     def set_page(self, html: str, geometry: dict | None,
-                 font: QFont | None = None) -> None:
-        self._canvas.set_page(html, geometry, font)
+                 font: QFont | None = None,
+                 base_url: QUrl | None = None) -> None:
+        self._canvas.set_page(html, geometry, font, base_url)
         self._area.fit()
 
     def set_user_scale(self, scale: float) -> None:

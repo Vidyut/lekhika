@@ -5763,7 +5763,10 @@ class Project:
         by_title: dict[str, str] = {}
         for path in paths:
             parsed = parse_markdown(
-                Path(path).read_text(encoding="utf-8"))
+                # utf-8-sig: a file saved with a UTF-8 BOM (Windows
+                # editors add one) would otherwise hide its own
+                # frontmatter fence and document header.
+                Path(path).read_text(encoding="utf-8-sig"))
             if parsed.project_metadata:
                 entries = self.project_metadata()
                 head_title = ""

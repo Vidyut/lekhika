@@ -87,6 +87,27 @@ def _draw_grid(image, page_width: float, page_height: float,
     art.save(image)
 
 
+def _flatten_to_rgb(source: Path, target: Path) -> bool:
+    """The writer's cover art as an RGB PNG; False when it cannot be read.
+
+    ReportLab draws JPEG and PNG, but not a CMYK JPEG and not a PNG
+    with an alpha channel — the first fails, the second inverts. Both
+    are ordinary files a writer's scanner or design tool produces."""
+    from PIL import Image
+    try:
+        with Image.open(source) as image:
+            if image.mode in ("RGBA", "LA", "P"):
+                image = image.convert("RGBA")
+                flat = Image.new("RGB", image.size, "white")
+                flat.paste(image, mask=image.getchannel("A"))
+            else:
+                flat = image.convert("RGB")
+            flat.save(target, "PNG")
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def compose_cover_pdf(project, selected_ids,
                       trim: tuple[float, float],
                       cover: Path | None,
@@ -116,6 +137,12 @@ def compose_cover_pdf(project, selected_ids,
         document = canvas.Canvas(str(output), pagesize=(
             page_width * MM_TO_POINTS, page_height * MM_TO_POINTS))
         if art_path is not None and art_path.is_file():
+            # Flatten the art to RGB before it is drawn (see
+            # _flatten_to_rgb): ReportLab cannot draw a CMYK JPEG and
+            # mishandles an RGBA one.
+            flat = Path(temp) / "cover.png"
+            if _flatten_to_rgb(art_path, flat):
+                art_path = flat
             document.drawImage(
                 str(art_path), 0, 0,
                 page_width * MM_TO_POINTS, page_height * MM_TO_POINTS,

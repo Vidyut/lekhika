@@ -29,12 +29,12 @@ _HEADING = re.compile(r"^(#{1,2})\s+(.+?)(?:\s+#+)?\s*$")
 _DOCUMENT = re.compile(r"(?m)^===DOCUMENT===[ \t]*$")
 
 # Scrivener's own bookkeeping: these describe the export, not the book.
-_SCREVENER_STRUCTURAL = {
+_SCRIVENER_STRUCTURAL = {
     "id", "hierarchy", "position", "parentposition", "level1", "level2",
     "parent", "title", "type", "synopsis",
 }
 # File-head keys Scrivener writes above the first document: project facts.
-_SCREVENER_PROJECT = {"title", "author", "copyright", "base header level"}
+_SCRIVENER_PROJECT = {"title", "author", "copyright", "base header level"}
 
 _KINDS = {"chapter": "chapter", "scene": "scene", "folder": "folder",
           "part": "chapter"}
@@ -151,7 +151,7 @@ def _parse_scrivener(text: str) -> ImportedFile:
     result = ImportedFile()
     head = _key_values(chunks[0]) if chunks else {}
     for key, value in head.items():
-        if key.casefold() in _SCREVENER_PROJECT and value:
+        if key.casefold() in _SCRIVENER_PROJECT and value:
             result.project_metadata[key] = value
     for chunk in chunks[1:]:
         block, _, body = chunk.partition("===TEXT===")
@@ -167,7 +167,7 @@ def _parse_scrivener(text: str) -> ImportedFile:
         parent = meta.pop("Parent", "")
         metadata = {
             key: value for key, value in meta.items()
-            if key.casefold() not in _SCREVENER_STRUCTURAL and value
+            if key.casefold() not in _SCRIVENER_STRUCTURAL and value
         }
         if type_value:
             # Kind is structure (what the row physically is); Type is the

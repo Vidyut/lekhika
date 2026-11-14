@@ -72,6 +72,45 @@ class ComposeTests(unittest.TestCase):
             doc.load(str(out))
             self.assertEqual(doc.pageCount(), 1)
 
+    def test_cover_art_is_flattened_to_rgb(self):
+        # ReportLab cannot draw a CMYK JPEG and mishandles an RGBA
+        # PNG, so the art is flattened first.
+        from PIL import Image
+        from lekhika.cover import _flatten_to_rgb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "art.png"
+            Image.new("RGBA", (20, 20), color=(255, 0, 0, 64)).save(source)
+            target = Path(tmp) / "flat.png"
+
+            self.assertTrue(_flatten_to_rgb(source, target))
+
+            with Image.open(target) as flat:
+                self.assertEqual(flat.mode, "RGB")
+
+    def test_a_cmyk_jpeg_and_an_rgba_png_both_draw(self):
+        from PySide6.QtPdf import QPdfDocument
+        from PySide6.QtWidgets import QApplication
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, draft = _project(tmp)
+            cmyk = Path(tmp) / "art.jpg"
+            Image.new("CMYK", (300, 400), color=(10, 200, 30, 5)).save(cmyk)
+            rgba = Path(tmp) / "art.png"
+            Image.new("RGBA", (300, 400), color=(10, 200, 30, 128)).save(rgba)
+
+            for art in (cmyk, rgba):
+                out = Path(tmp) / f"{art.stem}.pdf"
+                compose_cover_pdf(
+                    project, {draft.id}, (152.4, 228.6), art, out,
+                    page_count=5)
+
+                application = QApplication.instance() or QApplication([])
+                doc = QPdfDocument()
+                doc.load(str(out))
+                self.assertEqual(doc.pageCount(), 1)
+
     def test_partial_cover_carries_only_blank_cover(self):
         from PySide6.QtPdf import QPdfDocument
         from PySide6.QtWidgets import QApplication

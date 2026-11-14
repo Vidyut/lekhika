@@ -5489,6 +5489,9 @@ class MainWindow(QMainWindow):
             scaled_font_sizes(self.editor.document().toHtml(), 1.0 / self.zoom),
             geometry,
             anchor,
+            # Relative image paths resolve from the project folder, so
+            # the preview shows the pictures the export will.
+            QUrl.fromLocalFile(str(self.project.root) + "/"),
         )
         count = self.page_view.page_count
         # Name the fallback as a fallback (docs/UI-NOTES.md 6): an

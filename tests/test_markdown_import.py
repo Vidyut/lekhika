@@ -189,6 +189,23 @@ class MarkdownImportTests(unittest.TestCase):
         self.project.import_markdown([source])
         self.assertEqual(self.project.get_setting("title"), "Novel")
 
+    def test_a_file_with_a_utf8_bom_still_imports(self):
+        # A BOM (Windows editors add one) would hide the frontmatter
+        # fence and the document header from the importer.
+        draft = self.project.documents()[0]
+        scene = self.project.add_document("Marked", draft.id, "scene")
+        self.project.write_content(scene.id, "<p>Words.</p>")
+        exported = self.root / "out.md"
+        self.project.export_markdown(exported)
+        exported.write_bytes(b"\xef\xbb\xbf" + exported.read_bytes())
+
+        other = Project.create(self.root / "Second", "Second")
+        try:
+            other.import_markdown([exported])
+            self.assertIn("Marked", self._titled(other))
+        finally:
+            other.close()
+
     def test_scrivener_types_survive_and_design_the_type_fields(self):
         source = self.root / "roles.md"
         source.write_text(
