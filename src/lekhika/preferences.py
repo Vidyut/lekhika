@@ -563,6 +563,28 @@ class PreferencesDialog(QDialog):
         self.theme_box.setCurrentIndex(max(0, idx))
         theme_row.addWidget(self.theme_box, 1)
         appearance_layout.addLayout(theme_row)
+        # Default date display/output format for metadata date fields.
+        date_row = QHBoxLayout()
+        date_row.addWidget(QLabel("Date format"))
+        date_row.addWidget(_help(
+            "How date metadata fields are shown and exported. Values are "
+            "stored as ISO dates; a field can override this format in its "
+            "metadata settings when configured."))
+        self.date_format_box = QComboBox()
+        try:
+            from .project import DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT
+            presets = DATE_FORMAT_PRESETS
+            default_df = DEFAULT_DATE_FORMAT
+        except Exception:
+            presets = (("dmy-long", "14 November 2026", "d MMMM yyyy", "%d %B %Y", None),)
+            default_df = "dmy-long"
+        for fid, label, _qt, _py, _dmy in presets:
+            self.date_format_box.addItem(label, fid)
+        stored_df = str(store.value("ui/dateFormat", default_df, type=str))
+        idx = self.date_format_box.findData(stored_df)
+        self.date_format_box.setCurrentIndex(max(0, idx))
+        date_row.addWidget(self.date_format_box, 1)
+        appearance_layout.addLayout(date_row)
         appearance_layout.addStretch()
         self._add_category("Appearance", appearance)
 

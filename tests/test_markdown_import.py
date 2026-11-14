@@ -147,5 +147,86 @@ class MarkdownImportTests(unittest.TestCase):
                          self.project.read_content(scene.id))
 
 
+    def test_a_title_metadata_hint_becomes_the_title_not_a_field(self):
+        # The Scrivener parser pops an exact "Title"; a hinted
+        # "Title(text)" reaches the caller as metadata and must still
+        # become the document's title, without a duplicate field.
+        source = self.root / "hinted.md"
+        source.write_text(
+            "===DOCUMENT===\n"
+            "Title(text): Hinted title\n"
+            "\n"
+            "===TEXT===\n"
+            "\n"
+            "Prose.\n",
+            encoding="utf-8")
+
+        summary = self.project.import_markdown([source])
+        documents = self._titled(self.project)
+        self.assertIn("Hinted title", documents)
+        held = self.project.metadata(documents["Hinted title"].id)
+        self.assertNotIn("Title", held)
+        self.assertNotIn("Title", summary["fields"])
+
+    def test_file_head_title_names_only_a_project_that_has_none(self):
+        source = self.root / "book.md"
+        source.write_text(
+            "Title: Marginally Human\n"
+            "\n"
+            "===DOCUMENT===\n"
+            "Title: One\n"
+            "\n"
+            "===TEXT===\n"
+            "Prose.\n",
+            encoding="utf-8")
+        fresh = Project.create(self.root / "Fresh")   # default title
+        try:
+            fresh.import_markdown([source])
+            self.assertEqual(fresh.get_setting("title"), "Marginally Human")
+        finally:
+            fresh.close()
+        # A project named by its writer keeps that name.
+        self.project.import_markdown([source])
+        self.assertEqual(self.project.get_setting("title"), "Novel")
+
+    def test_scrivener_types_survive_and_design_the_type_fields(self):
+        source = self.root / "roles.md"
+        source.write_text(
+            "===DOCUMENT===\n"
+            "Type: Chapter\n"
+            "Title: Prologue\n"
+            "Status: Done\n"
+            "\n"
+            "===TEXT===\n"
+            "Opening.\n"
+            "\n"
+            "===DOCUMENT===\n"
+            "Type: Scene\n"
+            "Title: Clinic\n"
+            "Parent: Prologue\n"
+            "PoV: Aaxyl\n"
+            "Date: Wednesday, January 7, 2443\n"
+            "\n"
+            "===TEXT===\n"
+            "Blink.\n",
+            encoding="utf-8")
+
+        self.project.import_markdown([source])
+        documents = self._titled(self.project)
+        self.assertEqual(self.project.type_of(documents["Prologue"]), "Chapter")
+        self.assertEqual(self.project.type_of(documents["Clinic"]), "Scene")
+        # Each Type carries the fields the file named for it, typed.
+        chapter_fields = self.project.type_field_defs("Chapter")
+        scene_fields = self.project.type_field_defs("Scene")
+        self.assertIn("Status", chapter_fields)
+        self.assertNotIn("PoV", chapter_fields)
+        self.assertEqual(scene_fields["Date"]["type"], "date")
+        self.assertEqual(scene_fields["PoV"]["type"], "text")
+        # The long Scrivener date is stored as ISO for the picker.
+        self.assertEqual(
+            self.project.metadata(documents["Clinic"].id)["Date"],
+            "2443-01-07")
+
+
 if __name__ == "__main__":
     unittest.main()

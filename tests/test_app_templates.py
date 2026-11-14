@@ -189,7 +189,12 @@ class TemplateInspectorTests(unittest.TestCase):
         self.assertEqual(self.project.metadata(self.scene.id)["Type"],
                          "Part")
 
-    def test_a_field_created_on_one_document_shows_empty_on_the_other(self):
+    def test_a_field_designed_on_the_type_shows_empty_on_the_other(self):
+        # Fields are designed on the Type (docs/MODEL.md): the type's
+        # input shows on every document of it, empty where unfilled —
+        # a field carried by one document alone stays that document's.
+        doc_type = self.project.type_of(self.scene)
+        self.project.set_type_field_defs(doc_type, {"POV": {"type": "text"}})
         self.project.set_metadata(self.scene.id, {"POV": "Mira"})
 
         self.window._select_document(self.other.id)

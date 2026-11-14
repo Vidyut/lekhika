@@ -13,6 +13,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QSettings, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QComboBox, QDateEdit,
 )
@@ -342,12 +343,61 @@ class MetadataPanelTests(unittest.TestCase):
         )
 
 
+    def test_type_add_box_declares_the_field_for_the_whole_type(self):
+        self.window._select_document(self.scene.id)
+        doc_type = self.project.type_of(self.scene)
+
+        self.window.field_add_edit.setText("Deadline")
+        self.window._add_type_field()
+
+        designed = [self.window.type_fields_table.item(row, 1).text()
+                    for row in range(self.window.type_fields_table.rowCount())]
+        self.assertIn("Deadline", designed)
+        values = [self.window.metadata_table.item(row, 1).text()
+                  for row in range(self.window.metadata_table.rowCount())]
+        self.assertIn("Deadline", values)
+        # Written to the Type, not just this document.
+        self.assertIn("Deadline", self.project.type_field_defs(doc_type))
+
+    def test_extras_the_type_does_not_declare_show_below_its_fields(self):
+        self.project.set_type_field_defs(
+            self.project.type_of(self.scene), {"PoV": {"type": "text"}})
+        self.project.set_metadata(
+            self.scene.id, {"Legacy": "kept", "PoV": "Maya"},
+            {"Legacy": "text", "PoV": "text"})
+        self.window._select_document(self.scene.id)
+
+        names = [self.window.metadata_table.item(row, 1).text()
+                 for row in range(self.window.metadata_table.rowCount())]
+        self.assertIn("PoV", names)
+        self.assertIn("Legacy", names)
+        self.assertLess(names.index("PoV"), names.index("Legacy"))
+
+    def test_an_empty_date_field_reads_empty_not_as_today(self):
+        self.project.set_type_field_defs(
+            self.project.type_of(self.scene), {"Date": {"type": "date"}})
+        self.window._select_document(self.scene.id)
+
+        row = next(row for row in range(self.window.metadata_table.rowCount())
+                   if self.window.metadata_table.item(row, 1).text() == "Date")
+        editor = self.window.metadata_table.cellWidget(row, 2)
+        self.assertIsInstance(editor, QDateEdit)
+        # A blank date stays blank: no silent today written back on save.
+        self.assertEqual(self.window.metadata_table.row_value(row), "")
+
     def test_column_order_puts_value_next_to_the_field(self):
         table = self.window.metadata_table
+        # A document shows values only: Field beside Value, with the
+        # design columns (required mark, format) hidden — design lives
+        # with the Type now.
         headers = [table.horizontalHeaderItem(i).text() for i in range(4)]
-        # Column 0 is the required mark; "Format" (not "Type") is the
-        # value-widget column (docs/MODEL.md).
-        self.assertEqual(headers, ["", "Field", "Value", "Format"])
+        self.assertEqual(headers, ["", "Field", "Value", ""])
+        self.assertTrue(table.isColumnHidden(0))
+        self.assertTrue(table.isColumnHidden(3))
+        # Project metadata keeps the full design columns.
+        self.window.tree.setCurrentItem(None)
+        self.assertFalse(table.isColumnHidden(0))
+        self.assertFalse(table.isColumnHidden(3))
 
     def test_scrivener_long_date_opens_in_the_picker_as_a_real_date(self):
         self.project.set_metadata(

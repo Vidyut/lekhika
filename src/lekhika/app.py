@@ -559,11 +559,27 @@ class MetadataTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self._loading = False
+        self._mode = "full"
         self._required_fields: set[str] = set()
         self._required_enabled = False
         self.itemChanged.connect(self._item_changed)
         for key, (value, value_type, options) in entries.items():
             self._append_row(key, value, value_type, options)
+
+    def set_mode(self, mode: str) -> None:
+        """Who this table is for: full — required/field/value/format
+        (project metadata and dialogs); values — field/value only, a
+        document's inputs as its Type designs them; design — the Type's
+        own field list (required/field/format, no value column)."""
+        self._mode = mode if mode in ("full", "values", "design") else "full"
+        self.setColumnHidden(0, self._mode == "values")
+        self.setColumnHidden(3, self._mode == "values")
+        self.setColumnHidden(2, self._mode == "design")
+        self.setHorizontalHeaderLabels({
+            "full": ["", "Field", "Value", "Format"],
+            "values": ["", "Field", "Value", ""],
+            "design": ["", "Field", "", "Format"],
+        }[self._mode])
 
     def set_required_context(self, field_names: list[str], enabled: bool) -> None:
         self._required_fields = {name.casefold() for name in (field_names or [])}
@@ -593,6 +609,10 @@ class MetadataTable(QTableWidget):
 
     def add_field(self) -> None:
         self._append_row("", "", "text", [])
+
+    def add_field_named(self, name: str) -> None:
+        self._append_row(name, "", "text", [])
+        self._notify()
 
     def remove_selected(self) -> None:
         rows = sorted({item.row() for item in self.selectedItems()}, reverse=True)
@@ -629,7 +649,8 @@ class MetadataTable(QTableWidget):
             req.stateChanged.connect(lambda _state, r=req: self._required_changed(r))
             self.setCellWidget(row, 0, req)
             self.setItem(row, 1, QTableWidgetItem(key))
-            self._set_value_widget(row, value_type, value)
+            if self._mode != "design":
+                self._set_value_widget(row, value_type, value)
             type_box = QComboBox()
             for label, data in (("Text", "text"), ("Text area", "textarea"),
                                 ("Checkbox", "checkbox"), ("Date", "date")):
@@ -663,7 +684,10 @@ class MetadataTable(QTableWidget):
     def row_value(self, row: int) -> str:
         widget = self.cellWidget(row, 2)
         if isinstance(widget, QDateEdit):
-            return widget.date().toString(Qt.ISODate)
+            date = widget.date()
+            if date == widget.minimumDate():
+                return ""    # the blank sentinel, not a real date
+            return date.toString(Qt.ISODate)
         if isinstance(widget, QCheckBox):
             return "yes" if widget.isChecked() else "no"
         if isinstance(widget, QPlainTextEdit):
@@ -677,16 +701,31 @@ class MetadataTable(QTableWidget):
         return super().eventFilter(watched, event)
 
     def _set_value_widget(self, row: int, value_type: str, value: str) -> None:
+        if self._mode == "design":
+            return    # no value column: a designed field has no value yet
         self.removeCellWidget(row, 2)
         self.takeItem(row, 2)
         if value_type == "date":
             editor = QDateEdit()
             editor.setCalendarPopup(True)
-            editor.setDisplayFormat("dd MMM yyyy")
-            date = QDate.fromString(value, Qt.ISODate)
-            if not date.isValid() and value.strip():
-                date = QDate.fromString(value.strip(), "dddd, MMMM d, yyyy")
-            editor.setDate(date if date.isValid() else QDate.currentDate())
+            # Show the writer's chosen format; row_value always stores
+            # ISO. shortcut: per-field format from the Type's field def
+            # once the designer offers it — the Appearance default for now.
+            from .project import date_format_preset
+            fmt_id = str(QSettings().value("ui/dateFormat", "dmy-long") or "dmy-long")
+            editor.setDisplayFormat(date_format_preset(fmt_id)["qt"])
+            val = str(value or "").strip()
+            date = QDate.fromString(val[:10], Qt.ISODate)
+            if not date.isValid() and val:
+                date = QDate.fromString(val, "dddd, MMMM d, yyyy")
+            if not date.isValid() and val:
+                date = QDate.fromString(val, "d MMMM yyyy")
+            # A field with no date shows blank — never a silent today
+            # that would be written back as a real value on save.
+            blank = QDate(1000, 1, 1)
+            editor.setMinimumDate(blank)
+            editor.setSpecialValueText("")
+            editor.setDate(date if date.isValid() else blank)
             editor.dateChanged.connect(lambda _date: self._notify())
             self.setCellWidget(row, 2, editor)
             self.setRowHeight(row, self.verticalHeader().defaultSectionSize())
@@ -722,19 +761,29 @@ class MetadataTable(QTableWidget):
 
 
 class MetadataDialog(QDialog):
-    def __init__(self, entries: dict[str, tuple[str, str, list[str]]], parent=None) -> None:
+    def __init__(self, entries: dict[str, tuple[str, str, list[str]]],
+                 parent=None, mode: str = "full") -> None:
         super().__init__(parent)
         self.setWindowTitle("Metadata")
         self.resize(520, 360)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Add any fields you need, such as POV, Location, Date, or Status."))
+        # full — project fields, designed here; values — a document's
+        # inputs as its Type designs them, so nothing is addable here.
+        layout.addWidget(QLabel(
+            "Add any fields you need, such as POV, Location, Date, or Status."
+            if mode == "full" else
+            "This document's inputs, as its Type designs them."))
         self.table = MetadataTable(entries)
+        self.table.set_mode(mode)
         layout.addWidget(self.table)
         controls = QHBoxLayout()
         add_button = QPushButton("Add field")
         remove_button = QPushButton("Remove selected")
         add_button.clicked.connect(self.table.add_field)
         remove_button.clicked.connect(self.table.remove_selected)
+        if mode != "full":
+            add_button.hide()
+            remove_button.hide()
         controls.addWidget(add_button)
         controls.addWidget(remove_button)
         controls.addStretch()
@@ -2852,6 +2901,35 @@ class MainWindow(QMainWindow):
         type_add_row = QHBoxLayout()
         type_add_row.addWidget(self.type_add_edit, 1)
         type_add_row.addWidget(self.type_add_button)
+        # The Type's own field list: where inputs are DESIGNED — name,
+        # input format, required — and the add box gives every document
+        # of this Type the field. The metadata table below only fills
+        # the values this decides (docs/MODEL.md).
+        self.type_fields_table = MetadataTable({})
+        self.type_fields_table.set_mode("design")
+        self.type_fields_table.setMaximumHeight(150)
+        self.type_fields_table.changed.connect(self._type_fields_changed)
+        self.type_fields_table.required_toggled.connect(
+            self._metadata_required_toggled)
+        field_add_row = QHBoxLayout()
+        self.field_add_edit = QLineEdit()
+        self.field_add_edit.setPlaceholderText("New field…")
+        self.field_add_edit.setToolTip(
+            "Add a metadata input to EVERY document and folder of this "
+            "Type — the field appears below, ready for values.")
+        self.field_add_button = QPushButton("Add")
+        self.field_add_button.setToolTip(self.field_add_edit.toolTip())
+        self.field_remove_button = QPushButton("Remove selected")
+        self.field_remove_button.setToolTip(
+            "Take this field out of the Type's design. Values already "
+            "written on documents stay, shown as the document's own.")
+        self.field_add_button.clicked.connect(self._add_type_field)
+        self.field_add_edit.returnPressed.connect(self._add_type_field)
+        self.field_remove_button.clicked.connect(
+            self.type_fields_table.remove_selected)
+        field_add_row.addWidget(self.field_add_edit, 1)
+        field_add_row.addWidget(self.field_add_button)
+        field_add_row.addWidget(self.field_remove_button)
         metadata_buttons = QHBoxLayout()
         metadata_buttons.addWidget(self.metadata_add_button)
         metadata_buttons.addWidget(self.metadata_remove_button)
@@ -2862,6 +2940,8 @@ class MainWindow(QMainWindow):
         self.format_fold = formatting_fold
         formatting_fold.body_layout.addLayout(type_row)
         formatting_fold.body_layout.addLayout(type_add_row)
+        formatting_fold.body_layout.addWidget(self.type_fields_table)
+        formatting_fold.body_layout.addLayout(field_add_row)
         formatting_fold.body_layout.addWidget(self.type_warning)
         formatting_fold.body_layout.addWidget(self.type_keep_box)
         # Template selector sits under Type: same dress idea, one fold.
@@ -5537,66 +5617,153 @@ class MainWindow(QMainWindow):
     def _populate_metadata_table(self) -> None:
         """Populate the metadata/type UI for the current selection or project metadata."""
         target = self._selection_metadata_target()
-        self._metadata_target = target
         current = self._current_document()
         self._type_target_id = current.id if current else None
-        if current is None or self.project is None:
-            self.type_box.hide()
-            self.type_label.hide()
-            self.lock_box.hide()
-            self.type_add_edit.hide()
-            self.type_add_button.hide()
-        else:
-            self.type_box.show()
-            self.type_label.show()
-            self.lock_box.show()
-            self.type_add_edit.show()
-            self.type_add_button.show()
+        has_document = current is not None and self.project is not None
+        for widget in (self.type_box, self.type_label, self.lock_box,
+                       self.type_add_edit, self.type_add_button,
+                       self.type_fields_table, self.field_add_edit,
+                       self.field_add_button, self.field_remove_button,
+                       self.type_warning, self.type_keep_box):
+            widget.setVisible(has_document)
+        if has_document:
             self._fill_type_box(self.project.type_of(current))
             # The tick follows the marker file, which is the truth.
             self.lock_box.blockSignals(True)
             self.lock_box.setChecked(self.project.has_own_lock(current.id))
             self.lock_box.blockSignals(False)
-        if target is None:
-            self.metadata_table.set_entries({})
-            self.metadata_table.set_required_context([], False)
-        elif target == PROJECT_METADATA_TARGET:
-            entries = dict(self.project.project_metadata())
-            self.metadata_table.set_entries(entries)
-            self.metadata_table.set_required_context([], False)
-        else:
-            # Type is never a table row: the Type row above owns the
-            # protected key (docs/MODEL.md). The template's own mark and
-            # design are the design panel's business, not the table's.
-            entries = self.project.metadata_entries(target)
-            rows = {key: entry for key, entry in entries.items()
-                    if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY)}
-            # A field created on one document of the kind shows, empty,
-            # on every document of the kind (1.17): the catalogue names
-            # the fields, the documents hold the values.
-            group = (self.project.type_group(current) if current
-                     else "document")
-            for key in self.project.known_fields(group):
-                rows.setdefault(key, ("", "text", []))
-            # A document that holds ${ToC} carries its own contents settings
-            # (depth and marker style per level), stored in its head/metadata
-            # so each contents page can differ. Show them in the metadata bar
-            # when the placeholder is present.
-            if self._document_has_toc(current):
-                rows.setdefault("ToC depth", ("4", "text", []))
-                try:
-                    depth = int(str(rows.get("ToC depth", ("4",))[0] or "4"))
-                except Exception:
-                    depth = 4
-                depth = max(1, min(depth, 4))
-                for level in range(1, depth + 1):
-                    rows.setdefault(f"ToC level {level}", ("none", "text", []))
-            self.metadata_table.set_entries(rows)
-            doc_type = self.project.type_of(current) if current else ""
-            self.metadata_table.set_required_context(
-                self.project.required_fields_for_type(doc_type), True)
+        # The add/remove pair designs PROJECT metadata only: a document's
+        # fields are designed on its Type (the box above this table).
+        is_project = target == PROJECT_METADATA_TARGET
+        self.metadata_add_button.setVisible(is_project)
+        self.metadata_remove_button.setVisible(is_project)
+        self._populate_metadata_values()
+        self._populate_type_designer()
         self._refresh_metadata_textarea_boxes()
         self._refresh_toc_fold()
+
+    def _document_value_rows(self, current) -> dict:
+        """What a document shows as values: its Type's inputs first (the
+        design winning on format), then everything else it carries —
+        imports and older projects keep theirs, never hidden."""
+        entries = self.project.metadata_entries(current.id)
+        carried = {key: entry for key, entry in entries.items()
+                   if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY)}
+        doc_type = self.project.type_of(current)
+        rows: dict = {}
+        used: set[str] = set()
+        for name in self.project.type_fields(doc_type):
+            held = next((key for key in carried
+                         if key.casefold() == name.casefold()), None)
+            cfg_type = self.project.type_field_def(doc_type, name).get("type")
+            if held is not None:
+                value, value_type, options = carried[held]
+                rows[held] = (value, cfg_type or value_type, options)
+                used.add(held)
+            else:
+                rows[name] = ("", cfg_type or "text", [])
+        for key, entry in carried.items():
+            if key not in used:
+                rows[key] = entry
+        return rows
+
+    def _populate_metadata_values(self) -> None:
+        """The value rows: project fields, or the document's inputs in
+        the order its Type designs them (values only, no design controls)."""
+        target = self._selection_metadata_target()
+        self._metadata_target = target
+        current = self._current_document()
+        if target is None:
+            self.metadata_table.set_mode("full")
+            self.metadata_table.set_entries({})
+            self.metadata_table.set_required_context([], False)
+            return
+        if target == PROJECT_METADATA_TARGET:
+            self.metadata_table.set_mode("full")
+            self.metadata_table.set_entries(
+                dict(self.project.project_metadata()))
+            self.metadata_table.set_required_context([], False)
+            return
+        self.metadata_table.set_mode("values")
+        rows = self._document_value_rows(current)
+        # A document that holds ${ToC} carries its own contents settings
+        # (depth and marker style per level), stored in its head/metadata
+        # so each contents page can differ. Show them in the metadata bar
+        # when the placeholder is present.
+        if self._document_has_toc(current):
+            rows.setdefault("ToC depth", ("4", "text", []))
+            try:
+                depth = int(str(rows.get("ToC depth", ("4",))[0] or "4"))
+            except Exception:
+                depth = 4
+            depth = max(1, min(depth, 4))
+            for level in range(1, depth + 1):
+                rows.setdefault(f"ToC level {level}", ("none", "text", []))
+        self.metadata_table.set_entries(rows)
+        # The required tick lives with the design now (the Type's list).
+        self.metadata_table.set_required_context([], False)
+
+    def _populate_type_designer(self) -> None:
+        """The Type's field list as design rows: name, format, required."""
+        current = self._current_document()
+        if current is None or self.project is None:
+            return
+        doc_type = self.project.type_of(current)
+        carried = {
+            key.casefold(): entry
+            for key, entry in self.project.metadata_entries(current.id).items()
+            if key not in ("Type", TEMPLATE_KEY, TEMPLATE_CONFIG_KEY)
+        }
+        entries = {}
+        for name in self.project.type_fields(doc_type):
+            cfg_type = self.project.type_field_def(doc_type, name).get("type")
+            held = carried.get(name.casefold())
+            entries[name] = ("", cfg_type or (held[1] if held else "text"), [])
+        self.type_fields_table.set_entries(entries)
+        self.type_fields_table.set_required_context(
+            self.project.required_fields_for_type(doc_type), True)
+
+    def _type_fields_changed(self) -> None:
+        """A designer edit writes the Type's field list; the document's
+        value rows follow it (the designer itself is not rebuilt, so the
+        writer keeps their place in it)."""
+        if self.loading or not self.project:
+            return
+        current = self._current_document()
+        if current is None:
+            return
+        doc_type = self.project.type_of(current)
+        _values, vtypes, _options = self.type_fields_table.values_types_options()
+        existing = self.project.type_field_defs(doc_type)
+        merged: dict[str, dict] = {}
+        for name, vtype in vtypes.items():
+            if not name.strip():
+                continue
+            held = self.project.type_field_def(doc_type, name)
+            merged[name] = {**held, "type": vtype or "text"}
+        if merged != existing:
+            self.project.set_type_field_defs(doc_type, merged)
+            self._populate_metadata_values()
+
+    def _add_type_field(self) -> None:
+        """The add box under the Type: a new input for every document of it."""
+        if self.loading or not self.project:
+            return
+        current = self._current_document()
+        if current is None:
+            return
+        name = self.field_add_edit.text().strip()
+        if not name:
+            return
+        doc_type = self.project.type_of(current)
+        if any(name.casefold() == held.casefold()
+               for held in self.project.type_fields(doc_type)):
+            self.statusBar().showMessage(
+                f'"{name}" is already a field of type {doc_type}', 4000)
+            return
+        self.field_add_edit.clear()
+        self.type_fields_table.add_field_named(name)
+        self._type_fields_changed()
 
     def _lock_toggled(self, locked: bool) -> None:
         """Set or clear the lock marker for the selected document."""
@@ -5703,6 +5870,13 @@ class MainWindow(QMainWindow):
             return
         self._type_snap_check()
         self._save_metadata()
+        # The Type decides the inputs below it: a new Type brings its
+        # own field list to the design box and the value rows. The type
+        # box itself is left alone — repopulating it would clear the
+        # snap warning and the keep checkbox this check just raised.
+        self._populate_metadata_values()
+        self._populate_type_designer()
+        self._refresh_metadata_textarea_boxes()
 
     def _type_keep_toggled(self, checked: bool) -> None:
         """The near-miss checkbox: ticked = keep the typed variant.
@@ -5719,6 +5893,9 @@ class MainWindow(QMainWindow):
             finally:
                 self._type_snapping = False
             self._save_metadata()
+            # The kept variant is its own Type now: its field list follows.
+            self._populate_metadata_values()
+            self._populate_type_designer()
         elif not checked:
             self._type_snap_check()
 
@@ -7469,15 +7646,16 @@ class MainWindow(QMainWindow):
             return
         if target == PROJECT_METADATA_TARGET:
             entries = self.project.project_metadata()
+            mode = "full"
         else:
-            # Type is the inspector's row (docs/MODEL.md); the dialog
-            # edits the rest and must not drop the protected key.
-            entries = {
-                key: entry for key, entry in
-                self.project.metadata_entries(target).items()
-                if key != "Type"
-            }
-        dialog = MetadataDialog(entries, self)
+            # The dialog shows the same rows the panel does: the Type's
+            # inputs, then the document's own — values only, since the
+            # design lives with the Type.
+            current = self._current_document()
+            entries = (self._document_value_rows(current) if current
+                       else {})
+            mode = "values"
+        dialog = MetadataDialog(entries, self, mode)
         if dialog.exec() == QDialog.Accepted:
             values, value_types, options = dialog.values_types_options()
             if target == PROJECT_METADATA_TARGET:
@@ -10631,6 +10809,8 @@ class MainWindow(QMainWindow):
         settings = QSettings()
         settings.setValue("ui/fontSize", size)
         settings.setValue("ui/theme", str(dialog.theme_box.currentData() or "system"))
+        if hasattr(dialog, "date_format_box"):
+            settings.setValue("ui/dateFormat", str(dialog.date_format_box.currentData() or "dmy-long"))
         self.apply_theme()
         settings.setValue("paste/fonts", dialog.paste_fonts.isChecked())
         settings.setValue("paste/paragraphs", dialog.paste_paragraphs.isChecked())

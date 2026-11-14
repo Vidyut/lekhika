@@ -161,13 +161,19 @@ def _parse_scrivener(text: str) -> ImportedFile:
         if not title:
             first = re.search(r"(?m)^#+\s+(.+?)\s*$", body)
             title = _title(first.group(1)) if first else ""
-        kind = _KINDS.get(meta.pop("Type", "").strip().casefold(), "scene")
+        type_value = meta.pop("Type", "").strip()
+        kind = _KINDS.get(type_value.casefold(), "scene")
         synopsis = meta.pop("Synopsis", "")
         parent = meta.pop("Parent", "")
         metadata = {
             key: value for key, value in meta.items()
             if key.casefold() not in _SCREVENER_STRUCTURAL and value
         }
+        if type_value:
+            # Kind is structure (what the row physically is); Type is the
+            # role the inspector owns, and dropping it would leave every
+            # imported document the generic default.
+            metadata["Type"] = type_value
         result.documents.append(ImportedDocument(
             title=title,
             kind=kind,

@@ -120,10 +120,110 @@ TEMPLATE_CONFIG_KEY = "Template config"
 TEMPLATE_FILE_PREFIX = "file:"
 TEMPLATE_DOC_PREFIX = "doc:"
 
+
+_MD_METADATA_TYPE = {
+    "text": "text",
+    "textarea": "textarea",
+    "text area": "textarea",
+    "checkbox": "checkbox",
+    "date": "date",
+}
+
+
+def _split_markdown_metadata_key(key: str) -> tuple[str, str | None]:
+    """Parse an optional imported metadata type hint: 'Name (textarea)' -> ('Name', 'textarea')."""
+    match = re.match(r"^(.*?)(?:\s*\(([^()]*)\))\s*$", key or "")
+    if not match:
+        return key.strip(), None
+    name = match.group(1).strip()
+    hint = (match.group(2) or "").strip().casefold()
+    value_type = _MD_METADATA_TYPE.get(hint)
+    if not name or value_type is None:
+        return key.strip(), None
+    return name, value_type
+
 # What an imported metadata value looks like, for the field type it gets
 # (File → Import Markdown): an ISO date is a Date field, true/false a
 # Checkbox, anything else Text. The writer can change the type afterwards.
 _DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T].*)?$")
+
+# Date format presets for metadata display/import/export.
+# (id, label, qt_format, py_strftime, dmy_first_for_numeric_parse)
+DATE_FORMAT_PRESETS = (
+    ("iso", "YYYY-MM-DD (2026-11-14)", "yyyy-MM-dd", "%Y-%m-%d", None),
+    ("dmy-long", "14 November 2026", "d MMMM yyyy", "%d %B %Y", None),
+    ("mdy-long", "November 14, 2026", "MMMM d, yyyy", "%B %d, %Y", None),
+    ("full-dmy", "Saturday, 14 November 2026", "dddd, d MMMM yyyy", "%A, %d %B %Y", None),
+    ("full-mdy", "Saturday, November 14, 2026", "dddd, MMMM d, yyyy", "%A, %B %d, %Y", None),
+    ("dmy-short", "14/11/2026 (day/month)", "dd/MM/yyyy", "%d/%m/%Y", True),
+    ("mdy-short", "11/14/2026 (month/day)", "MM/dd/yyyy", "%m/%d/%Y", False),
+)
+DEFAULT_DATE_FORMAT = "dmy-long"
+
+_DATE_PARSE_PATTERNS = (
+    "%Y-%m-%d",
+    "%A, %B %d, %Y",
+    "%A, %d %B %Y",
+    "%B %d, %Y",
+    "%d %B %Y",
+    "%b %d, %Y",
+    "%d %b %Y",
+    "%Y/%m/%d",
+    "%d/%m/%Y",
+    "%m/%d/%Y",
+    "%d-%m-%Y",
+    "%m-%d-%Y",
+)
+
+
+def date_format_preset(fmt_id: str | None) -> dict:
+    for fid, label, qt, py, dmy in DATE_FORMAT_PRESETS:
+        if fid == fmt_id:
+            return {"id": fid, "label": label, "qt": qt, "py": py, "dmy": dmy}
+    return date_format_preset(DEFAULT_DATE_FORMAT)
+
+
+def parse_date_to_iso(value: str, fmt_id: str | None = None) -> str | None:
+    """Parse a date string to ISO YYYY-MM-DD, or return None if unparseable."""
+    from datetime import datetime
+    text = (value or "").strip()
+    if not text:
+        return None
+    m = _DATE_VALUE.match(text)
+    if m:
+        return text[:10]
+    preset = date_format_preset(fmt_id or DEFAULT_DATE_FORMAT)
+    dmy = preset.get("dmy")
+    numeric: list[str] = []
+    if dmy is True:
+        numeric = ["%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y"]
+    elif dmy is False:
+        numeric = ["%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"]
+    patterns = [preset["py"], *numeric, *_DATE_PARSE_PATTERNS]
+    seen: set[str] = set()
+    for pat in patterns:
+        if not pat or pat in seen:
+            continue
+        seen.add(pat)
+        try:
+            return datetime.strptime(text, pat).date().isoformat()
+        except Exception:
+            continue
+    return None
+
+
+def format_iso_date(value: str, fmt_id: str | None = None) -> str:
+    """Format an ISO date for display/output; return original if not parseable."""
+    from datetime import datetime
+    iso = parse_date_to_iso(value, fmt_id)
+    if not iso:
+        return value or ""
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%d").date()
+        preset = date_format_preset(fmt_id or DEFAULT_DATE_FORMAT)
+        return dt.strftime(preset["py"])
+    except Exception:
+        return value
 
 
 def _metadata_type(value: str) -> str:
@@ -3812,6 +3912,87 @@ class Project:
         stored[group] = list(values)
         self.set_setting(key, json.dumps(stored, ensure_ascii=False))
 
+    def type_field_defs(self, type_name: str) -> dict[str, dict]:
+        """What a Type declares: field name -> config (type, date_format...).
+
+        The Type section designs these; documents of the Type show the
+        fields as value inputs (docs/MODEL.md).
+        """
+        raw = self.get_setting("type_field_defs")
+        try:
+            stored = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        key = self._type_key(stored, type_name)
+        defs = stored.get(key, {}) if key else {}
+        return defs if isinstance(defs, dict) else {}
+
+    @staticmethod
+    def _type_key(stored: dict, type_name: str) -> str | None:
+        wanted = (type_name or "").strip().casefold()
+        if not wanted:
+            return None
+        for held in stored:
+            if str(held).casefold() == wanted:
+                return str(held)
+        return (type_name or "").strip() or None
+
+    def set_type_field_defs(self, type_name: str, defs: dict[str, dict]) -> None:
+        """Replace a Type's declared fields — the designer writes the whole set."""
+        type_name = (type_name or "").strip()
+        if not type_name:
+            return
+        raw = self.get_setting("type_field_defs")
+        try:
+            stored = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        key = self._type_key(stored, type_name) or type_name
+        clean: dict[str, dict] = {}
+        for name, cfg in (defs or {}).items():
+            name = str(name).strip()
+            if name:
+                clean[name] = cfg if isinstance(cfg, dict) else {}
+        if clean:
+            stored[key] = clean
+        else:
+            stored.pop(key, None)
+        self.set_setting("type_field_defs", json.dumps(stored, ensure_ascii=False))
+
+    def type_field_def(self, type_name: str, name: str) -> dict:
+        for held, cfg in self.type_field_defs(type_name).items():
+            if str(held).casefold() == (name or "").casefold():
+                return cfg if isinstance(cfg, dict) else {}
+        return {}
+
+    def type_fields(self, type_name: str) -> list[str]:
+        """Field names a Type shows, in design order: declared first,
+        then any required-only field a template declared for it."""
+        names = list(self.type_field_defs(type_name))
+        seen = {name.casefold() for name in names}
+        for required in self.required_fields_for_type(type_name):
+            if required.casefold() not in seen:
+                names.append(required)
+                seen.add(required.casefold())
+        return names
+
+    def date_format_for_field(self, type_name: str, name: str,
+                              fallback: str | None = None) -> str:
+        fmt = self.type_field_def(type_name, name).get("date_format")
+        if fmt:
+            return str(fmt)
+        if fallback:
+            return fallback
+        # The Appearance preference is app-wide; a project could later
+        # override it with its own "ui/dateFormat" setting.
+        return (str(QSettings().value("ui/dateFormat", "") or "")
+                or DEFAULT_DATE_FORMAT)
+
+
     def word_rollups(self) -> dict[str, int]:
         """Word count per document, containers summing all descendants."""
         documents = self.documents()
@@ -5614,13 +5795,42 @@ class Project:
                 Path(path).read_text(encoding="utf-8"))
             if parsed.project_metadata:
                 entries = self.project_metadata()
-                for key, value in parsed.project_metadata.items():
+                head_title = ""
+                for raw_key, value in parsed.project_metadata.items():
+                    key, hinted_type = _split_markdown_metadata_key(raw_key)
+                    if key.casefold() == "title" and str(value).strip():
+                        head_title = str(value).strip()
                     held = entries.get(key)
                     if held is not None and held[0].strip():
                         project_kept.append(key)
                         continue
-                    entries[key] = (value, _metadata_type(value), [])
+                    vtype = hinted_type or _metadata_type(value)
+                    # A value shaped like a date is one even when it
+                    # does not look ISO (Scrivener's long form); an
+                    # explicit type hint always wins.
+                    parsed_iso = (parse_date_to_iso(str(value))
+                                  if vtype == "date" or hinted_type is None
+                                  else None)
+                    if parsed_iso:
+                        vtype, value = "date", parsed_iso
+                    entries[key] = (value, vtype, [])
                 self.set_project_metadata(entries)
+                # The file head's Title names the book; adopt it only
+                # where the project was never given a name of its own.
+                if head_title and (self.get_setting("title") or "").strip() in (
+                        "", "Untitled Project"):
+                    self.set_setting("title", head_title)
+                    manifest = self.root / "manifest.json"
+                    if manifest.is_file():
+                        try:
+                            held = json.loads(manifest.read_text(encoding="utf-8"))
+                            if isinstance(held, dict):
+                                held["title"] = head_title
+                                manifest.write_text(
+                                    json.dumps(held, ensure_ascii=False, indent=2)
+                                    + "\n", encoding="utf-8")
+                        except (OSError, ValueError):
+                            pass
             # The flat markdown carries no tree beyond chapter/scene, so a
             # scene with no Parent lands under the chapter before it —
             # the order the export wrote.
@@ -5630,8 +5840,19 @@ class Project:
                 if (item.kind == "scene" and not item.parent
                         and last_chapter is not None):
                     parent = last_chapter
+                # Promote a real title from metadata when importer would use generic.
+                raw_title = (item.title or "").strip()
+                meta_title = ""
+                for rk, rv in (item.metadata or {}).items():
+                    k, _ = _split_markdown_metadata_key(rk)
+                    if k.casefold() == "title" and str(rv).strip():
+                        meta_title = str(rv).strip()
+                        break
+                chosen_title = raw_title
+                if (not chosen_title or chosen_title.casefold() == "imported") and meta_title:
+                    chosen_title = meta_title
                 document = self.add_document(
-                    item.title or "Imported", parent, item.kind)
+                    chosen_title or "Imported", parent, item.kind)
                 self.write_content(
                     document.id, markdown_to_html(item.body))
                 if item.synopsis.strip():
@@ -5641,27 +5862,66 @@ class Project:
                     entries = self.metadata(document.id)
                     rows = self.metadata_entries(document.id)
                     types: dict[str, str] = {}
+                    opts: dict[str, list[str]] = {}
                     group = self.type_group(document)
+                    # The Type this document is about: the file's own
+                    # Type hint if it names one, else the derived default
+                    # (set_metadata below stores the hint for later reads).
+                    type_hint = next(
+                        (str(v).strip() for k, v in item.metadata.items()
+                         if _split_markdown_metadata_key(k)[0].casefold() == "type"
+                         and str(v).strip()), "")
+                    doc_type = type_hint or self.type_of(document)
+                    defs = self.type_field_defs(doc_type)
+                    declared = {name.casefold() for name in defs}
                     known = {name.casefold()
                              for name in self.known_fields(group)}
-                    for key, value in item.metadata.items():
+                    for raw_key, value in item.metadata.items():
+                        key, hinted_type = _split_markdown_metadata_key(raw_key)
                         folded = key.casefold()
                         if folded in (TEMPLATE_KEY.casefold(),
                                       TEMPLATE_CONFIG_KEY.casefold()):
                             continue    # a mark, not metadata to import
+                        if folded == "title" and str(value).strip() == chosen_title:
+                            continue    # the document's title already says it
                         # Type is the protected role the panel already
                         # knows; every other key may need a new field.
                         name = (key if folded == "type"
                                 else self.add_field(group, key))
+                        if folded == "type":
+                            # A role the file names joins the group's
+                            # catalogue so the dropdown offers it too.
+                            self.add_type(group, str(value).strip())
                         if (folded != "type" and name not in rows
                                 and name.casefold() not in known):
                             fields_created.append(name)
-                        types[name] = (rows[name][1] if name in rows
-                                       else _metadata_type(value))
+                        if name in rows:
+                            vtype = hinted_type or rows[name][1]
+                        else:
+                            vtype = hinted_type or _metadata_type(value)
+                        # A value shaped like a date is one even when
+                        # it does not look ISO (Scrivener's long form);
+                        # an explicit type hint always wins.
+                        if (hinted_type is None and vtype == "text"
+                                and parse_date_to_iso(str(value))):
+                            vtype = "date"
+                        # A field the file names (or a value shape that
+                        # says its type) designs the Type it lands on.
+                        if (folded != "type" and name.casefold() not in declared):
+                            defs[name] = {"type": vtype}
+                            declared.add(name.casefold())
+                            self.set_type_field_defs(doc_type, defs)
+                        if vtype == "date":
+                            fmt = self.date_format_for_field(doc_type, name)
+                            parsed_iso = parse_date_to_iso(str(value), fmt)
+                            if parsed_iso:
+                                value = parsed_iso
+                        types[name] = vtype
+                        opts[name] = rows[name][2] if name in rows else []
                         entries[name] = value
                         values_filled += 1
-                    self.set_metadata(document.id, entries, types)
-                by_title[item.title.casefold()] = document.id
+                    self.set_metadata(document.id, entries, types, opts)
+                by_title[(item.title or chosen_title or "Imported").casefold()] = document.id
                 if item.kind == "chapter":
                     last_chapter = document.id
                 documents_created += 1
