@@ -193,6 +193,20 @@ class SessionResumeTests(unittest.TestCase):
         # Read-only: the manual is the software's, not the writer's.
         self.assertTrue(self.window._project_is_read_only())
 
+    def test_the_read_only_guide_offers_no_metadata_design(self):
+        # The guide's Type design is off: a writer who typed a field
+        # name there would see it appear and then find it gone, because
+        # a read-only project keeps nothing.
+        self.window.reopen_last_project()
+
+        for name in ("type_box", "type_add_edit", "type_add_button",
+                     "type_fields_table", "field_add_edit",
+                     "field_add_button", "field_remove_button",
+                     "metadata_table", "metadata_add_button",
+                     "metadata_remove_button"):
+            widget = getattr(self.window, name)
+            self.assertFalse(widget.isEnabled(), name)
+
 
 if __name__ == "__main__":
     unittest.main()

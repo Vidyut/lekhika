@@ -384,6 +384,9 @@ class MetadataPanelTests(unittest.TestCase):
         self.assertIsInstance(editor, QDateEdit)
         # A blank date stays blank: no silent today written back on save.
         self.assertEqual(self.window.metadata_table.row_value(row), "")
+        # And it looks blank too: the sentinel date is not written out
+        # as "1 January 1000" in front of the writer.
+        self.assertEqual(editor.text().strip(), "")
 
     def test_column_order_puts_value_next_to_the_field(self):
         table = self.window.metadata_table

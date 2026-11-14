@@ -723,9 +723,12 @@ class MetadataTable(QTableWidget):
                 date = QDate.fromString(val, "d MMMM yyyy")
             # A field with no date shows blank — never a silent today
             # that would be written back as a real value on save.
+            # The special text is a space, not "": an empty special
+            # text means "no special text", and the sentinel date
+            # would be drawn as 1 January 1000.
             blank = QDate(1000, 1, 1)
             editor.setMinimumDate(blank)
-            editor.setSpecialValueText("")
+            editor.setSpecialValueText(" ")
             editor.setDate(date if date.isValid() else blank)
             editor.dateChanged.connect(lambda _date: self._notify())
             self.setCellWidget(row, 2, editor)
@@ -4932,6 +4935,10 @@ class MainWindow(QMainWindow):
         """
         read_only = self._project_is_read_only()
         for widget in (self.synopsis, self.target, self.type_box,
+                       self.type_add_edit, self.type_add_button,
+                       self.type_fields_table,
+                       self.field_add_edit, self.field_add_button,
+                       self.field_remove_button,
                        self.metadata_table, self.metadata_add_button,
                        self.metadata_remove_button, self.doc_template_box,
                        self.book_template_box, self.page_setup_button,

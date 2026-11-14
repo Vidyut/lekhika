@@ -5,3 +5,8 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+# The guide's own backups and its SQLite side files are the guide's
+# business, not the repository's.
+src/lekhika/guide/Backups/
+*.sqlite3-wal
+*.sqlite3-shm
