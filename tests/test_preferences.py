@@ -529,7 +529,7 @@ class HelpPageTests(unittest.TestCase):
 
 
 class UpdateModeTests(unittest.TestCase):
-    """Four modes, and consent is the default (docs/TEMPLATES.md §8)."""
+    """Three modes, and consent is the default (docs/TEMPLATES.md §8)."""
 
     def setUp(self):
         QSettings().remove("update/mode")

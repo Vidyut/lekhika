@@ -101,7 +101,7 @@ Discovery is **bounded on purpose** — the author's constraint: *"Nobody is goi
 
 1. `<project>/templates/` — listed automatically, one level of subfolders:
 each subfolder is a template. This is the project's templates root.
-2. The **app library** (`$XDG_CONFIG_HOME/lekhika/templates`, else `~/.config/lekhika/templates`) — the writer's own sets, shared between projects, listed the same way.
+2. The **app library** (`%APPDATA%/lekhika/templates` on Windows, `~/Library/Application Support/lekhika/templates` on macOS, `$XDG_CONFIG_HOME/lekhika/templates` on Linux) — the writer's own sets, shared between projects, listed the same way.
 3. The five **shipped sets** — `default`, `short story`, `Book`, `Guide`, `no-export` — always present at the top, from the code, not from disk (§1.1).
 
 That is the whole of it: no walk outside these roots, no scan of the binder, no hunt for familiar filenames, and no mark to set. A folder outside `templates/` is an ordinary folder; making it a template is moving or copying it there — or pressing **Duplicate**, which puts it there for you.
@@ -382,21 +382,22 @@ Both open from Help → *Manual*, and from the binder's Templates folder and the
 
 ## 8. Updates
 
-The default is **Manual**, and that is a consent decision rather than a technical one: a fresh install makes no network call until the writer presses a button. The page then recommends a standing check — at least **Check**, preferably **Auto** — because while Lekhika is young a new version can carry the fix for something that is about to bite.
+The default is **Manual**, and that is a consent decision rather than a technical one: a fresh install makes no network call until the writer presses a button. The page then recommends a standing check — **Check** — because while Lekhika is young a new version can carry the fix for something that is about to bite.
 
 | Preference `update/mode` | Behaviour |
 |---|---|
-| `auto` | check at most once a day on start; if newer and the install allows it, apply it and say so in the status bar |
 | `check` | check at most once a day on start; if newer, say so in the status bar — installing stays a click |
 | `manual` (**default**) | check and install only when the buttons are pressed |
 | `never` | no network calls at all |
 
+`auto` is no longer a mode: it was removed in v1.0.5, because an install is never applied on its own any more. A setting left over from it is read as `check`.
+
 - **Check**: one GET to the public GitHub API for the newest version *tag*, compared with `__version__`. Offline is silent; being current is silent; and the attempt is written to `update/lastCheck`, so a failing day is retried tomorrow rather than at every start.
 - **Status bar, not a dialog**: a check that happens on its own reports in one sentence in the status bar — a modal box at start-up is a way of not being opened again. The Updates page's status line still shows the full result of a pressed check.
 - **Apply, git checkout**: `git pull --ff-only` — only the files that changed between the two versions, and only when the working tree is clean. The writer's own edits are never stashed, merged or overwritten; a dirty tree means we report and stop. Restarting is what picks up the new version, and the message says so.
-- **Apply, pipx/pip/zip**: we do not rewrite an install behind the writer's back. `auto` and `check` behave alike here: the release is named, and updating it is the writer's command (`pipx upgrade lekhika`, ...).
-- **Breaking changes**: a major-version move is never applied on its own — `auto` behaves like `check` for it, since a new major may change the shape of project files. Below a major move, the shape is expected to survive.
-- **Nothing happens without a trace.** `auto`'s pull is reported in the status bar; a pressed check reports on the Updates page. The app makes two kinds of outbound request — the LLM endpoint the writer configured (2.4) and this update check — and the manual says so in one sentence.
+- **Apply, pipx/pip/zip**: we do not rewrite an install behind the writer's back. `check` behaves like `manual` here: the release is named, and updating it is the writer's command (`pipx upgrade lekhika`, ...).
+- **Breaking changes**: a major-version move is never applied on its own — the update action refuses it and says so, since a new major may change the shape of project files. Below a major move, the shape is expected to survive.
+- **Nothing happens without a trace.** A pull is reported in the status bar; a pressed check reports on the Updates page. The app makes three kinds of outbound request — the LLM endpoint the writer configured (2.4), the TTS endpoint if one is configured, and this update check — and the manual says so in one sentence.
 
 The honest caveat from §7 applies here as well: this is a fresh project, so "newer" means "the author has been fixing things", not a supported release channel.
 

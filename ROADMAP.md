@@ -100,7 +100,7 @@ sets: directories of optional slot files (`project_header`, `project_footer`,
 built-in defaults. Placeholder syntax is yw2html's `${...}` family:
 `${Title}`, `${Content}`, `${Synopsis}`, `${WordCount}`, `${ChapterNumber}`,
 `${SceneNumber}`, `${WordsTotal}`, `${Metadata.Key}`. Sets live under
-`<project>/templates/<name>/` or `~/.config/lekhika/templates/<name>/`; the
+`<project>/templates/<name>/` or the writer's own set folder (`%APPDATA%/lekhika/templates/<name>/` on Windows, `~/Library/Application Support/lekhika/templates/<name>/` on macOS, `$XDG_CONFIG_HOME/lekhika/templates/<name>/` on Linux); the
 export dialog offers a dropdown, "New set…" (forks the current one) and
 "Open folder". A compile walks binder order: a chapter unit is its own text
 plus descendant scenes separated by the divider; standalone scenes export on
